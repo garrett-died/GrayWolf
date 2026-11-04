@@ -49,6 +49,28 @@ void AddSharedOptions(CLI::App& App, CliOptions& Options)
                    "(models: source_data/graywolf_<out folder>.gdt, their XMODEL_EXPORT files naming them; maps: in the "
                    "Radiant GDT with --map-radiant on)")
         ->group("Shared options");
+    App.add_option("--target", Options.PublishTarget,
+                   "none|folder|modtools: after a disk-export, place the models, materials and images in the BO3 Mod Tools "
+                   "layout. folder: a copy of that layout under <out>/<game>/bo3/; modtools: written into the Mod Tools root "
+                   "(--mod-tools-root; only ever taken from the command line, never from the saved settings). none (default): "
+                   "the export is unchanged. Implies --material-gdt on, TIFF images and xmodel_bin when those are not given")
+        ->group("Shared options");
+    App.add_option("--mod-tools-root", Options.ModToolsRoot,
+                   "The BO3 Mod Tools folder for --target (else the BO3 install found, else TA_TOOLS_PATH)")
+        ->group("Shared options");
+    App.add_option("--check-gdtdb", Options.CheckGdtDb,
+                   "on|off: with --target, an asset the Mod Tools gdt.db already holds is not written (already_in_mod_tools); "
+                   "its materials' and models' references are still followed (on)")
+        ->group("Shared options");
+    App.add_option("--gdtdb-match", Options.GdtDbMatch,
+                   "type|name: the gdt.db check matches the GDF and the name, or the name alone (type)")
+        ->group("Shared options");
+    App.add_option("--gdt", Options.GdtMode,
+                   "merge|overwrite: with --target, a GDT GrayWolf wrote earlier is merged entry by entry (merge) or replaced (overwrite)")
+        ->group("Shared options");
+    App.add_flag("--plan", Options.PublishPlan,
+                 "With --target: decide and report (graywolf_placement.tsv, graywolf_approximations.tsv), write no file in the target")
+        ->group("Shared options");
     App.add_option("--sound-aliases", Options.SoundAliases,
                    "on|off: the sound kind also writes each zone's sound aliases as a Black Ops III mod tools alias CSV "
                    "(sounds/<zone>.csv, FileSpec relative to sounds/), to port sounds with their behaviour (off: audio only)")

@@ -6,6 +6,7 @@
 #include "ZoneTableWalker.h"  // LoadProfile (shading.txt)
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -17,6 +18,13 @@
 
 namespace Materials
 {
+// While set (a --target is on), sidecars also keep the first block of each material's constant bytes
+static std::atomic<bool> KeepConstants{ false };
+void KeepConstantsInSidecar(bool On)
+{
+    KeepConstants.store(On);
+}
+
 namespace
 {
     std::map<std::string, const IAdapter*>& Registry()
@@ -129,6 +137,8 @@ namespace
         nlohmann::json O{ { "path", PortablePath(M.Path) } };
         if (Channel) O["channel"] = std::string(1, ChannelNames[M.Channel & 3]);
         if (M.Invert) O["invert"] = true;
+        // "pack" is additive: written with or without a --target (Bo3Target.Publish reads it); a map with no pack kind has no key
+        if (M.Pack != PackKind::None) O["pack"] = PackName(M.Pack);
         J[Key] = std::move(O);
     }
     void GetMap(const nlohmann::json& J, const char* Key, Map& M)
@@ -140,6 +150,7 @@ namespace
         const char* At = std::strchr(ChannelNames, C.empty() ? 'r' : C[0]);
         M.Channel = At ? (int)(At - ChannelNames) : 0;
         M.Invert = O.value("invert", false);
+        M.Pack = PackFromName(O.value("pack", std::string()));
     }
 
     nlohmann::json Floats(const float* V, int N)
@@ -371,6 +382,35 @@ Description SemanticAdapter::Describe(const Source& M) const
     return D;
 }
 
+const char* PackName(PackKind Kind)
+{
+    switch (Kind)
+    {
+    case PackKind::Nog:              return "nog";
+    case PackKind::NormalAlphaGreen: return "normal_ag";
+    case PackKind::ColorMetalAlpha:  return "color_metal_alpha";
+    case PackKind::ColorMetalMask:   return "color_metal_mask";
+    default:                         return "none";
+    }
+}
+
+PackKind PackFromName(const std::string& Name)
+{
+    for (const PackKind K : { PackKind::Nog, PackKind::NormalAlphaGreen, PackKind::ColorMetalAlpha, PackKind::ColorMetalMask })
+        if (Name == PackName(K)) return K;
+    return PackKind::None;
+}
+
+void MarkPacked(Description& D, const std::string& Path, PackKind Kind)
+{
+    if (Path.empty()) return;
+    for (Map* M : { &D.Albedo, &D.Normal, &D.Roughness, &D.Metalness, &D.Specular, &D.Occlusion, &D.Emissive })
+        if (M->Path == Path) M->Pack = Kind;
+    for (Layer& L : D.Layers)
+        for (Map* M : { &L.Albedo, &L.Normal, &L.Roughness, &L.Mask })
+            if (M->Path == Path) M->Pack = Kind;
+}
+
 void BaseColorFactor(const Description& D, float Rgb[3])
 {
     for (int c = 0; c < 3; c++) Rgb[c] = D.Color.Empty() ? 1.0f : D.Color.Color[c];
@@ -487,6 +527,20 @@ std::string SidecarText(const Sidecar& S)
                 Imgs.push_back(std::move(One));
             }
             J["sources"] = std::move(Imgs);
+            // The first block of the game's constant bytes (the layouts of Bo3Target.Techsets read within 0x100), only while a
+            // --target is set: a run with no target writes the sidecar it always did.
+            if (KeepConstants.load() && !Src.Constants.empty() && !Src.Constants.front().empty())
+            {
+                static const char* const Digits = "0123456789abcdef";
+                const std::vector<uint8_t>& Block = Src.Constants.front();
+                std::string Hex;
+                for (size_t b = 0; b < Block.size() && b < 0x100; b++)
+                {
+                    Hex += Digits[Block[b] >> 4];
+                    Hex += Digits[Block[b] & 15];
+                }
+                J["constants"] = std::move(Hex);
+            }
         }
         Mats.push_back(std::move(J));
     }
@@ -550,6 +604,35 @@ bool ReadSidecar(const std::string& Path, Sidecar& S)
                 GetFloats(J["color_tint"], "color", D.Color.Color, 3);
             }
             for (const auto& L : J.value("layers", nlohmann::json::array())) D.Layers.push_back(LayerFromJson(L));
+            // the raw inputs, parallel to the materials: the techset name, the images' semantics, the constant block
+            Source Src;
+            Src.Name = D.Name;
+            Src.Techset = J.value("techset", std::string());
+            Src.SortKey = J.value("sort_key", -1);
+            for (const auto& One : J.value("sources", nlohmann::json::array()))
+            {
+                if (!One.is_object()) continue;
+                Source::Image Img;
+                Img.Path = One.value("path", std::string());
+                const std::string Hex = One.value("semantic", std::string());
+                if (!Hex.empty())
+                {
+                    char* End = nullptr;
+                    Img.Semantic = static_cast<uint32_t>(std::strtoul(Hex.c_str(), &End, 16));
+                }
+                Src.Images.push_back(std::move(Img));
+            }
+            if (const std::string Bytes = J.value("constants", std::string()); !Bytes.empty() && Bytes.size() % 2 == 0)
+            {
+                std::vector<uint8_t> Block;
+                for (size_t b = 0; b + 1 < Bytes.size(); b += 2)
+                {
+                    const char Pair[3] = { Bytes[b], Bytes[b + 1], 0 };
+                    Block.push_back(static_cast<uint8_t>(std::strtoul(Pair, nullptr, 16)));
+                }
+                Src.Constants.push_back(std::move(Block));
+            }
+            S.Sources.push_back(std::move(Src));
             S.Materials.push_back(std::move(D));
         }
         return true;

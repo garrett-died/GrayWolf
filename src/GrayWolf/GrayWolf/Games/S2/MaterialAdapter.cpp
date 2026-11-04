@@ -10,15 +10,31 @@
 // colour, a metal workflow), b the gloss (glass 0.59, gold 0.46, gun metal 0.3, cloth 0.15, brick
 // 0), g near 1 (a cavity term, not the occlusion map: r +0.1..+0.3 with it). Read as metalness r,
 // gloss b; the occlusion is its own map (6001F931, the images named "_occ").
+//
+// The metalness image is a metal mask for the colour map (the metal's colour is in the colour map: a fused
+// pack, GameImageUtil's WWII mask mode: metal from r, the insulator range from a), so the metalness
+// map is marked ColorMetalMask. Gloss in b and the rest are plain channels of the same file.
 namespace
 {
     using Materials::Role;
-    const Materials::SemanticAdapter Adapter("ww2", {
-        { 0xA0AB1041, Role::Albedo },
-        { 0x59D30D0F, Role::Normal },
-        { 0x34ECCCB3, Role::Metalness, 0 },
-        { 0x34ECCCB3, Role::Gloss, 2 },
-        { 0x6001F931, Role::Occlusion, 0 },
-    });
+    class WorldWar2Materials final : public Materials::SemanticAdapter
+    {
+    public:
+        WorldWar2Materials()
+            : SemanticAdapter("ww2", {
+                  { 0xA0AB1041, Role::Albedo },
+                  { 0x59D30D0F, Role::Normal },
+                  { 0x34ECCCB3, Role::Metalness, 0 },
+                  { 0x34ECCCB3, Role::Gloss, 2 },
+                  { 0x6001F931, Role::Occlusion, 0 },
+              }) {}
+    protected:
+        void Refine(const Materials::Source&, Materials::Description& D, bool) const override
+        {
+            if (!D.Metalness.Empty() && !D.Albedo.Empty() && D.Metalness.Path != D.Albedo.Path)
+                D.Metalness.Pack = Materials::PackKind::ColorMetalMask;
+        }
+    };
+    const WorldWar2Materials Adapter;
     const Materials::AdapterRegistration Registered("S2", Adapter);
 }

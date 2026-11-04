@@ -32,7 +32,12 @@ namespace
     protected:
         void Refine(const Materials::Source& M, Materials::Description& D, bool BySemantic) const override
         {
-            if (BySemantic && !D.Normal.Empty()) D.NormalEnc = Materials::NormalEncoding::AG;
+            if (BySemantic && !D.Normal.Empty())
+            {
+                D.NormalEnc = Materials::NormalEncoding::AG;
+                // the exported nog image is raw (this game sets no image patch): its maps share the pack
+                Materials::MarkPacked(D, D.Normal.Path, Materials::PackKind::Nog);
+            }
             IwMaterialAlpha::Apply(M, M.BySemantic(OpacityMap), D);
             IwTerrain::DescribeLayers(M, D);
         }

@@ -1,0 +1,4557 @@
+{
+ "source": "BO3 Mod Tools texture_assets, model_export, source_data material entries (read-only)",
+ "entries": 17467,
+ "files": 2325,
+ "keys": {
+  "adsZscaleOn": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "aiClip": {
+   "value": "0",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "aiSightClip": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "alphaDissolveInt": {
+   "value": "255",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "alphaDissolveMarginAbove": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "alphaMap": {
+   "value": "",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "alphaRevealMap": {
+   "value": "",
+   "share": 0.6445,
+   "entries": 17467
+  },
+  "alphaRevealRamp": {
+   "value": "0.5",
+   "share": 0.965,
+   "entries": 17467
+  },
+  "alphaRevealSoftEdge": {
+   "value": "0.01",
+   "share": 0.9369,
+   "entries": 17467
+  },
+  "alphaTexture": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "arabicUnsafe": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "areaLight": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "backlightScatterColor": {
+   "value": "1 1 1 1",
+   "share": 0.9926,
+   "entries": 17467
+  },
+  "bulletClip": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "camoDetailMap": {
+   "value": "",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "camoMaskMap": {
+   "value": "",
+   "share": 0.9931,
+   "entries": 17467
+  },
+  "canShootClip": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "caulk": {
+   "value": "0",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "causticMap": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cg00_w": {
+   "value": "0",
+   "share": 0.9524,
+   "entries": 17467
+  },
+  "cg00_x": {
+   "value": "0",
+   "share": 0.9335,
+   "entries": 17467
+  },
+  "cg00_y": {
+   "value": "0",
+   "share": 0.943,
+   "entries": 17467
+  },
+  "cg00_z": {
+   "value": "0",
+   "share": 0.9532,
+   "entries": 17467
+  },
+  "cg01_w": {
+   "value": "0",
+   "share": 0.9502,
+   "entries": 17467
+  },
+  "cg01_x": {
+   "value": "0",
+   "share": 0.9488,
+   "entries": 17467
+  },
+  "cg01_y": {
+   "value": "0",
+   "share": 0.9462,
+   "entries": 17467
+  },
+  "cg01_z": {
+   "value": "0",
+   "share": 0.9417,
+   "entries": 17467
+  },
+  "cg02_w": {
+   "value": "0",
+   "share": 0.9563,
+   "entries": 17467
+  },
+  "cg02_x": {
+   "value": "0",
+   "share": 0.9492,
+   "entries": 17467
+  },
+  "cg02_y": {
+   "value": "0",
+   "share": 0.9541,
+   "entries": 17467
+  },
+  "cg02_z": {
+   "value": "0",
+   "share": 0.9577,
+   "entries": 17467
+  },
+  "cg03_w": {
+   "value": "0",
+   "share": 0.9588,
+   "entries": 17467
+  },
+  "cg03_x": {
+   "value": "0",
+   "share": 0.9601,
+   "entries": 17467
+  },
+  "cg03_y": {
+   "value": "0",
+   "share": 0.9599,
+   "entries": 17467
+  },
+  "cg03_z": {
+   "value": "0",
+   "share": 0.9577,
+   "entries": 17467
+  },
+  "cg04_w": {
+   "value": "0",
+   "share": 0.9579,
+   "entries": 17467
+  },
+  "cg04_x": {
+   "value": "0",
+   "share": 0.9569,
+   "entries": 17467
+  },
+  "cg04_y": {
+   "value": "0",
+   "share": 0.959,
+   "entries": 17467
+  },
+  "cg04_z": {
+   "value": "0",
+   "share": 0.9576,
+   "entries": 17467
+  },
+  "cg05_w": {
+   "value": "0",
+   "share": 0.9599,
+   "entries": 17467
+  },
+  "cg05_x": {
+   "value": "0",
+   "share": 0.9516,
+   "entries": 17467
+  },
+  "cg05_y": {
+   "value": "0",
+   "share": 0.9591,
+   "entries": 17467
+  },
+  "cg05_z": {
+   "value": "0",
+   "share": 0.9594,
+   "entries": 17467
+  },
+  "cg06_w": {
+   "value": "0",
+   "share": 0.9587,
+   "entries": 17467
+  },
+  "cg06_x": {
+   "value": "0",
+   "share": 0.9493,
+   "entries": 17467
+  },
+  "cg06_y": {
+   "value": "0",
+   "share": 0.9517,
+   "entries": 17467
+  },
+  "cg06_z": {
+   "value": "0",
+   "share": 0.9609,
+   "entries": 17467
+  },
+  "cg07_w": {
+   "value": "0",
+   "share": 0.9605,
+   "entries": 17467
+  },
+  "cg07_x": {
+   "value": "0",
+   "share": 0.9557,
+   "entries": 17467
+  },
+  "cg07_y": {
+   "value": "0",
+   "share": 0.9631,
+   "entries": 17467
+  },
+  "cg07_z": {
+   "value": "0",
+   "share": 0.9601,
+   "entries": 17467
+  },
+  "cg08_w": {
+   "value": "0",
+   "share": 0.9538,
+   "entries": 17467
+  },
+  "cg08_x": {
+   "value": "0",
+   "share": 0.9545,
+   "entries": 17467
+  },
+  "cg08_y": {
+   "value": "0",
+   "share": 0.9552,
+   "entries": 17467
+  },
+  "cg08_z": {
+   "value": "0",
+   "share": 0.9516,
+   "entries": 17467
+  },
+  "cg09_w": {
+   "value": "0",
+   "share": 0.963,
+   "entries": 17467
+  },
+  "cg09_x": {
+   "value": "0",
+   "share": 0.9597,
+   "entries": 17467
+  },
+  "cg09_y": {
+   "value": "0",
+   "share": 0.9627,
+   "entries": 17467
+  },
+  "cg09_z": {
+   "value": "0",
+   "share": 0.96,
+   "entries": 17467
+  },
+  "cg10_w": {
+   "value": "0",
+   "share": 0.9648,
+   "entries": 17467
+  },
+  "cg10_x": {
+   "value": "0",
+   "share": 0.9558,
+   "entries": 17467
+  },
+  "cg10_y": {
+   "value": "0",
+   "share": 0.9601,
+   "entries": 17467
+  },
+  "cg10_z": {
+   "value": "0",
+   "share": 0.9661,
+   "entries": 17467
+  },
+  "cg11_w": {
+   "value": "0",
+   "share": 0.9647,
+   "entries": 17467
+  },
+  "cg11_x": {
+   "value": "0",
+   "share": 0.962,
+   "entries": 17467
+  },
+  "cg11_y": {
+   "value": "0",
+   "share": 0.9642,
+   "entries": 17467
+  },
+  "cg11_z": {
+   "value": "0",
+   "share": 0.9647,
+   "entries": 17467
+  },
+  "cg12_w": {
+   "value": "0",
+   "share": 0.9648,
+   "entries": 17467
+  },
+  "cg12_x": {
+   "value": "0",
+   "share": 0.9615,
+   "entries": 17467
+  },
+  "cg12_y": {
+   "value": "0",
+   "share": 0.9639,
+   "entries": 17467
+  },
+  "cg12_z": {
+   "value": "0",
+   "share": 0.9647,
+   "entries": 17467
+  },
+  "cg13_w": {
+   "value": "0",
+   "share": 0.9648,
+   "entries": 17467
+  },
+  "cg13_x": {
+   "value": "0",
+   "share": 0.9622,
+   "entries": 17467
+  },
+  "cg13_y": {
+   "value": "0",
+   "share": 0.9639,
+   "entries": 17467
+  },
+  "cg13_z": {
+   "value": "0",
+   "share": 0.9648,
+   "entries": 17467
+  },
+  "cg14_w": {
+   "value": "0",
+   "share": 0.9639,
+   "entries": 17467
+  },
+  "cg14_x": {
+   "value": "0",
+   "share": 0.9637,
+   "entries": 17467
+  },
+  "cg14_y": {
+   "value": "0",
+   "share": 0.9642,
+   "entries": 17467
+  },
+  "cg14_z": {
+   "value": "0",
+   "share": 0.9639,
+   "entries": 17467
+  },
+  "cg15_w": {
+   "value": "0",
+   "share": 0.9639,
+   "entries": 17467
+  },
+  "cg15_x": {
+   "value": "0",
+   "share": 0.9635,
+   "entries": 17467
+  },
+  "cg15_y": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg15_z": {
+   "value": "0",
+   "share": 0.964,
+   "entries": 17467
+  },
+  "cg16_w": {
+   "value": "0",
+   "share": 0.9612,
+   "entries": 17467
+  },
+  "cg16_x": {
+   "value": "0",
+   "share": 0.9606,
+   "entries": 17467
+  },
+  "cg16_y": {
+   "value": "0",
+   "share": 0.9612,
+   "entries": 17467
+  },
+  "cg16_z": {
+   "value": "0",
+   "share": 0.9631,
+   "entries": 17467
+  },
+  "cg17_w": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg17_x": {
+   "value": "0",
+   "share": 0.9618,
+   "entries": 17467
+  },
+  "cg17_y": {
+   "value": "0",
+   "share": 0.9644,
+   "entries": 17467
+  },
+  "cg17_z": {
+   "value": "0",
+   "share": 0.9648,
+   "entries": 17467
+  },
+  "cg18_w": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg18_x": {
+   "value": "0",
+   "share": 0.9622,
+   "entries": 17467
+  },
+  "cg18_y": {
+   "value": "0",
+   "share": 0.9644,
+   "entries": 17467
+  },
+  "cg18_z": {
+   "value": "0",
+   "share": 0.9648,
+   "entries": 17467
+  },
+  "cg19_w": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg19_x": {
+   "value": "0",
+   "share": 0.9622,
+   "entries": 17467
+  },
+  "cg19_y": {
+   "value": "0",
+   "share": 0.9644,
+   "entries": 17467
+  },
+  "cg19_z": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg20_w": {
+   "value": "0",
+   "share": 0.9646,
+   "entries": 17467
+  },
+  "cg20_x": {
+   "value": "0",
+   "share": 0.9621,
+   "entries": 17467
+  },
+  "cg20_y": {
+   "value": "0",
+   "share": 0.9646,
+   "entries": 17467
+  },
+  "cg20_z": {
+   "value": "0",
+   "share": 0.9647,
+   "entries": 17467
+  },
+  "cg21_w": {
+   "value": "0",
+   "share": 0.9646,
+   "entries": 17467
+  },
+  "cg21_x": {
+   "value": "0",
+   "share": 0.9622,
+   "entries": 17467
+  },
+  "cg21_y": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg21_z": {
+   "value": "0",
+   "share": 0.9647,
+   "entries": 17467
+  },
+  "cg22_w": {
+   "value": "0",
+   "share": 0.9646,
+   "entries": 17467
+  },
+  "cg22_x": {
+   "value": "0",
+   "share": 0.9583,
+   "entries": 17467
+  },
+  "cg22_y": {
+   "value": "0",
+   "share": 0.9623,
+   "entries": 17467
+  },
+  "cg22_z": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg23_w": {
+   "value": "0",
+   "share": 0.9646,
+   "entries": 17467
+  },
+  "cg23_x": {
+   "value": "0",
+   "share": 0.962,
+   "entries": 17467
+  },
+  "cg23_y": {
+   "value": "0",
+   "share": 0.9644,
+   "entries": 17467
+  },
+  "cg23_z": {
+   "value": "0",
+   "share": 0.9647,
+   "entries": 17467
+  },
+  "cg24_w": {
+   "value": "0",
+   "share": 0.9646,
+   "entries": 17467
+  },
+  "cg24_x": {
+   "value": "0",
+   "share": 0.9623,
+   "entries": 17467
+  },
+  "cg24_y": {
+   "value": "0",
+   "share": 0.9643,
+   "entries": 17467
+  },
+  "cg24_z": {
+   "value": "0",
+   "share": 0.9647,
+   "entries": 17467
+  },
+  "cg25_w": {
+   "value": "0",
+   "share": 0.9646,
+   "entries": 17467
+  },
+  "cg25_x": {
+   "value": "0",
+   "share": 0.9637,
+   "entries": 17467
+  },
+  "cg25_y": {
+   "value": "0",
+   "share": 0.9647,
+   "entries": 17467
+  },
+  "cg25_z": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg26_w": {
+   "value": "0",
+   "share": 0.9646,
+   "entries": 17467
+  },
+  "cg26_x": {
+   "value": "0",
+   "share": 0.9615,
+   "entries": 17467
+  },
+  "cg26_y": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg26_z": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg27_w": {
+   "value": "0",
+   "share": 0.9646,
+   "entries": 17467
+  },
+  "cg27_x": {
+   "value": "0",
+   "share": 0.9616,
+   "entries": 17467
+  },
+  "cg27_y": {
+   "value": "0",
+   "share": 0.9646,
+   "entries": 17467
+  },
+  "cg27_z": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg28_w": {
+   "value": "0",
+   "share": 0.9642,
+   "entries": 17467
+  },
+  "cg28_x": {
+   "value": "0",
+   "share": 0.9612,
+   "entries": 17467
+  },
+  "cg28_y": {
+   "value": "0",
+   "share": 0.9636,
+   "entries": 17467
+  },
+  "cg28_z": {
+   "value": "0",
+   "share": 0.9641,
+   "entries": 17467
+  },
+  "cg29_w": {
+   "value": "0",
+   "share": 0.9646,
+   "entries": 17467
+  },
+  "cg29_x": {
+   "value": "0",
+   "share": 0.9617,
+   "entries": 17467
+  },
+  "cg29_y": {
+   "value": "0",
+   "share": 0.9641,
+   "entries": 17467
+  },
+  "cg29_z": {
+   "value": "0",
+   "share": 0.9644,
+   "entries": 17467
+  },
+  "cg30_w": {
+   "value": "0",
+   "share": 0.9639,
+   "entries": 17467
+  },
+  "cg30_x": {
+   "value": "0",
+   "share": 0.9618,
+   "entries": 17467
+  },
+  "cg30_y": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg30_z": {
+   "value": "0",
+   "share": 0.9639,
+   "entries": 17467
+  },
+  "cg31_w": {
+   "value": "0",
+   "share": 0.9648,
+   "entries": 17467
+  },
+  "cg31_x": {
+   "value": "0",
+   "share": 0.9619,
+   "entries": 17467
+  },
+  "cg31_y": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cg31_z": {
+   "value": "0",
+   "share": 0.9645,
+   "entries": 17467
+  },
+  "cinematicGamma": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "clampU": {
+   "value": "0",
+   "share": 0.999,
+   "entries": 17467
+  },
+  "clampV": {
+   "value": "0",
+   "share": 0.9989,
+   "entries": 17467
+  },
+  "cloudDarkColor": {
+   "value": "0.5 0.5 0.5 0.5",
+   "share": 0.9617,
+   "entries": 17467
+  },
+  "cloudLayer1Blend0": {
+   "value": "1",
+   "share": 0.9986,
+   "entries": 17467
+  },
+  "cloudLayer1Blend1": {
+   "value": "0",
+   "share": 0.9987,
+   "entries": 17467
+  },
+  "cloudLayer1Distance": {
+   "value": "12288",
+   "share": 0.9949,
+   "entries": 17467
+  },
+  "cloudLayer1Feather": {
+   "value": "4096",
+   "share": 0.9949,
+   "entries": 17467
+  },
+  "cloudLayer1Height": {
+   "value": "8000",
+   "share": 0.9949,
+   "entries": 17467
+  },
+  "cloudLayer1UScale": {
+   "value": "2048",
+   "share": 0.9948,
+   "entries": 17467
+  },
+  "cloudLayer1UScroll": {
+   "value": "0",
+   "share": 0.9949,
+   "entries": 17467
+  },
+  "cloudLayer1VScale": {
+   "value": "2048",
+   "share": 0.9948,
+   "entries": 17467
+  },
+  "cloudLayer1VScroll": {
+   "value": "0",
+   "share": 0.9951,
+   "entries": 17467
+  },
+  "cloudLayer2Blend0": {
+   "value": "1",
+   "share": 0.944,
+   "entries": 17467
+  },
+  "cloudLayer2Blend1": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "cloudLayer2Distance": {
+   "value": "12288",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudLayer2Feather": {
+   "value": "4096",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudLayer2Height": {
+   "value": "6000",
+   "share": 0.9949,
+   "entries": 17467
+  },
+  "cloudLayer2UScale": {
+   "value": "2048",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudLayer2UScroll": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudLayer2VScale": {
+   "value": "2048",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudLayer2VScroll": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudLightColor": {
+   "value": "1 1 1 1",
+   "share": 0.9639,
+   "entries": 17467
+  },
+  "cloudLiningColor": {
+   "value": "1 0.75 0.5 1",
+   "share": 0.9639,
+   "entries": 17467
+  },
+  "cloudLiningSize": {
+   "value": "16",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudMask1UScale": {
+   "value": "65536",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudMask1UScroll": {
+   "value": "0.5",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudMask1VScale": {
+   "value": "65536",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudMask1VScroll": {
+   "value": "0.5",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudMask2UScale": {
+   "value": "65536",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudMask2UScroll": {
+   "value": "0.5",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudMask2VScale": {
+   "value": "65536",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cloudMask2VScroll": {
+   "value": "0.5",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "colorDetailMap": {
+   "value": "",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "colorDetailScaleX": {
+   "value": "8",
+   "share": 0.9952,
+   "entries": 17467
+  },
+  "colorDetailScaleY": {
+   "value": "8",
+   "share": 0.995,
+   "entries": 17467
+  },
+  "colorMap": {
+   "value": "$black_color",
+   "share": 0.077,
+   "entries": 17467
+  },
+  "colorMap00": {
+   "value": "",
+   "share": 0.6324,
+   "entries": 17467
+  },
+  "colorMap01": {
+   "value": "",
+   "share": 0.704,
+   "entries": 17467
+  },
+  "colorMap02": {
+   "value": "",
+   "share": 0.7641,
+   "entries": 17467
+  },
+  "colorMap03": {
+   "value": "",
+   "share": 0.8588,
+   "entries": 17467
+  },
+  "colorMap04": {
+   "value": "",
+   "share": 0.9722,
+   "entries": 17467
+  },
+  "colorMap05": {
+   "value": "",
+   "share": 0.9868,
+   "entries": 17467
+  },
+  "colorMap06": {
+   "value": "",
+   "share": 0.9943,
+   "entries": 17467
+  },
+  "colorMap07": {
+   "value": "",
+   "share": 0.9977,
+   "entries": 17467
+  },
+  "colorMap08": {
+   "value": "",
+   "share": 0.9978,
+   "entries": 17467
+  },
+  "colorMap09": {
+   "value": "",
+   "share": 0.9972,
+   "entries": 17467
+  },
+  "colorMap10": {
+   "value": "",
+   "share": 0.9975,
+   "entries": 17467
+  },
+  "colorMap11": {
+   "value": "",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "colorMap12": {
+   "value": "",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "colorMap13": {
+   "value": "",
+   "share": 0.9978,
+   "entries": 17467
+  },
+  "colorMap14": {
+   "value": "",
+   "share": 0.958,
+   "entries": 17467
+  },
+  "colorMap15": {
+   "value": "",
+   "share": 0.9968,
+   "entries": 17467
+  },
+  "colorObjMax": {
+   "value": "1 1 0.5 1",
+   "share": 0.9636,
+   "entries": 17467
+  },
+  "colorObjMaxBaseBlend": {
+   "value": "1",
+   "share": 0.9995,
+   "entries": 17467
+  },
+  "colorObjMin": {
+   "value": "0.25 0.15 0 1",
+   "share": 0.9636,
+   "entries": 17467
+  },
+  "colorObjMinBaseBlend": {
+   "value": "1",
+   "share": 0.9995,
+   "entries": 17467
+  },
+  "colorTint": {
+   "value": "1 1 1 1",
+   "share": 0.6029,
+   "entries": 17467
+  },
+  "colorTint1": {
+   "value": "1 1 1 1",
+   "share": 0.7669,
+   "entries": 17467
+  },
+  "colorTint2": {
+   "value": "1 1 1 1",
+   "share": 0.9873,
+   "entries": 17467
+  },
+  "colorTint3": {
+   "value": "1 1 1 1",
+   "share": 0.9932,
+   "entries": 17467
+  },
+  "colorTint4": {
+   "value": "1 1 1 1",
+   "share": 0.999,
+   "entries": 17467
+  },
+  "colorWriteAlpha": {
+   "value": "Enable",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "colorWriteBlue": {
+   "value": "Enable",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "colorWriteGreen": {
+   "value": "Enable",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "colorWriteRed": {
+   "value": "Enable",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "columnCount": {
+   "value": "1",
+   "share": 0.9909,
+   "entries": 17467
+  },
+  "converterOnlyNormal": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "cosinePowerMap": {
+   "value": "",
+   "share": 0.259,
+   "entries": 17467
+  },
+  "customString": {
+   "value": "",
+   "share": 0.9983,
+   "entries": 17467
+  },
+  "customTemplate": {
+   "value": "",
+   "share": 0.9972,
+   "entries": 17467
+  },
+  "dFlowColorB": {
+   "value": "1",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "dFlowColorG": {
+   "value": "1",
+   "share": 0.998,
+   "entries": 17467
+  },
+  "dFlowColorR": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowDepthFeather": {
+   "value": "0.3125",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowFrameBufferOps": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowIndexOfRefraction": {
+   "value": "1.333",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowNormalScale": {
+   "value": "1",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "dFlowNormalUVScaleU": {
+   "value": "1",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "dFlowNormalUVScaleV": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowSpecLobeAWeight": {
+   "value": "0.625",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowSpecLobeRoughnessA": {
+   "value": "0.02",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowSpecLobeRoughnessB": {
+   "value": "0.123",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowSpeed": {
+   "value": "0.25",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowTextureFraction": {
+   "value": "0.15",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowThinFilmDepth": {
+   "value": "0.5",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowThinFilmEnable": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowThinFilmNormalScale": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowThinFilmPeriod": {
+   "value": "60",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowThinFilmWaveLengthB": {
+   "value": "440",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowThinFilmWaveLengthG": {
+   "value": "550",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowThinFilmWaveLengthR": {
+   "value": "600",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "dFlowUVScaleU": {
+   "value": "1",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "dFlowUVScaleV": {
+   "value": "1",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "depthMultiplier": {
+   "value": "3",
+   "share": 0.9113,
+   "entries": 17467
+  },
+  "desaturationAmount": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "detail": {
+   "value": "0",
+   "share": 0.9987,
+   "entries": 17467
+  },
+  "detail1ScaleX": {
+   "value": "8",
+   "share": 0.8123,
+   "entries": 17467
+  },
+  "detail1ScaleY": {
+   "value": "8",
+   "share": 0.8114,
+   "entries": 17467
+  },
+  "detail2ScaleX": {
+   "value": "8",
+   "share": 0.989,
+   "entries": 17467
+  },
+  "detail2ScaleY": {
+   "value": "8",
+   "share": 0.989,
+   "entries": 17467
+  },
+  "detail3ScaleX": {
+   "value": "8",
+   "share": 0.9873,
+   "entries": 17467
+  },
+  "detail3ScaleY": {
+   "value": "8",
+   "share": 0.9872,
+   "entries": 17467
+  },
+  "detailMap": {
+   "value": "",
+   "share": 0.6428,
+   "entries": 17467
+  },
+  "detailScaleHeight": {
+   "value": "1",
+   "share": 0.8841,
+   "entries": 17467
+  },
+  "detailScaleHeight1": {
+   "value": "1",
+   "share": 0.9551,
+   "entries": 17467
+  },
+  "detailScaleHeight2": {
+   "value": "1",
+   "share": 0.994,
+   "entries": 17467
+  },
+  "detailScaleHeight3": {
+   "value": "1",
+   "share": 0.9907,
+   "entries": 17467
+  },
+  "detailScaleX": {
+   "value": "8",
+   "share": 0.6634,
+   "entries": 17467
+  },
+  "detailScaleY": {
+   "value": "8",
+   "share": 0.6639,
+   "entries": 17467
+  },
+  "distFalloff": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "distFalloffBeginDistance": {
+   "value": "200",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "distFalloffEndDistance": {
+   "value": "10",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "distortionColorBehavior": {
+   "value": "scales distortion strength*",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "distortionScaleX": {
+   "value": "0.5",
+   "share": 0.9988,
+   "entries": 17467
+  },
+  "distortionScaleY": {
+   "value": "0.5",
+   "share": 0.9988,
+   "entries": 17467
+  },
+  "doNotUse": {
+   "value": "0",
+   "share": 0.9937,
+   "entries": 17467
+  },
+  "doubleSidedLighting": {
+   "value": "0",
+   "share": 0.9987,
+   "entries": 17467
+  },
+  "drawToggle": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "dummy": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "emissiveFalloff": {
+   "value": "0",
+   "share": 0.9812,
+   "entries": 17467
+  },
+  "emissiveIncompetence": {
+   "value": "0",
+   "share": 0.9505,
+   "entries": 17467
+  },
+  "enableGTAO": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "enemyMaterial": {
+   "value": "",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "envMapExponent": {
+   "value": "1",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "envMapMax": {
+   "value": "1",
+   "share": 0.9784,
+   "entries": 17467
+  },
+  "envMapMin": {
+   "value": "1",
+   "share": 0.9723,
+   "entries": 17467
+  },
+  "eyeOffsetDepth": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "failedPBR": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "falloff": {
+   "value": "0",
+   "share": 0.9995,
+   "entries": 17467
+  },
+  "falloffBeginAngle": {
+   "value": "35",
+   "share": 0.995,
+   "entries": 17467
+  },
+  "falloffBeginColor": {
+   "value": "1 1 1 1",
+   "share": 0.9636,
+   "entries": 17467
+  },
+  "falloffEndAngle": {
+   "value": "65",
+   "share": 0.995,
+   "entries": 17467
+  },
+  "falloffEndColor": {
+   "value": "0.5 0.5 0.5 0.5",
+   "share": 0.9636,
+   "entries": 17467
+  },
+  "filterColor": {
+   "value": "aniso2x (mip linear)",
+   "share": 0.9531,
+   "entries": 17467
+  },
+  "filterColor00": {
+   "value": "linear (mip linear)",
+   "share": 0.5698,
+   "entries": 17467
+  },
+  "filterColor01": {
+   "value": "linear (mip linear)",
+   "share": 0.5698,
+   "entries": 17467
+  },
+  "filterColor02": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColor03": {
+   "value": "linear (mip linear)",
+   "share": 0.5698,
+   "entries": 17467
+  },
+  "filterColor04": {
+   "value": "linear (mip linear)",
+   "share": 0.5696,
+   "entries": 17467
+  },
+  "filterColor05": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColor06": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColor07": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColor08": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColor09": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColor10": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColor11": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColor12": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColor13": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColor14": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColor15": {
+   "value": "linear (mip linear)",
+   "share": 0.5697,
+   "entries": 17467
+  },
+  "filterColorDetail": {
+   "value": "aniso2x (mip linear)",
+   "share": 0.7148,
+   "entries": 17467
+  },
+  "filterDetail": {
+   "value": "aniso2x (mip linear)",
+   "share": 0.9943,
+   "entries": 17467
+  },
+  "filterNormal": {
+   "value": "aniso2x (mip linear)",
+   "share": 0.9683,
+   "entries": 17467
+  },
+  "filterOcc": {
+   "value": "linear (mip linear)",
+   "share": 0.5554,
+   "entries": 17467
+  },
+  "filterReveal": {
+   "value": "linear (mip linear)",
+   "share": 0.5601,
+   "entries": 17467
+  },
+  "filterSpecular": {
+   "value": "linear (mip linear)",
+   "share": 0.5584,
+   "entries": 17467
+  },
+  "filterTransition": {
+   "value": "linear (mip nearest)",
+   "share": 0.6904,
+   "entries": 17467
+  },
+  "fixedGloss": {
+   "value": "0",
+   "share": 0.9592,
+   "entries": 17467
+  },
+  "flagRipple1ScrollU": {
+   "value": "0",
+   "share": 0.9947,
+   "entries": 17467
+  },
+  "flagRipple1ScrollV": {
+   "value": "0",
+   "share": 0.9959,
+   "entries": 17467
+  },
+  "flagRipple2ScrollU": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "flagRipple2ScrollV": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "flagRippleHeight": {
+   "value": "1",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "flagRippleScale": {
+   "value": "1",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "flagW": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "flagX": {
+   "value": "1",
+   "share": 0.9933,
+   "entries": 17467
+  },
+  "flagY": {
+   "value": "0",
+   "share": 0.9995,
+   "entries": 17467
+  },
+  "flagZ": {
+   "value": "0",
+   "share": 0.6241,
+   "entries": 17467
+  },
+  "flickerLookupMap": {
+   "value": "",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "flickerMax": {
+   "value": "1",
+   "share": 0.995,
+   "entries": 17467
+  },
+  "flickerMin": {
+   "value": "0",
+   "share": 0.9768,
+   "entries": 17467
+  },
+  "flickerPower": {
+   "value": "1",
+   "share": 0.9825,
+   "entries": 17467
+  },
+  "flickerSeedU": {
+   "value": "0",
+   "share": 0.9829,
+   "entries": 17467
+  },
+  "flickerSeedV": {
+   "value": "0",
+   "share": 0.9844,
+   "entries": 17467
+  },
+  "flickerSpeed": {
+   "value": "1",
+   "share": 0.9775,
+   "entries": 17467
+  },
+  "foamColor": {
+   "value": "1 1 1 1",
+   "share": 0.9972,
+   "entries": 17467
+  },
+  "foamMapEnable": {
+   "value": "0",
+   "share": 0.9978,
+   "entries": 17467
+  },
+  "foamWaveIncrease": {
+   "value": "0",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "gCheckBox00": {
+   "value": "0",
+   "share": 0.9984,
+   "entries": 17467
+  },
+  "gCheckBox01": {
+   "value": "0",
+   "share": 0.999,
+   "entries": 17467
+  },
+  "gCheckBox02": {
+   "value": "0",
+   "share": 0.999,
+   "entries": 17467
+  },
+  "gCheckBox03": {
+   "value": "0",
+   "share": 0.9991,
+   "entries": 17467
+  },
+  "gCheckBox04": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCheckBox05": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCheckBox06": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCheckBox07": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor00_B": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor00_G": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor00_R": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor01_B": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor01_G": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor01_R": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor02_B": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor02_G": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor02_R": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor03_B": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor03_G": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor03_R": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor04_B": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor04_G": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor04_R": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor05_B": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor05_G": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor05_R": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor06_B": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor06_G": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor06_R": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor07_B": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor07_G": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColor07_R": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColorStops00": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColorStops01": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColorStops02": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColorStops03": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColorStops04": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColorStops05": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColorStops06": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gColorStops07": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCustomReflectionProbe": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCustomReflectionProbeB": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCustomReflectionProbeBias": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCustomReflectionProbeG": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCustomReflectionProbeR": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCustomReflectionProbeScaleB": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCustomReflectionProbeScaleG": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCustomReflectionProbeScaleR": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gCustomReflectionProbeStops": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gDepthFeather": {
+   "value": "10",
+   "share": 0.9995,
+   "entries": 17467
+  },
+  "gDistortion00": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gDistortion01": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gDistortion02": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gDistortion03": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gFoamScrollAngle0": {
+   "value": "90",
+   "share": 0.9942,
+   "entries": 17467
+  },
+  "gFoamScrollAngle1": {
+   "value": "180",
+   "share": 0.9939,
+   "entries": 17467
+  },
+  "gFoamScrollAngle2": {
+   "value": "270",
+   "share": 0.9946,
+   "entries": 17467
+  },
+  "gFoamScrollAngle3": {
+   "value": "0",
+   "share": 0.9977,
+   "entries": 17467
+  },
+  "gFoamScrollSpeed0": {
+   "value": "25",
+   "share": 0.997,
+   "entries": 17467
+  },
+  "gFoamScrollSpeed1": {
+   "value": "29.75",
+   "share": 0.997,
+   "entries": 17467
+  },
+  "gFoamScrollSpeed2": {
+   "value": "25.0625",
+   "share": 0.997,
+   "entries": 17467
+  },
+  "gFoamScrollSpeed3": {
+   "value": "38.25",
+   "share": 0.997,
+   "entries": 17467
+  },
+  "gFoamUVNoiseAngle0": {
+   "value": "90",
+   "share": 0.9982,
+   "entries": 17467
+  },
+  "gFoamUVNoiseAngle1": {
+   "value": "180",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gFoamUVNoiseScale0": {
+   "value": "13",
+   "share": 0.8528,
+   "entries": 17467
+  },
+  "gFoamUVNoiseScale1": {
+   "value": "31",
+   "share": 0.8536,
+   "entries": 17467
+  },
+  "gFoamUVNoiseSpeed0": {
+   "value": "0.125",
+   "share": 0.9985,
+   "entries": 17467
+  },
+  "gFoamUVNoiseSpeed1": {
+   "value": "0.0125",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "gFoamUVScale0": {
+   "value": "1024",
+   "share": 0.997,
+   "entries": 17467
+  },
+  "gFoamUVScale1": {
+   "value": "1795",
+   "share": 0.997,
+   "entries": 17467
+  },
+  "gFoamUVScale2": {
+   "value": "3142",
+   "share": 0.997,
+   "entries": 17467
+  },
+  "gFoamUVScale3": {
+   "value": "5497",
+   "share": 0.997,
+   "entries": 17467
+  },
+  "gHorizonDistance": {
+   "value": "10000",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gNormalScale00": {
+   "value": "1",
+   "share": 0.9985,
+   "entries": 17467
+  },
+  "gNormalScale01": {
+   "value": "1",
+   "share": 0.9991,
+   "entries": 17467
+  },
+  "gNormalScale02": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gNormalScale03": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gReflectionRay0": {
+   "value": "50",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gReflectionRay1": {
+   "value": "100",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gReflectionRay2": {
+   "value": "200",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gRefractionAmount": {
+   "value": "8",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gScale0": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gScale1": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gScale2": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gScale3": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gScale4": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gScale5": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gScale6": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gScale7": {
+   "value": "0",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "gSharedU_Offset00": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedU_Offset01": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedU_Offset02": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedU_Offset03": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedU_Scale00": {
+   "value": "1",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "gSharedU_Scale01": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedU_Scale02": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedU_Scale03": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedV_Offset00": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedV_Offset01": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedV_Offset02": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedV_Offset03": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedV_Scale00": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedV_Scale01": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedV_Scale02": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSharedV_Scale03": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSpecIndexOfRefraction": {
+   "value": "1.333",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSpecLobeAWeight": {
+   "value": "0.375",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSpecLobeRoughnessA": {
+   "value": "0.05",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gSpecLobeRoughnessB": {
+   "value": "0.1875",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet00_OffsetU": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet00_OffsetV": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet00_ScaleU": {
+   "value": "128",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet00_ScaleV": {
+   "value": "128",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet01_OffsetU": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet01_OffsetV": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet01_ScaleU": {
+   "value": "128",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet01_ScaleV": {
+   "value": "128",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet02_OffsetU": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet02_OffsetV": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet02_ScaleU": {
+   "value": "128",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet02_ScaleV": {
+   "value": "128",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet03_OffsetU": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet03_OffsetV": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet03_ScaleU": {
+   "value": "128",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScaleOffSet03_ScaleV": {
+   "value": "128",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScroll00_Angle": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "gUVScroll00_ScaleU": {
+   "value": "512",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScroll00_ScaleV": {
+   "value": "512",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScroll00_Speed": {
+   "value": "1",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "gUVScroll01_Angle": {
+   "value": "0",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "gUVScroll01_ScaleU": {
+   "value": "512",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScroll01_ScaleV": {
+   "value": "512",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScroll01_Speed": {
+   "value": "1",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "gUVScroll02_Angle": {
+   "value": "0",
+   "share": 0.9942,
+   "entries": 17467
+  },
+  "gUVScroll02_ScaleU": {
+   "value": "256",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScroll02_ScaleV": {
+   "value": "256",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScroll02_Speed": {
+   "value": "1",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "gUVScroll03_Angle": {
+   "value": "0",
+   "share": 0.9956,
+   "entries": 17467
+  },
+  "gUVScroll03_ScaleU": {
+   "value": "256",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScroll03_ScaleV": {
+   "value": "256",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gUVScroll03_Speed": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gWetnessNormalStrength": {
+   "value": "0.25",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "gWetnessRoughnessLobe0": {
+   "value": "0.05",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "germanUnsafe": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "glossRangeMax": {
+   "value": "17",
+   "share": 0.2577,
+   "entries": 17467
+  },
+  "glossRangeMax1": {
+   "value": "17",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "glossRangeMax2": {
+   "value": "17",
+   "share": 0.8041,
+   "entries": 17467
+  },
+  "glossRangeMax3": {
+   "value": "17",
+   "share": 0.9943,
+   "entries": 17467
+  },
+  "glossRangeMin": {
+   "value": "0",
+   "share": 0.7453,
+   "entries": 17467
+  },
+  "glossRangeMin1": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "glossRangeMin2": {
+   "value": "0",
+   "share": 0.9758,
+   "entries": 17467
+  },
+  "glossRangeMin3": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "glossSurfaceType": {
+   "value": "<custom>",
+   "share": 0.6217,
+   "entries": 17467
+  },
+  "grimeAnglePitch": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "grimeAngleYaw": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "hasEditorMaterial": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "heatmap": {
+   "value": "",
+   "share": 0.9802,
+   "entries": 17467
+  },
+  "heroAsset": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "heroLight": {
+   "value": "0",
+   "share": 0.9972,
+   "entries": 17467
+  },
+  "ignoreScriptVectors": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "imageTime": {
+   "value": "1",
+   "share": 0.992,
+   "entries": 17467
+  },
+  "invertFalloff": {
+   "value": "0",
+   "share": 0.9992,
+   "entries": 17467
+  },
+  "itemClip": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "japaneseUnsafe": {
+   "value": "0",
+   "share": 0.9995,
+   "entries": 17467
+  },
+  "kelvinMax": {
+   "value": "1800",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "kelvinMin": {
+   "value": "768",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "layerSortDecal": {
+   "value": "Debris (top)",
+   "share": 0.9111,
+   "entries": 17467
+  },
+  "levelsInputMax": {
+   "value": "255",
+   "share": 0.9991,
+   "entries": 17467
+  },
+  "levelsInputMax1": {
+   "value": "255",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "levelsInputMin": {
+   "value": "0",
+   "share": 0.9984,
+   "entries": 17467
+  },
+  "levelsInputMin1": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "levelsOutputMax": {
+   "value": "255",
+   "share": 0.9981,
+   "entries": 17467
+  },
+  "levelsOutputMax1": {
+   "value": "255",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "levelsOutputMin": {
+   "value": "0",
+   "share": 0.9991,
+   "entries": 17467
+  },
+  "levelsOutputMin1": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "lightDemoteHint": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "lightPortal": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "locale_afghanistan": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_angola": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_antarctica": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_carrier": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_core": {
+   "value": "0",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "locale_cuba": {
+   "value": "0",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "locale_kyrgyzstan": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_la": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "locale_mp_dlc": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "locale_myanmar": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_nepal": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_nicaragua": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_pakistan": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_panama": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_ship": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_singapore": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_test": {
+   "value": "0",
+   "share": 0.989,
+   "entries": 17467
+  },
+  "locale_tools": {
+   "value": "0",
+   "share": 0.9944,
+   "entries": 17467
+  },
+  "locale_yemen": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "locale_zombie": {
+   "value": "0",
+   "share": 0.9995,
+   "entries": 17467
+  },
+  "matError": {
+   "value": "INVALID MATERIAL TYPE ''",
+   "share": 1.0,
+   "entries": 30
+  },
+  "materialCategory": {
+   "value": "Geometry",
+   "share": 0.4905,
+   "entries": 17467
+  },
+  "materialType": {
+   "value": "lit",
+   "share": 0.1385,
+   "entries": 17467
+  },
+  "matureContent": {
+   "value": "0",
+   "share": 0.9978,
+   "entries": 17467
+  },
+  "maxRayDepth": {
+   "value": "1000",
+   "share": 0.9949,
+   "entries": 17467
+  },
+  "missileClip": {
+   "value": "0",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "mount": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "noCastShadow": {
+   "value": "0",
+   "share": 0.9818,
+   "entries": 17467
+  },
+  "noDraw": {
+   "value": "0",
+   "share": 0.9943,
+   "entries": 17467
+  },
+  "noDrop": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "noDynamicLight": {
+   "value": "0",
+   "share": 0.9939,
+   "entries": 17467
+  },
+  "noFallDamage": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "noFog": {
+   "value": "0",
+   "share": 0.9927,
+   "entries": 17467
+  },
+  "noImpact": {
+   "value": "0",
+   "share": 0.9921,
+   "entries": 17467
+  },
+  "noMarks": {
+   "value": "0",
+   "share": 0.9903,
+   "entries": 17467
+  },
+  "noPenetrate": {
+   "value": "0",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "noReceiveDynamicShadow": {
+   "value": "0",
+   "share": 0.9982,
+   "entries": 17467
+  },
+  "noSteps": {
+   "value": "0",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "nonColliding": {
+   "value": "0",
+   "share": 0.9922,
+   "entries": 17467
+  },
+  "nonSolid": {
+   "value": "0",
+   "share": 0.9958,
+   "entries": 17467
+  },
+  "normalFlattening": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "normalHeightScale": {
+   "value": "1",
+   "share": 0.9579,
+   "entries": 17467
+  },
+  "normalMap": {
+   "value": "",
+   "share": 0.1759,
+   "entries": 17467
+  },
+  "normalVarianceScale": {
+   "value": "1",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "normalsFlowScaleMin": {
+   "value": "0",
+   "share": 0.9979,
+   "entries": 17467
+  },
+  "notInBoats": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "objectiveColorsEnabled": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "occMap": {
+   "value": "",
+   "share": 0.455,
+   "entries": 17467
+  },
+  "oceanSunBrightness": {
+   "value": "10",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "oceanSunSize": {
+   "value": "0.0125",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "onlyCastShadow": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "onlyCastSunShadow": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "orientNormalsToFlow": {
+   "value": "0",
+   "share": 0.9967,
+   "entries": 17467
+  },
+  "origin": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "outdoorOccluder": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "outdoorOnly": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "overwaterOpacityScale": {
+   "value": "0.75",
+   "share": 0.9969,
+   "entries": 17467
+  },
+  "physicsGeom": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "playerClip": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "playerVehicleClip": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "portal": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "reflectionMapEnable": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "reflectionProbeAmount": {
+   "value": "1",
+   "share": 0.9954,
+   "entries": 17467
+  },
+  "revealScaleX": {
+   "value": "1",
+   "share": 0.9994,
+   "entries": 17467
+  },
+  "revealScaleY": {
+   "value": "1",
+   "share": 0.9994,
+   "entries": 17467
+  },
+  "rowCount": {
+   "value": "1",
+   "share": 0.9895,
+   "entries": 17467
+  },
+  "scaleNormalsWithFlow": {
+   "value": "0",
+   "share": 0.9969,
+   "entries": 17467
+  },
+  "scaleRGB": {
+   "value": "8",
+   "share": 0.9276,
+   "entries": 17467
+  },
+  "scatterColorB": {
+   "value": "0.145",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "scatterColorG": {
+   "value": "0.195",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "scatterColorR": {
+   "value": "0.145",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "screenReflection": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "seethruprlx_alphapower": {
+   "value": "12",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "seethruprlx_height": {
+   "value": "0.06",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "seethruprlx_solidrad": {
+   "value": "0.1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "showAdvancedOptions": {
+   "value": "<none>*",
+   "share": 0.9995,
+   "entries": 17467
+  },
+  "sky": {
+   "value": "0",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "skyCenterX": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "skyCenterY": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "skyCenterZ": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "skyFogFraction": {
+   "value": "1",
+   "share": 0.9991,
+   "entries": 17467
+  },
+  "skyHalfSpace": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "skyRotation": {
+   "value": "0",
+   "share": 0.9952,
+   "entries": 17467
+  },
+  "skyScaleRGB": {
+   "value": "8",
+   "share": 0.9674,
+   "entries": 17467
+  },
+  "skySize": {
+   "value": "8000",
+   "share": 0.9966,
+   "entries": 17467
+  },
+  "skyStops": {
+   "value": "-32",
+   "share": 0.7397,
+   "entries": 17467
+  },
+  "slick": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sort": {
+   "value": "<default>*",
+   "share": 0.9829,
+   "entries": 17467
+  },
+  "specAmount": {
+   "value": "1",
+   "share": 0.9598,
+   "entries": 17467
+  },
+  "specColorDesaturate1": {
+   "value": "1",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "specColorDesaturate2": {
+   "value": "1",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "specColorDesaturate3": {
+   "value": "1",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "specColorIntensity1": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "specColorIntensity2": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "specColorIntensity3": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "specColorMap": {
+   "value": "",
+   "share": 0.549,
+   "entries": 17467
+  },
+  "specColorStrength": {
+   "value": "100",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "specColorTint": {
+   "value": "0.760757 0.764664 0.764664 1",
+   "share": 0.6662,
+   "entries": 17467
+  },
+  "specColorTint1": {
+   "value": "0.760757 0.764664 0.764664 1",
+   "share": 0.8508,
+   "entries": 17467
+  },
+  "specColorTint2": {
+   "value": "0.760757 0.764664 0.764664 1",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "specColorTint3": {
+   "value": "0.760757 0.764664 0.764664 1",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "specDetailMap": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "specDetailScaleX": {
+   "value": "8",
+   "share": 0.9948,
+   "entries": 17467
+  },
+  "specDetailScaleY": {
+   "value": "8",
+   "share": 0.9948,
+   "entries": 17467
+  },
+  "specDetailStrength": {
+   "value": "100",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "specMapEnable": {
+   "value": "0",
+   "share": 0.9967,
+   "entries": 17467
+  },
+  "specReflectionMap": {
+   "value": "",
+   "share": 0.999,
+   "entries": 17467
+  },
+  "specTint_b": {
+   "value": "0.2",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "specTint_g": {
+   "value": "0.2",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "specTint_r": {
+   "value": "0.2",
+   "share": 0.9975,
+   "entries": 17467
+  },
+  "spotLightWeight": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "ssrRayDepthScale": {
+   "value": "1",
+   "share": 0.9985,
+   "entries": 17467
+  },
+  "ssrRayStepSize": {
+   "value": "20",
+   "share": 0.9981,
+   "entries": 17467
+  },
+  "stairs": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "stencil": {
+   "value": "Disable",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "stencilFunc1": {
+   "value": "Always",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "stencilFunc2": {
+   "value": "Always",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "stencilOpFail1": {
+   "value": "Keep",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "stencilOpFail2": {
+   "value": "Keep",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "stencilOpPass1": {
+   "value": "Keep",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "stencilOpPass2": {
+   "value": "Keep",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "stencilOpZFail1": {
+   "value": "Keep",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "stencilOpZFail2": {
+   "value": "Keep",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "structural": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "surfaceClimbType": {
+   "value": "<none>",
+   "share": 0.9995,
+   "entries": 17467
+  },
+  "surfaceType": {
+   "value": "metal",
+   "share": 0.3164,
+   "entries": 17467
+  },
+  "sw_codetexture_00": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_01": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_02": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_03": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_04": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_05": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_06": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_07": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_08": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_09": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_10": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_11": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_12": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_13": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_14": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_codetexture_15": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_00": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "sw_static_bool_01": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_02": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_03": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_04": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_05": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_06": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_07": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_08": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_09": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_10": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_11": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_12": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_13": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_14": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_bool_15": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_00": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_01": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_02": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_03": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_04": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_05": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_06": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_07": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_08": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_09": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_10": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_11": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_12": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_13": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_14": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_enum_15": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_00": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_01": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_02": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_03": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_04": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_05": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_06": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_07": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_08": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_09": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_10": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_11": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_12": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_13": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_14": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_float_15": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_00": {
+   "value": "0",
+   "share": 0.9985,
+   "entries": 17467
+  },
+  "sw_static_int_01": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_02": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_03": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_04": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_05": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_06": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_07": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_08": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_09": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_10": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_11": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_12": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_13": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_14": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sw_static_int_15": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "sway_x": {
+   "value": "1",
+   "share": 0.9992,
+   "entries": 17467
+  },
+  "sway_y": {
+   "value": "1",
+   "share": 0.9989,
+   "entries": 17467
+  },
+  "template": {
+   "value": "material.template",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "tensionCompressHeight": {
+   "value": "1",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "tensionPower": {
+   "value": "1",
+   "share": 0.9994,
+   "entries": 17467
+  },
+  "tensionStrength": {
+   "value": "1",
+   "share": 0.9994,
+   "entries": 17467
+  },
+  "tensionStretchHeight": {
+   "value": "1",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "tessSize": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "texScroll": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "texTile00": {
+   "value": "tile both*",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "texTile01": {
+   "value": "tile both*",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "texTile02": {
+   "value": "tile both*",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "texTile03": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "texTile04": {
+   "value": "tile both*",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "texTile05": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "texTile06": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "texTile07": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "texTile08": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "texTile09": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "texTile10": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "texTile11": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "texTile12": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "texTile13": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "texTile14": {
+   "value": "tile both*",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "texTile15": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "textureAtlasColumnCount": {
+   "value": "1",
+   "share": 0.9926,
+   "entries": 17467
+  },
+  "textureAtlasFrameRate": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "textureAtlasRowCount": {
+   "value": "1",
+   "share": 0.9935,
+   "entries": 17467
+  },
+  "thermalMaterial": {
+   "value": "",
+   "share": 0.9833,
+   "entries": 17467
+  },
+  "tileColor": {
+   "value": "tile both*",
+   "share": 0.9711,
+   "entries": 17467
+  },
+  "tileNormal": {
+   "value": "tile both*",
+   "share": 0.9972,
+   "entries": 17467
+  },
+  "tileOcc": {
+   "value": "tile both*",
+   "share": 0.9989,
+   "entries": 17467
+  },
+  "tileReveal": {
+   "value": "tile both*",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "tileSpecular": {
+   "value": "tile both*",
+   "share": 0.9987,
+   "entries": 17467
+  },
+  "tileTransition": {
+   "value": "tile both*",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "tilingHeight": {
+   "value": "<auto>",
+   "share": 0.9327,
+   "entries": 17467
+  },
+  "tilingWidth": {
+   "value": "<auto>",
+   "share": 0.9331,
+   "entries": 17467
+  },
+  "transColorMap": {
+   "value": "",
+   "share": 0.9889,
+   "entries": 17467
+  },
+  "transColorTint": {
+   "value": "1 1 1 1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "transGlossMap": {
+   "value": "",
+   "share": 0.9889,
+   "entries": 17467
+  },
+  "transGlossRangeMax": {
+   "value": "13",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "transGlossRangeMin": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "transNormalHeightScale": {
+   "value": "1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "transNormalMap": {
+   "value": "",
+   "share": 0.9889,
+   "entries": 17467
+  },
+  "transRevealMap": {
+   "value": "",
+   "share": 0.989,
+   "entries": 17467
+  },
+  "transRevealRamp": {
+   "value": "0.5",
+   "share": 0.9994,
+   "entries": 17467
+  },
+  "transRevealSoftEdge": {
+   "value": "0.01",
+   "share": 0.9994,
+   "entries": 17467
+  },
+  "transScaleX": {
+   "value": "8",
+   "share": 0.9891,
+   "entries": 17467
+  },
+  "transScaleY": {
+   "value": "8",
+   "share": 0.9892,
+   "entries": 17467
+  },
+  "transSpecColorTint": {
+   "value": "0.760757 0.764664 0.764664 1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "transSpecMap": {
+   "value": "",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "translucentShadowOpacity": {
+   "value": "0.5",
+   "share": 0.5491,
+   "entries": 17467
+  },
+  "transparent": {
+   "value": "0",
+   "share": 0.9935,
+   "entries": 17467
+  },
+  "treeCanopyDisablePrepass": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "treeCanopyEnableSway": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "treeCanopyMinimumSway": {
+   "value": "0",
+   "share": 0.9899,
+   "entries": 17467
+  },
+  "treeCanopyNewVertexControl": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "treeCanopyRadialLighting": {
+   "value": "0.5",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "treeCanopyScaleRotationAngles": {
+   "value": "0.1",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "treeCanopyScatterColor": {
+   "value": "0.7 0.83 0.36 0",
+   "share": 0.9496,
+   "entries": 17467
+  },
+  "treeCanopySpecularGloss": {
+   "value": "0.3",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "treeCanopySwayRange": {
+   "value": "0.2",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "uScale": {
+   "value": "1",
+   "share": 0.9961,
+   "entries": 17467
+  },
+  "uScroll": {
+   "value": "0",
+   "share": 0.9962,
+   "entries": 17467
+  },
+  "uScroll1": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "umbraOccluder": {
+   "value": "0",
+   "share": 0.9995,
+   "entries": 17467
+  },
+  "umbraTarget": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "underwaterOpacityScale": {
+   "value": "0.75",
+   "share": 0.9968,
+   "entries": 17467
+  },
+  "usage": {
+   "value": "<not in editor>",
+   "share": 0.8356,
+   "entries": 17467
+  },
+  "useAlphaDissolve": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "useAlphaReveal": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "useAsCamo": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "useLegacyNormalEncoding": {
+   "value": "0",
+   "share": 0.979,
+   "entries": 17467
+  },
+  "useLoopedScreenspaceReflection": {
+   "value": "0",
+   "share": 0.999,
+   "entries": 17467
+  },
+  "useOldHDRScale": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "useParticleCloudVerticalAlign": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "useScreenspaceReflection": {
+   "value": "0",
+   "share": 0.9978,
+   "entries": 17467
+  },
+  "useSpotLight": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "useSpotLightShadow": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "useUVRotate": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "useUVScroll": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "useWorldOffsets1": {
+   "value": "1",
+   "share": 0.9445,
+   "entries": 17467
+  },
+  "useWorldOffsets2": {
+   "value": "1",
+   "share": 0.9448,
+   "entries": 17467
+  },
+  "useWorldOffsets3": {
+   "value": "1",
+   "share": 0.9556,
+   "entries": 17467
+  },
+  "utilityClip": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "uvMotionToggle1": {
+   "value": "0",
+   "share": 0.993,
+   "entries": 17467
+  },
+  "uvMotionToggle2": {
+   "value": "0",
+   "share": 0.9973,
+   "entries": 17467
+  },
+  "uvMotionToggle3": {
+   "value": "0",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "uvMotionToggle4": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "uvRotationRate": {
+   "value": "0",
+   "share": 0.9825,
+   "entries": 17467
+  },
+  "uvRotationRate1": {
+   "value": "0",
+   "share": 0.9892,
+   "entries": 17467
+  },
+  "uvRotationRate2": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "uvScrollAngle": {
+   "value": "0",
+   "share": 0.997,
+   "entries": 17467
+  },
+  "uvScrollAngle1": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "uvScrollRate": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "vScale": {
+   "value": "1",
+   "share": 0.9961,
+   "entries": 17467
+  },
+  "vScroll": {
+   "value": "0",
+   "share": 0.996,
+   "entries": 17467
+  },
+  "vScroll1": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "vehicleClip": {
+   "value": "0",
+   "share": 0.9997,
+   "entries": 17467
+  },
+  "vertexAlphaAO": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "waterBobAmount": {
+   "value": "5",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterBobSpeed": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterBobWaveLength": {
+   "value": "8192",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterColor": {
+   "value": "0.19 0.3 0.15 0",
+   "share": 0.9642,
+   "entries": 17467
+  },
+  "waterDepthFeather": {
+   "value": "1",
+   "share": 0.9632,
+   "entries": 17467
+  },
+  "waterDetailNormalFadeMax": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterDetailNormalFadeMin": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterDetailNormalScale": {
+   "value": "0.25",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterDetailNormalScrollAngleA": {
+   "value": "7",
+   "share": 0.9943,
+   "entries": 17467
+  },
+  "waterDetailNormalScrollAngleB": {
+   "value": "173",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterDetailNormalScrollSpeedA": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterDetailNormalScrollSpeedB": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterDetailNormalTextureScale": {
+   "value": "512",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterDetailNormalTextureScaleB": {
+   "value": "512",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFarColorB": {
+   "value": "0.415",
+   "share": 0.9636,
+   "entries": 17467
+  },
+  "waterFarColorG": {
+   "value": "0.415",
+   "share": 0.9636,
+   "entries": 17467
+  },
+  "waterFarColorR": {
+   "value": "0.415",
+   "share": 0.9636,
+   "entries": 17467
+  },
+  "waterFarDistance": {
+   "value": "10000",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFeather": {
+   "value": "0.05",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFoamLayer0Scale": {
+   "value": "1024",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFoamLayer0Scroll": {
+   "value": "25",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFoamLayer1Scale": {
+   "value": "1795",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFoamLayer1Scroll": {
+   "value": "-29.75",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFoamLayer2Scale": {
+   "value": "3142",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFoamLayer2Scroll": {
+   "value": "-35.0625",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFoamLayer3Scale": {
+   "value": "5497",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFoamLayer3Scroll": {
+   "value": "38.25",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFoamMax": {
+   "value": "10",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterFoamMin": {
+   "value": "0.5",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterGroundColor": {
+   "value": "0.26 0.27 0.11 0",
+   "share": 0.9642,
+   "entries": 17467
+  },
+  "waterNearColorB": {
+   "value": "0.145",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterNearColorG": {
+   "value": "0.145",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterNearColorR": {
+   "value": "0.145",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterNormalScale": {
+   "value": "0.25",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterNormalScrollAngleA": {
+   "value": "3",
+   "share": 0.9943,
+   "entries": 17467
+  },
+  "waterNormalScrollAngleB": {
+   "value": "177",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterNormalScrollSpeedA": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterNormalScrollSpeedB": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterNormalTextureScale": {
+   "value": "2048",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterNormalTextureScaleB": {
+   "value": "2048",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterOcean": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterOpacity": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterOpacityAmount": {
+   "value": "0.75",
+   "share": 0.9984,
+   "entries": 17467
+  },
+  "waterRefract": {
+   "value": "30",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterRefractionAmount": {
+   "value": "0",
+   "share": 0.9885,
+   "entries": 17467
+  },
+  "waterRoughness": {
+   "value": "0.1",
+   "share": 0.929,
+   "entries": 17467
+  },
+  "waterScrollX0": {
+   "value": "-1.98",
+   "share": 0.9832,
+   "entries": 17467
+  },
+  "waterScrollX1": {
+   "value": "4.44",
+   "share": 0.9832,
+   "entries": 17467
+  },
+  "waterScrollX2": {
+   "value": "3.44",
+   "share": 0.9832,
+   "entries": 17467
+  },
+  "waterScrollY0": {
+   "value": "1.32",
+   "share": 0.9832,
+   "entries": 17467
+  },
+  "waterScrollY1": {
+   "value": "-5.18",
+   "share": 0.9832,
+   "entries": 17467
+  },
+  "waterScrollY2": {
+   "value": "3.18",
+   "share": 0.9832,
+   "entries": 17467
+  },
+  "waterShadowAdjust": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterShadowOffset": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterSkyColor": {
+   "value": "0.63 0.77 0.77 0",
+   "share": 0.9642,
+   "entries": 17467
+  },
+  "waterSpecularAmount": {
+   "value": "1",
+   "share": 0.9991,
+   "entries": 17467
+  },
+  "waterSpecularRoughnessA": {
+   "value": "0.0625",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterSpecularRoughnessB": {
+   "value": "0.1875",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterThinFilm": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterThinFilmAmount": {
+   "value": "0.05",
+   "share": 0.9943,
+   "entries": 17467
+  },
+  "waterThinFilmDepth": {
+   "value": "0.25",
+   "share": 0.9943,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveAmplitude0": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveAmplitude1": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveAmplitude2": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveAmplitude3": {
+   "value": "0",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveAngle0": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveAngle1": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveAngle2": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveAngle3": {
+   "value": "0",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWavePhase0": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWavePhase1": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWavePhase2": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWavePhase3": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveSpeed0": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveSpeed1": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveSpeed2": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveSpeed3": {
+   "value": "0",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveSteepness0": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveSteepness1": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveSteepness2": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveSteepness3": {
+   "value": "0",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveWavelength0": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveWavelength1": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveWavelength2": {
+   "value": "0",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaveWavelength3": {
+   "value": "0",
+   "share": 0.9996,
+   "entries": 17467
+  },
+  "waterVertexGerstnerWaves": {
+   "value": "0",
+   "share": 0.9995,
+   "entries": 17467
+  },
+  "waterWeaveAmount": {
+   "value": "5",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterWeaveSpeed": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "waterWeaveWaveLength": {
+   "value": "8192",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "wetnessInvert": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "zFeather": {
+   "value": "0",
+   "share": 0.9883,
+   "entries": 17467
+  },
+  "zFeatherComputeSprites": {
+   "value": "0",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "zFeatherDepth": {
+   "value": "40",
+   "share": 0.9837,
+   "entries": 17467
+  },
+  "zFeatherMaskViewModel": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "zFeatherOverride": {
+   "value": "0",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "zFeatherPlane": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "zFeatherPlaneDir": {
+   "value": "1",
+   "share": 0.9998,
+   "entries": 17467
+  },
+  "zFeatherViewModel": {
+   "value": "0",
+   "share": 1.0,
+   "entries": 17467
+  },
+  "zoomMax": {
+   "value": "1",
+   "share": 0.9993,
+   "entries": 17467
+  },
+  "zoomMin": {
+   "value": "1",
+   "share": 0.9999,
+   "entries": 17467
+  },
+  "zoomRate": {
+   "value": "0",
+   "share": 0.9975,
+   "entries": 17467
+  }
+ }
+}

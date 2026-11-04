@@ -4,10 +4,14 @@
 #include "DiskGameSizes.h"
 #include "ExportNaming.h"
 
+#include "Bo3Target.Output.h"
+#include "MaterialDescription.h"
+#include "Bo3Target.Publish.h"
 #include "CliCommands.h"
 #include "CliOptions.h"
 #include "CliSupport.h"
 #include "GameCommand.h"
+#include "GameInstalls.h"
 #include "SettingsManager.h"
 #include "ZonekitZone.h"
 #include "ZoneTableWalker.h"
@@ -94,6 +98,90 @@ namespace
     }
 }
 
+namespace
+{
+    // A setting of graywolf.json that gives a default to a value: the command line wins. Never the target.
+    std::string SavedDefault(const std::string& Given, const char* Key)
+    {
+        return Given.empty() ? SettingsManager::GetSetting(Key, "") : Given;
+    }
+
+    bool OnOff(const std::string& Text, bool& Out)
+    {
+        if (Text == "on" || Text == "true" || Text == "yes") { Out = true; return true; }
+        if (Text == "off" || Text == "false" || Text == "no") { Out = false; return true; }
+        return false;
+    }
+
+    // --target and its companions. Target comes from the command line alone, so a saved setting can never
+    // select the Mod Tools root; the other values default to graywolf.json (bo3_check_gdtdb, bo3_gdtdb_match,
+    // bo3_gdt_mode, bo3_mod_tools_root) when the command line does not give them.
+    bool ReadPublish(const CliOptions& Cli, const std::string& OutRoot, Bo3Target::Publish::Options& P, std::string& Error)
+    {
+        namespace Pb = Bo3Target::Publish;
+        if (!Cli.PublishTarget.empty() && !Pb::ParseTarget(Cli.PublishTarget, P.Which))
+        {
+            Error = "unknown --target " + Cli.PublishTarget + ": none, folder or modtools";
+            return false;
+        }
+        if (P.Which == Pb::Target::None)
+        {
+            if (Cli.PublishPlan || !Cli.CheckGdtDb.empty() || !Cli.GdtDbMatch.empty() || !Cli.GdtMode.empty())
+            {
+                Error = "--plan, --check-gdtdb, --gdtdb-match and --gdt need --target folder or modtools";
+                return false;
+            }
+            return true;
+        }
+        P.Plan = Cli.PublishPlan;
+        const std::string Check = SavedDefault(Cli.CheckGdtDb, "bo3_check_gdtdb");
+        if (!Check.empty() && !OnOff(Check, P.CheckGdtDb))
+        {
+            Error = "unknown --check-gdtdb " + Check + ": on or off";
+            return false;
+        }
+        const std::string Match = SavedDefault(Cli.GdtDbMatch, "bo3_gdtdb_match");
+        if (!Match.empty() && !Bo3Target::GdtDb::ParseMatchMode(Match, P.Match))
+        {
+            Error = "unknown --gdtdb-match " + Match + ": type or name";
+            return false;
+        }
+        const std::string Mode = SavedDefault(Cli.GdtMode, "bo3_gdt_mode");
+        if (!Mode.empty() && Mode != "merge" && Mode != "overwrite")
+        {
+            Error = "unknown --gdt " + Mode + ": merge or overwrite";
+            return false;
+        }
+        P.Merge = Mode != "overwrite";
+
+        // the Mod Tools root. --target modtools writes into it, so only --mod-tools-root on this command line names it;
+        // for the read-only lookups (gdt.db, stock index) the saved default, the install scan and TA_TOOLS_PATH also count
+        std::string Given = Cli.ModToolsRoot, Scan, Ta;
+        if (P.Which != Pb::Target::ModTools)
+        {
+            Given = SavedDefault(Cli.ModToolsRoot, "bo3_mod_tools_root");
+            if (Given.empty())
+            {
+                for (const auto& I : GameInstalls::Detect())
+                {
+                    if (I.DiskId == "bo3") { Scan = I.Path; break; }
+                }
+                char* Env = nullptr;
+                size_t Length = 0;
+                if (_dupenv_s(&Env, &Length, "TA_TOOLS_PATH") == 0 && Env != nullptr)
+                {
+                    Ta = Env;
+                    free(Env);   // NOLINT: _dupenv_s allocates with malloc
+                }
+            }
+        }
+        std::string How;
+        if (!Pb::ChooseRoot(P.Which, Given, Scan, Ta, P.ModToolsRoot, How, Error)) return false;
+        P.OutputRoot = P.Which == Pb::Target::Folder ? fs::path(OutRoot) / "bo3" : P.ModToolsRoot;
+        return true;
+    }
+}
+
 int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Input)
 {
     const auto Fail = [&](const std::string& Why) {
@@ -108,6 +196,47 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
     ExportOptions O;
     Context C;
     C.OutRoot = (fs::path(Options.Out) / Game.Id()).string();
+    Bo3Target::Publish::Options Publish;
+    {
+        std::string Why;
+        if (!ReadPublish(Options, C.OutRoot, Publish, Why)) return Fail(Why);
+        // with a target set, an export never lands inside a Mod Tools install (HydraX guarded --map-name and zpkg only);
+        // with none the run is what it always was
+        fs::path Install;
+        if (Publish.Which != Bo3Target::Publish::Target::None && Bo3Target::Output::Touches(Options.Out, &Install))
+            return Fail("--out lies in (or cannot be told from) the Mod Tools install " + Install.string() + "; use a folder outside it (--target modtools writes there on purpose)");
+        if (const std::string Refused = Bo3Target::Publish::Preflight(Publish); !Refused.empty()) return Fail(Refused);
+    }
+    // the publish step, once the export is on disk: counters into T, its lines for the report, an error text when refused
+    std::string PublishLines;
+    const auto Publishing = [&](Totals& Into, std::string& Refused) {
+        namespace Pb = Bo3Target::Publish;
+        Pb::Loaded Mod;
+        std::vector<std::string> Warnings;
+        Mod.Open(Publish.ModToolsRoot, Publish.CheckGdtDb, Warnings);
+        Pb::Result Done = Pb::Run(Publish, Mod.View(), C.OutRoot, Game.Id());
+        for (const auto& [Name, N] : Done.Counters) Into.Counters[Name] += N;
+        Warnings.insert(Warnings.end(), Done.Warnings.begin(), Done.Warnings.end());
+        PublishLines = std::string("publish_target=") + (Publish.Which == Pb::Target::Folder ? "folder" : "modtools") + "\npublish_plan=" +
+                       (Publish.Plan ? "1" : "0") + "\npublish_output=" + Publish.OutputRoot.string() + "\npublish_mod_tools_root=" +
+                       Publish.ModToolsRoot.string() + "\n";
+        for (const auto& W : Warnings) PublishLines += "publish_warning " + W + "\n";
+        Refused = Done.Error;
+    };
+    if (Publish.Plan)
+    {
+        // a plan writes no file but its two reports: it reads the export an earlier run left in --out and
+        // decides what publishing it would do, so the export itself (which writes) is not run
+        std::error_code PlanEc;
+        if (!fs::is_directory(fs::path(C.OutRoot) / KindFolder(Kind::Model), PlanEc))
+            return Fail("--plan reads the export an earlier run left in " + C.OutRoot + " and finds no models there; run once without --plan");
+        Totals Planned;
+        std::string Refused;
+        Publishing(Planned, Refused);
+        if (!Refused.empty()) return Fail(Refused);
+        CliReport(Options, std::string("result=ok\ngame=") + Game.Id() + "\nexport_skipped=1 (--plan reads the earlier export)\n" + PublishLines + Report(Planned));
+        return 0;
+    }
     C.NameFilter = Options.NameFilter;
     C.Limit = Options.Limit;
     // --assets kind:name,...: only those (as the Load Game panel's picks and previews ask)
@@ -127,6 +256,16 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
     }
     std::string Error;
     if (!ReadOptions(Game, Options, O, Error) || !ParseKinds(Options.Type, C.Kinds, Error)) return Fail(Error);
+    if (Publish.Which != Bo3Target::Publish::Target::None)
+    {
+        // the target needs the material GDT's model files (assets named as the GDT names them), TIFF pictures
+        // (stock's format) and XMODEL_BIN (what an xmodel entry references), unless the command line chose others
+        O.Settings["material_gdt"] = "on";
+        C.ConvertImages = true;
+        Materials::KeepConstantsInSidecar(true);    // the BO3 techset step reads colorTint and glossRange from the kept constant block
+        if (Options.ImageFormat.empty()) SettingsManager::SetRunSetting("exportimg", "TIFF");
+        if (Options.ModelFormat.empty()) SettingsManager::SetRunSetting("export_xmbin", "true");
+    }
     O.ZoneAlone = std::all_of(C.Kinds.begin(), C.Kinds.end(), [](Kind K) { return K == Kind::MaterialLinks || K == Kind::SoundLinks || K == Kind::AssetRefs || K == Kind::Techsets || K == Kind::ScriptBundles || K == Kind::Weapons || K == Kind::WeaponStats || K == Kind::MapInfo || K == Kind::Scriptables || K == Kind::MapEnts || K == Kind::AiTypes; }) && !C.Kinds.empty();
     std::vector<std::string> Zones;
     const auto Start = std::chrono::steady_clock::now();
@@ -145,11 +284,21 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
     const size_t Named = Zones.size();
     if (!fs::is_regular_file(Input, Ec)) Zones = InLanguages(Game, Zones, Spoken);
     C.ResolveSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - Start).count();
-    const Totals T = Export(Game, O, Zones, C);
+    Totals T = Export(Game, O, Zones, C);
+    if (Publish.Which != Bo3Target::Publish::Target::None && !T.Cancelled)
+    {
+        std::string Refused;
+        Publishing(T, Refused);
+        if (!Refused.empty())
+        {
+            CliReport(Options, "result=error\nreason=" + Refused + "\n" + PublishLines + Report(T));
+            return 1;
+        }
+    }
     const bool Ignored = !C.NameFilter.empty() && !Game.FiltersByName();
     const std::string LanguageLines = "languages=" + Spoken.Text() + "\n" +
                                   (Zones.size() < Named ? "zones_other_languages=" + std::to_string(Named - Zones.size()) + "\n" : "");
-    CliReport(Options, std::string("result=ok\ngame=") + Game.Id() + "\n" + (Ignored ? "name_filter=ignored\n" : "") + LanguageLines + Report(T));
+    CliReport(Options, std::string("result=ok\ngame=") + Game.Id() + "\n" + (Ignored ? "name_filter=ignored\n" : "") + LanguageLines + PublishLines + Report(T));
     return 0;
 }
 

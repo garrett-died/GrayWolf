@@ -244,6 +244,7 @@ namespace DiskGame
     struct Context
     {
         std::string OutRoot;       // <--out>/<game id>
+        bool ConvertImages = false; // a --target is set: the material GDT converts packed images (else it only counts)
         std::string NameFilter;    // --name-filter, "a,b" (ExportNaming::NameFilter)
         std::set<Kind> Kinds;      // --type, all kinds when empty on the command line
         double ResolveSeconds = 0; // the adapter's naming or pulling of the zones (a CASC extract), logged

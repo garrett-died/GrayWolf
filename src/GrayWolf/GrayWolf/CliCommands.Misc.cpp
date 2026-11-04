@@ -35,6 +35,17 @@
 #include "Encryption.h"
 #include "HuskyMath.h"
 #include "GameImageProcessors.h"
+#include "Bo3Target.GdtDb.h"
+#include "Bo3Target.Placement.h"
+#include "Bo3Target.Output.h"
+#include "Bo3Target.Techsets.h"
+#include "Bo3Target.Publish.h"
+#include "Bo3Target.ImageUnpack.h"
+#include "Bo3Target.MaterialImages.h"
+#include "MaterialGdt.h"
+#include "MaterialDescription.h"
+#include "GdtWriter.h"
+#include "Image.h"
 #include "FBXWriter.h"
 #include "WraithModel.h"
 #include "Games/Common/MeshDecode.h"
@@ -368,6 +379,466 @@ static int SelfTest(std::string& Failures)
             "specular keeps its colour and gloss comes out of alpha", "");
     }
 
+    // Bo3Target image unpacking. Expected bytes are worked out by hand from the digest formulas
+    // (docs/hydrax-port/gameimageutil.md), with a tolerance of one for rounding.
+    {
+        const auto Make = [](uint32_t W, uint32_t H, std::initializer_list<uint8_t> Bytes)
+        {
+            Rgba8Image Image;
+            Image.Width = W;
+            Image.Height = H;
+            Image.Pixels.assign(Bytes.begin(), Bytes.end());
+            return Image;
+        };
+        const auto Near = [](const Rgba8Image& Image, size_t Pixel, int R, int G, int B, int A)
+        {
+            if (!Image.IsValid() || Image.Pixels.size() < (Pixel + 1) * 4)
+            {
+                return false;
+            }
+            const int Want[4] = { R, G, B, A };
+            for (int C = 0; C < 4; C++)
+            {
+                if (std::abs((int)Image.Pixels[Pixel * 4 + C] - Want[C]) > 1)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        const auto Show = [](const Rgba8Image& Image, size_t Pixel)
+        {
+            if (Image.Pixels.size() < (Pixel + 1) * 4)
+            {
+                return std::string("(empty)");
+            }
+            return std::format("{} {} {} {}", Image.Pixels[Pixel * 4], Image.Pixels[Pixel * 4 + 1],
+                Image.Pixels[Pixel * 4 + 2], Image.Pixels[Pixel * 4 + 3]);
+        };
+
+        // XY in RG: 128,128 is about zero tilt so Z is 1 (255). 255,255 overshoots unit length
+        // (nZ = -1), so Z is 0.0 and not 0.5
+        const auto RG = Bo3Target::UnpackNormalRedGreen(Make(2, 1, { 128, 128, 7, 9,  255, 255, 7, 9 }));
+        Check(Near(RG.Normal, 0, 128, 128, 255, 255), "Bo3 normal RG straight up", Show(RG.Normal, 0));
+        Check(Near(RG.Normal, 1, 255, 255, 0, 255), "Bo3 normal RG Z is 0.0 when nZ <= 0", Show(RG.Normal, 1));
+
+        // XY in AG: X from alpha, Y from green, red ignored. A=128,G=128 is straight up.
+        // A=255,G=128 is X=1, Y~0, so nZ is not above zero and Z is 0.0
+        const auto AG = Bo3Target::UnpackNormalAlphaGreen(Make(2, 1, { 10, 128, 0, 128,  10, 128, 0, 255 }));
+        Check(Near(AG.Normal, 0, 128, 128, 255, 255), "Bo3 normal AG straight up", Show(AG.Normal, 0));
+        Check(Near(AG.Normal, 1, 255, 128, 0, 255), "Bo3 normal AG X comes from alpha, Z 0.0 at nZ <= 0", Show(AG.Normal, 1));
+
+        // NOG: R gloss 64, B occlusion 192. u=1,v=-1 (G=255,A=0): x=0,y=1,z=0 -> normal (0,1,0).
+        // u=1,v=1 (G=255,A=255): x=1,y=0,z=0 -> (1,0,0). G=A=128 is about zero: straight up
+        const auto Nog = Bo3Target::UnpackNog(Make(3, 1, { 64, 255, 192, 0,  64, 255, 192, 255,  64, 128, 192, 128 }));
+        Check(Near(Nog.Normal, 0, 128, 255, 128, 255), "Bo3 NOG decodes u=1 v=-1 to +Y", Show(Nog.Normal, 0));
+        Check(Near(Nog.Normal, 1, 255, 128, 128, 255), "Bo3 NOG decodes u=1 v=1 to +X", Show(Nog.Normal, 1));
+        Check(Near(Nog.Normal, 2, 128, 128, 255, 255), "Bo3 NOG decodes the centre to straight up", Show(Nog.Normal, 2));
+        Check(Near(Nog.Gloss, 0, 64, 64, 64, 255), "Bo3 NOG gloss is R as grey", Show(Nog.Gloss, 0));
+        Check(Near(Nog.Occlusion, 0, 192, 192, 192, 255), "Bo3 NOG occlusion is B as grey", Show(Nog.Occlusion, 0));
+
+        // The zero-length guard. No hemi-octahedral pixel reaches it (z is 1 where x and y are 0),
+        // so it is tested on the helper. GameImageUtil would give NaN here
+        float GX = 0.0f, GY = 0.0f, GZ = 0.0f;
+        Bo3Target::NormaliseOrUp(GX, GY, GZ);
+        Check(GX == 0.0f && GY == 0.0f && GZ == 1.0f, "Bo3 zero normal guard emits straight up",
+            std::format("{:f} {:f} {:f}", GX, GY, GZ));
+        float NX = 3.0f, NY = 0.0f, NZ = 4.0f;
+        Bo3Target::NormaliseOrUp(NX, NY, NZ);
+        Check(std::fabs(NX - 0.6f) < 1e-6f && std::fabs(NZ - 0.8f) < 1e-6f, "Bo3 normalise keeps a real direction",
+            std::format("{:f} {:f}", NX, NZ));
+
+        // Fused colour, metal in alpha. (200,100,0,A=255): m=1, d=0 -> colour 0,0,0 with A 1;
+        // r=0.1, spec = (0.1+200/255, 0.1+100/255, 0.1 lifted to the 0.21 floor) = 226, 125, 54.
+        // (200,100,50,A=0): m=0, d=1 -> colour unchanged with A forced to 255; r=0 and m=0 so
+        // every spec channel is the 0.21 floor = 54
+        const auto Fused = Bo3Target::UnpackFusedColourMetalAlpha(Make(2, 1, { 200, 100, 0, 255,  200, 100, 50, 0 }));
+        Check(Near(Fused.Colour, 0, 0, 0, 0, 255), "Bo3 fused metal alpha: full metal has no diffuse", Show(Fused.Colour, 0));
+        Check(Near(Fused.Specular, 0, 226, 125, 54, 255), "Bo3 fused metal alpha: 0.1 range and 0.21 floor", Show(Fused.Specular, 0));
+        Check(Near(Fused.Colour, 1, 200, 100, 50, 255), "Bo3 fused metal alpha: no metal keeps colour, alpha 1", Show(Fused.Colour, 1));
+        Check(Near(Fused.Specular, 1, 54, 54, 54, 255), "Bo3 fused metal alpha: no metal spec is the floor", Show(Fused.Specular, 1));
+
+        // Fused colour with a separate mask. Colour is 2x2, all (200,100,50,A=77); the mask is one
+        // pixel, so it is resized to 2x2. Mask R=255,A=0: m=1,d=0,r=0 -> colour 0,0,0 with A 77 kept,
+        // spec = max(X, 0.21) = 200,100,54. Mask R=0,A=255: m=0,d=1,r=0.1 -> colour unchanged,
+        // spec = max(0.1, 0.21) = 54 everywhere
+        const auto Colour = Make(2, 2, { 200, 100, 50, 77,  200, 100, 50, 77,  200, 100, 50, 77,  200, 100, 50, 77 });
+        const auto Metal = Bo3Target::UnpackFusedColourMetalMask(Colour, Make(1, 1, { 255, 0, 0, 0 }));
+        Check(Metal.Colour.Width == 2 && Metal.Colour.Height == 2 && Metal.Specular.IsValid(),
+            "Bo3 fused mask: output takes the colour image size", std::format("{}x{}", Metal.Colour.Width, Metal.Colour.Height));
+        Check(Near(Metal.Colour, 3, 0, 0, 0, 77), "Bo3 fused mask: colour keeps its own alpha", Show(Metal.Colour, 3));
+        Check(Near(Metal.Specular, 3, 200, 100, 54, 255), "Bo3 fused mask: spec from the resized mask", Show(Metal.Specular, 3));
+        const auto Plain = Bo3Target::UnpackFusedColourMetalMask(Colour, Make(1, 1, { 0, 0, 0, 255 }));
+        Check(Near(Plain.Colour, 0, 200, 100, 50, 77), "Bo3 fused mask: no metal leaves colour", Show(Plain.Colour, 0));
+        Check(Near(Plain.Specular, 0, 54, 54, 54, 255), "Bo3 fused mask: insulator spec hits the 0.21 floor", Show(Plain.Specular, 0));
+        Check(!Bo3Target::UnpackFusedColourMetalMask(Colour, Rgba8Image()).Colour.IsValid(),
+            "Bo3 fused mask: an empty mask gives nothing", "");
+
+        // Channel extraction: (10,20,30,40), blue is 30, inverted is 225, alpha is 40
+        const auto Source = Make(1, 1, { 10, 20, 30, 40 });
+        Check(Near(Bo3Target::ExtractChannel(Source, ImageChannel::Blue, false), 0, 30, 30, 30, 255), "Bo3 extract blue", "");
+        Check(Near(Bo3Target::ExtractChannel(Source, ImageChannel::Blue, true), 0, 225, 225, 225, 255), "Bo3 extract blue inverted", "");
+        Check(Near(Bo3Target::ExtractChannel(Source, ImageChannel::Alpha, false), 0, 40, 40, 40, 255), "Bo3 extract alpha", "");
+
+        // Specular RGB and gloss A
+        const auto SG = Bo3Target::UnpackSpecularGloss(Source);
+        Check(Near(SG.Specular, 0, 10, 20, 30, 255), "Bo3 specular keeps RGB, alpha 1", Show(SG.Specular, 0));
+        Check(Near(SG.Gloss, 0, 40, 40, 40, 255), "Bo3 gloss is alpha as grey", Show(SG.Gloss, 0));
+    }
+
+    // Module 2a: the material GDT converts images (MaterialGdt, Bo3Target.MaterialImages). Pack kinds come
+    // from the adapters' descriptions; a tiny NOG PNG goes through loader, unpack and writer in a
+    // scratch folder; slot names follow the slot; a Treyarch description gives the text it always did.
+    {
+        namespace fs = std::filesystem;
+        const auto Make = [](uint32_t W, uint32_t H, std::initializer_list<uint8_t> Bytes)
+        {
+            Rgba8Image Image;
+            Image.Width = W;
+            Image.Height = H;
+            Image.Pixels.assign(Bytes.begin(), Bytes.end());
+            return Image;
+        };
+        const auto Px = [](const Rgba8Image& Image, size_t Pixel, int R, int G, int B, int A)
+        {
+            if (!Image.IsValid() || Image.Pixels.size() < (Pixel + 1) * 4) return false;
+            const int Want[4] = { R, G, B, A };
+            for (int C = 0; C < 4; C++)
+                if (std::abs((int)Image.Pixels[Pixel * 4 + C] - Want[C]) > 1) return false;
+            return true;
+        };
+        const auto Has = [](const std::string& Text, const std::string& Part) { return Text.find(Part) != std::string::npos; };
+        const auto Count = [](const std::map<std::string, size_t>& Counters, const std::string& Key)
+        {
+            const auto It = Counters.find("t_" + Key);
+            return It == Counters.end() ? (size_t)0 : It->second;
+        };
+
+        // 1. the pack kind from a description (data the adapters state, not file names)
+        {
+            using Materials::PackKind;
+            Materials::Source Bo6;
+            Bo6.Name = "bo6_mat";
+            Bo6.Images = { { "c.png", Materials::Role::Unknown, 82 }, { "nog.png", Materials::Role::Unknown, 83 } };
+            const auto D6 = Materials::AdapterFor("BO6").Describe(Bo6);
+            Check(D6.Normal.Pack == PackKind::Nog && D6.Roughness.Pack == PackKind::Nog && D6.Occlusion.Pack == PackKind::Nog,
+                "Bo3 pack: BO6 nog maps are marked Nog", std::format("{} {} {}", (int)D6.Normal.Pack, (int)D6.Roughness.Pack, (int)D6.Occlusion.Pack));
+            Check(D6.Albedo.Pack == PackKind::None && D6.Occlusion.Channel == 2 && D6.Roughness.Invert,
+                "Bo3 pack: BO6 colour is plain, occlusion is channel 2, gloss is a gloss", "");
+
+            Materials::Source Bo7;
+            Bo7.Name = "bo7_mat";
+            Bo7.Images = { { "c.png", Materials::Role::Unknown, 0x47 }, { "nog.png", Materials::Role::Unknown, 0x48 } };
+            const auto D7 = Materials::AdapterFor("BO7").Describe(Bo7);
+            Check(D7.Normal.Pack == PackKind::Nog && D7.Occlusion.Pack == PackKind::Nog, "Bo3 pack: BO7 nog maps are marked Nog",
+                std::format("{} {}", (int)D7.Normal.Pack, (int)D7.Occlusion.Pack));
+
+            Materials::Source Ww2;
+            Ww2.Name = "ww2_mat";
+            Ww2.Images = { { "c.png", Materials::Role::Unknown, 0xA0AB1041 }, { "m.png", Materials::Role::Unknown, 0x34ECCCB3 } };
+            const auto Dw = Materials::AdapterFor("S2").Describe(Ww2);
+            Check(Dw.Metalness.Pack == PackKind::ColorMetalMask && Dw.Albedo.Pack == PackKind::None && Dw.Roughness.Pack == PackKind::None && Dw.Roughness.Channel == 2,
+                "Bo3 pack: WWII metal image is a colour metal mask, its gloss a plain channel",
+                std::format("{} {} {}", (int)Dw.Metalness.Pack, (int)Dw.Albedo.Pack, (int)Dw.Roughness.Pack));
+
+            // a game that states nothing stays None, among them IW7 (its export patches the images)
+            Materials::Source Iw7;
+            Iw7.Name = "iw7_mat";
+            Iw7.Images = { { "x_packed_cs.png", Materials::Role::Unknown, 0xA0AB1041 }, { "y_packed_nog.png", Materials::Role::Unknown, 0x59D30D0F } };
+            const auto Di = Materials::AdapterFor("IW7").Describe(Iw7);
+            Check(Di.Normal.Pack == PackKind::None && Di.Albedo.Pack == PackKind::None && Di.Metalness.Pack == PackKind::None,
+                "Bo3 pack: IW7 states no pack", std::format("{} {} {}", (int)Di.Normal.Pack, (int)Di.Albedo.Pack, (int)Di.Metalness.Pack));
+            Materials::Source T8;
+            T8.Name = "t8_mat";
+            T8.Images = { { "c.png", Materials::Role::Unknown, 0xA0AB1041 }, { "n.png", Materials::Role::Unknown, 0x59D30D0F } };
+            const auto Dt = Materials::AdapterFor("T8").Describe(T8);
+            Check(Dt.Normal.Pack == PackKind::None, "Bo3 pack: Treyarch states no pack", std::format("{}", (int)Dt.Normal.Pack));
+
+            // the sidecar keeps the kind, and a file from before it loads as None
+            const fs::path Scratch = fs::temp_directory_path() / std::format("graywolf_selftest_pack_{}", (unsigned long long)GetCurrentProcessId());
+            std::error_code Ec;
+            fs::create_directories(Scratch, Ec);
+            Materials::Sidecar Side;
+            Side.Game = "BO6";
+            Side.Adapter = "bo6";
+            Side.Materials.push_back(D6);
+            const std::string SidePath = (Scratch / "m.materials.json").string();
+            Materials::Sidecar Back;
+            const bool Wrote = Materials::WriteSidecar(SidePath, Side), Read = Materials::ReadSidecar(SidePath, Back);
+            Check(Wrote && Read && Back.Materials.size() == 1 && Back.Materials[0].Normal.Pack == PackKind::Nog &&
+                  Back.Materials[0].Occlusion.Pack == PackKind::Nog && Back.Materials[0].Albedo.Pack == PackKind::None,
+                "Bo3 pack: the sidecar keeps the pack kind", std::format("{} {}", Wrote, Read));
+            {
+                std::ofstream Old(Scratch / "old.materials.json", std::ios::binary);
+                Old << R"({"format":"greyhound-materials","version":1,"game":"BO6","adapter":"bo6","materials":[{"name":"a","alpha":"opaque","normal":{"path":"n.png","encoding":"ag"},"occlusion":{"path":"n.png","channel":"b"}}]})";
+            }
+            Materials::Sidecar OldBack;
+            const bool OldRead = Materials::ReadSidecar((Scratch / "old.materials.json").string(), OldBack);
+            Check(OldRead && OldBack.Materials.size() == 1 && OldBack.Materials[0].Normal.Pack == PackKind::None &&
+                  OldBack.Materials[0].Normal.Path == "n.png" && OldBack.Materials[0].Occlusion.Channel == 2,
+                "Bo3 pack: a sidecar from before the pack field loads as None", std::format("{}", OldRead));
+            fs::remove_all(Scratch, Ec);
+        }
+
+        // 2. the loader reads every format the exports emit (PNG, TIFF, TGA, DDS), and the writer round trips
+        const fs::path Dir = fs::temp_directory_path() / std::format("graywolf_selftest_gdt_{}", (unsigned long long)GetCurrentProcessId());
+        std::error_code Ec;
+        fs::remove_all(Dir, Ec);
+        fs::create_directories(Dir, Ec);
+        {
+            const Rgba8Image Source = Make(2, 2, { 10, 20, 30, 255,  200, 100, 50, 255,  0, 255, 128, 255,  64, 64, 64, 255 });
+            for (const char* Name : { "fmt.png", "fmt.tif", "fmt.tga" })
+            {
+                std::string Error;
+                Rgba8Image Back;
+                const bool Saved = Bo3Target::SaveRgba8(Dir / Name, Source, Error);
+                const bool Loaded = Saved && Bo3Target::LoadRgba8(Dir / Name, Back, Error);
+                Check(Loaded && Back.Width == 2 && Back.Height == 2 && Px(Back, 1, 200, 100, 50, 255) && Px(Back, 2, 0, 255, 128, 255),
+                    std::format("Bo3 image IO: {} round trip", Name).c_str(), Error);
+            }
+            // DDS: uncompressed RGBA8 and BC1 (solid colour, so the block error is small)
+            DirectX::ScratchImage Dds;
+            Dds.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, 4, 4, 1, 1);
+            for (size_t P = 0; P < 16; P++)
+            {
+                uint8_t* Pix = Dds.GetImage(0, 0, 0)->pixels + P * 4;
+                Pix[0] = 90; Pix[1] = 150; Pix[2] = 200; Pix[3] = 255;
+            }
+            const bool Raw = SUCCEEDED(DirectX::SaveToDDSFile(*Dds.GetImage(0, 0, 0), DirectX::DDS_FLAGS_NONE, (Dir / "raw.dds").c_str()));
+            DirectX::ScratchImage Bc1;
+            const bool Compressed = SUCCEEDED(DirectX::Compress(*Dds.GetImage(0, 0, 0), DXGI_FORMAT_BC1_UNORM, DirectX::TEX_COMPRESS_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, Bc1)) &&
+                                    SUCCEEDED(DirectX::SaveToDDSFile(*Bc1.GetImage(0, 0, 0), DirectX::DDS_FLAGS_NONE, (Dir / "bc1.dds").c_str()));
+            Check(Raw && Compressed, "Bo3 image IO: test DDS files written", std::format("{} {}", Raw, Compressed));
+            std::string Error;
+            Rgba8Image RawBack, BcBack;
+            Check(Bo3Target::LoadRgba8(Dir / "raw.dds", RawBack, Error) && Px(RawBack, 5, 90, 150, 200, 255), "Bo3 image IO: DDS RGBA8 loads", Error);
+            const bool BcOk = Bo3Target::LoadRgba8(Dir / "bc1.dds", BcBack, Error);
+            const auto Near8 = [&](int A, int B) { return std::abs(A - B) <= 8; };
+            Check(BcOk && BcBack.IsValid() && Near8(BcBack.Pixels[0], 90) && Near8(BcBack.Pixels[1], 150) && Near8(BcBack.Pixels[2], 200),
+                "Bo3 image IO: DDS BC1 decodes", Error);
+            Rgba8Image Missing;
+            Check(!Bo3Target::LoadRgba8(Dir / "nothing.png", Missing, Error) && Error == "load_failed", "Bo3 image IO: a missing file fails with a reason", Error);
+        }
+
+        // 3. one NOG PNG through loader, unpack and writer into BO3 images named by their slot; a shared map unpacks once
+        {
+            // pixel 0: gloss 64, u=1 v=-1 -> normal +Y, occlusion 192; pixel 1: gloss 64, centre -> straight up
+            std::string Error;
+            Bo3Target::SaveRgba8(Dir / "m_nog.png", Make(2, 1, { 64, 255, 192, 0,  64, 128, 192, 128 }), Error);
+            Bo3Target::SaveRgba8(Dir / "m_c.png", Make(1, 1, { 200, 100, 50, 255 }), Error);
+            Materials::Description D;
+            D.Name = "Test Mat";
+            D.Albedo = { "m_c.png", 0, false };
+            D.Normal = { "m_nog.png", 0, false, Materials::PackKind::Nog };
+            D.NormalEnc = Materials::NormalEncoding::AG;
+            D.Roughness = { "m_nog.png", 0, true, Materials::PackKind::Nog };
+            D.Occlusion = { "m_nog.png", 2, false, Materials::PackKind::Nog };
+            const auto BaseImage = [](const fs::path& File) { return "model_export/t/" + File.filename().string(); };
+
+            MaterialGdt::Builder On(BaseImage, "t_");
+            On.ConvertImages(true);
+            On.SetRunRoot(Dir);
+            On.Add(D, Dir);
+            Materials::Description Second = D;
+            Second.Name = "Other Mat";
+            On.Add(Second, Dir);
+            const auto& C = On.Counters();
+            Check(Count(C, "converted_normal_nog") == 2 && Count(C, "converted_channel_cosinePowerMap") == 2 && Count(C, "converted_channel_occMap") == 2,
+                "Bo3 gdt: each conversion is counted per slot", std::format("{} {} {}", Count(C, "converted_normal_nog"), Count(C, "converted_channel_cosinePowerMap"), Count(C, "converted_channel_occMap")));
+            Check(Count(C, "images_derived") == 3, "Bo3 gdt: a map shared by two materials unpacks once (3 files)", std::format("{}", Count(C, "images_derived")));
+            Check(Count(C, "normal_ag") == 0 && Count(C, "occMap_channel_dropped") == 0 && Count(C, "roughness_not_gloss") == 0,
+                "Bo3 gdt: nothing is counted as unconverted once converted", std::format("{} {}", Count(C, "normal_ag"), Count(C, "occMap_channel_dropped")));
+            Rgba8Image N, G, O;
+            Check(Bo3Target::LoadRgba8(Dir / "m_nog_n.png", N, Error) && Px(N, 0, 128, 255, 128, 255) && Px(N, 1, 128, 128, 255, 255),
+                "Bo3 gdt: the derived normal is RGB with Z in blue", Error);
+            Check(Bo3Target::LoadRgba8(Dir / "m_nog_g.png", G, Error) && Px(G, 0, 64, 64, 64, 255), "Bo3 gdt: the derived gloss is grey in RGB", Error);
+            Check(Bo3Target::LoadRgba8(Dir / "m_nog_o.png", O, Error) && Px(O, 1, 192, 192, 192, 255), "Bo3 gdt: the derived occlusion is grey in RGB", Error);
+
+            const std::vector<std::string> Entries = On.Entries("\n");
+            std::string Text;
+            for (const auto& E : Entries) Text += E;
+            Check(Has(Text, "\"normalMap\" \"i_m_nog_n\"") && Has(Text, "\"cosinePowerMap\" \"i_m_nog_g\"") && Has(Text, "\"occMap\" \"i_m_nog_o\"") &&
+                  Has(Text, "\"colorMap\" \"i_m_c\""),
+                "Bo3 gdt: derived images are named from the slot (i_<file>_<slot letter>)", Text);
+            Check(Has(Text, "\"i_m_nog_n\" ( \"image.gdf\" )") && Has(Text, "\"baseImage\" \"model_export\\\\t\\\\m_nog_n.png\"") &&
+                  Has(Text, "\"semantic\" \"occlusionMap\"") && Has(Text, "\"semantic\" \"glossMap\""),
+                "Bo3 gdt: derived image entries point at the derived files", Text);
+            size_t Entities = 0;
+            for (size_t At = Text.find("\"i_m_nog_n\" ( \"image.gdf\" )"); At != std::string::npos; At = Text.find("\"i_m_nog_n\" ( \"image.gdf\" )", At + 1)) Entities++;
+            Check(Entities == 1, "Bo3 gdt: the shared derived image has one entity", std::format("{}", Entities));
+
+            // the same description with conversion off: counted as before, no file written
+            MaterialGdt::Builder Off(BaseImage, "t_");
+            Off.Add(D, Dir);
+            Check(Count(Off.Counters(), "normal_ag") == 1 && Count(Off.Counters(), "occMap_channel_dropped") == 1 && Count(Off.Counters(), "images_derived") == 0,
+                "Bo3 gdt: conversion off counts only", std::format("{} {}", Count(Off.Counters(), "normal_ag"), Count(Off.Counters(), "occMap_channel_dropped")));
+
+            // a source that cannot be read is counted as not converted, with the old slot kept
+            {
+                std::ofstream Bad(Dir / "bad_nog.png", std::ios::binary);
+                Bad << "not an image";
+            }
+            Materials::Description DBad = D;
+            DBad.Name = "Bad Mat";
+            DBad.Normal.Path = DBad.Roughness.Path = DBad.Occlusion.Path = "bad_nog.png";
+            MaterialGdt::Builder Fail(BaseImage, "t_");
+            Fail.ConvertImages(true);
+            Fail.SetRunRoot(Dir);
+            Fail.Add(DBad, Dir);
+            Check(Count(Fail.Counters(), "not_converted_normal_load_failed") == 1 && Count(Fail.Counters(), "not_converted_occlusion_load_failed") == 1 &&
+                  Count(Fail.Counters(), "not_converted_gloss_load_failed") == 1 && Count(Fail.Counters(), "normal_ag") == 1,
+                "Bo3 gdt: an unreadable source is counted not_converted with a reason", std::format("{}", Count(Fail.Counters(), "not_converted_normal_load_failed")));
+        }
+
+        // 4. the other conversions: roughness inverted, green flipped, a channel taken out, colour fused with metal
+        {
+            std::string Error;
+            Bo3Target::SaveRgba8(Dir / "r_rough.png", Make(1, 1, { 40, 0, 0, 255 }), Error);
+            Bo3Target::SaveRgba8(Dir / "f_xyz.png", Make(1, 1, { 100, 60, 200, 255 }), Error);
+            Bo3Target::SaveRgba8(Dir / "s_pack.png", Make(1, 1, { 0, 0, 90, 255 }), Error);
+            Bo3Target::SaveRgba8(Dir / "w_c.png", Make(1, 1, { 200, 100, 50, 255 }), Error);
+            Bo3Target::SaveRgba8(Dir / "w_cs.png", Make(1, 1, { 200, 100, 50, 255 }), Error);
+            Bo3Target::SaveRgba8(Dir / "w_m.png", Make(1, 1, { 255, 0, 0, 0 }), Error);
+            const auto BaseImage = [](const fs::path& File) { return "model_export/t/" + File.filename().string(); };
+
+            Materials::Description D;
+            D.Name = "Convert Mat";
+            D.Albedo = { "w_c.png", 0, false };
+            D.Normal = { "f_xyz.png", 0, false };
+            D.NormalEnc = Materials::NormalEncoding::XYZ;
+            D.NormalFlipY = true;
+            D.Roughness = { "r_rough.png", 0, false };   // a roughness map
+            D.Occlusion = { "s_pack.png", 2, false };    // blue, no pack: still a channel
+            MaterialGdt::Builder B(BaseImage, "t_");
+            B.ConvertImages(true);
+            B.SetRunRoot(Dir);
+            B.Add(D, Dir);
+            const auto& C = B.Counters();
+            Check(Count(C, "converted_roughness_to_gloss") == 1 && Count(C, "roughness_not_gloss") == 0, "Bo3 gdt: a roughness map becomes a gloss image",
+                std::format("{}", Count(C, "converted_roughness_to_gloss")));
+            Check(Count(C, "converted_normal_flip_y") == 1 && Count(C, "normal_flip_y") == 0, "Bo3 gdt: NormalFlipY is converted", std::format("{}", Count(C, "converted_normal_flip_y")));
+            Check(Count(C, "converted_channel_occMap") == 1 && Count(C, "occMap_channel_dropped") == 0, "Bo3 gdt: a blue channel is taken out, not dropped", "");
+            Rgba8Image Gloss, Flip, Occ;
+            Check(Bo3Target::LoadRgba8(Dir / "r_rough_g.png", Gloss, Error) && Px(Gloss, 0, 215, 215, 215, 255), "Bo3 gdt: roughness 40 is gloss 215", Error);
+            Check(Bo3Target::LoadRgba8(Dir / "f_xyz_n.png", Flip, Error) && Px(Flip, 0, 100, 195, 200, 255), "Bo3 gdt: flip inverts green only", Error);
+            Check(Bo3Target::LoadRgba8(Dir / "s_pack_o.png", Occ, Error) && Px(Occ, 0, 90, 90, 90, 255), "Bo3 gdt: the blue channel as grey", Error);
+
+            // colour with the metal in alpha (IW7-style pack kind), and colour with a separate metal mask (WWII)
+            Materials::Description Fa;
+            Fa.Name = "Fused Alpha";
+            Fa.Albedo = { "w_cs.png", 0, false, Materials::PackKind::ColorMetalAlpha };
+            Fa.Metalness = { "w_cs.png", 3, false, Materials::PackKind::ColorMetalAlpha };
+            Materials::Description Fm;
+            Fm.Name = "Fused Mask";
+            Fm.Albedo = { "w_c.png", 0, false };
+            Fm.Metalness = { "w_m.png", 0, false, Materials::PackKind::ColorMetalMask };
+            Materials::Description Plain = Fa;
+            Plain.Name = "Unmarked";
+            Plain.Albedo.Pack = Plain.Metalness.Pack = Materials::PackKind::None;
+            MaterialGdt::Builder F(BaseImage, "t_");
+            F.ConvertImages(true);
+            F.SetRunRoot(Dir);
+            F.Add(Fa, Dir);
+            F.Add(Fm, Dir);
+            F.Add(Plain, Dir);
+            Check(Count(F.Counters(), "converted_metal_fused_alpha") == 1 && Count(F.Counters(), "converted_metal_fused_mask") == 1 &&
+                  Count(F.Counters(), "metalness_dropped") == 1 && Count(F.Counters(), "type_lit_advanced_fullspec") == 2,
+                "Bo3 gdt: fused colour and metal become colour plus specular; an unmarked metalness is still counted dropped",
+                std::format("{} {} {}", Count(F.Counters(), "converted_metal_fused_alpha"), Count(F.Counters(), "converted_metal_fused_mask"), Count(F.Counters(), "metalness_dropped")));
+            // the mask material: M=(1-0.1)/0.9=1 so the colour goes black; specular is the colour with the 0.21 floor (50 -> 54)
+            Rgba8Image FmC, FmS;
+            Check(Bo3Target::LoadRgba8(Dir / "w_c_c.png", FmC, Error) && Px(FmC, 0, 0, 0, 0, 255) && Bo3Target::LoadRgba8(Dir / "w_c_s.png", FmS, Error) && Px(FmS, 0, 200, 100, 54, 255),
+                "Bo3 gdt: the fused mask split gives black colour and metal specular", Error);
+        }
+
+        // 5. an unchanged Treyarch description gives the same GDT text with conversion on or off (golden)
+        {
+            for (const char* Name : { "wall_c.png", "wall_n.png", "wall_g.png", "wall_o.png" })
+            {
+                std::ofstream F(Dir / Name, std::ios::binary);
+                F << "x";
+            }
+            Materials::Description D;
+            D.Name = "Mtl_Test/Wall";
+            D.Albedo = { "wall_c.png", 0, false };
+            D.Normal = { "wall_n.png", 0, false };
+            D.Roughness = { "wall_g.png", 0, true };
+            D.Occlusion = { "wall_o.png", 0, false };
+            const auto BaseImage = [](const fs::path& File) { return "model_export/t/" + File.filename().string(); };
+            const std::vector<std::string> Golden = {
+                "{",
+                "\t\"mtl_test_wall\" ( \"material.gdf\" )",
+                "\t{",
+                "\t\t\"colorMap\" \"i_wall_c\"",
+                "\t\t\"cosinePowerMap\" \"i_wall_g\"",
+                "\t\t\"glossSurfaceType\" \"<full>\"",
+                "\t\t\"materialCategory\" \"Geometry\"",
+                "\t\t\"materialType\" \"lit\"",
+                "\t\t\"normalMap\" \"i_wall_n\"",
+                "\t\t\"occMap\" \"i_wall_o\"",
+                "\t\t\"surfaceType\" \"<none>\"",
+                "\t\t\"template\" \"material.template\"",
+                "\t\t\"usage\" \"<not in editor>\"",
+                "\t}",
+                "\t\"i_wall_c\" ( \"image.gdf\" )",
+                "\t{",
+                "\t\t\"baseImage\" \"model_export\\\\t\\\\wall_c.png\"",
+                "\t\t\"compressionMethod\" \"compressed no alpha\"",
+                "\t\t\"coreSemantic\" \"sRGB3chAlpha\"",
+                "\t\t\"imageType\" \"Texture\"",
+                "\t\t\"semantic\" \"diffuseMap\"",
+                "\t\t\"streamable\" \"1\"",
+                "\t\t\"type\" \"image\"",
+                "\t}",
+                "\t\"i_wall_g\" ( \"image.gdf\" )",
+                "\t{",
+                "\t\t\"baseImage\" \"model_export\\\\t\\\\wall_g.png\"",
+                "\t\t\"compressionMethod\" \"compressed\"",
+                "\t\t\"coreSemantic\" \"Linear1ch\"",
+                "\t\t\"imageType\" \"Texture\"",
+                "\t\t\"semantic\" \"glossMap\"",
+                "\t\t\"streamable\" \"1\"",
+                "\t\t\"type\" \"image\"",
+                "\t}",
+                "\t\"i_wall_n\" ( \"image.gdf\" )",
+                "\t{",
+                "\t\t\"baseImage\" \"model_export\\\\t\\\\wall_n.png\"",
+                "\t\t\"compressionMethod\" \"compressed\"",
+                "\t\t\"coreSemantic\" \"Normal\"",
+                "\t\t\"imageType\" \"Texture\"",
+                "\t\t\"semantic\" \"normalMap\"",
+                "\t\t\"streamable\" \"1\"",
+                "\t\t\"type\" \"image\"",
+                "\t}",
+                "\t\"i_wall_o\" ( \"image.gdf\" )",
+                "\t{",
+                "\t\t\"baseImage\" \"model_export\\\\t\\\\wall_o.png\"",
+                "\t\t\"compressionMethod\" \"compressed\"",
+                "\t\t\"coreSemantic\" \"Linear1ch\"",
+                "\t\t\"imageType\" \"Texture\"",
+                "\t\t\"semantic\" \"occlusionMap\"",
+                "\t\t\"streamable\" \"1\"",
+                "\t\t\"type\" \"image\"",
+                "\t}",
+                "}",
+                "" };
+            std::string Want;
+            for (const auto& Line : Golden) Want += Line + (&Line == &Golden.back() ? "" : "\r\n");
+            for (const bool Convert : { false, true })
+            {
+                MaterialGdt::Builder B(BaseImage, "t_");
+                B.ConvertImages(Convert);
+                B.SetRunRoot(Dir);
+                B.Add(D, Dir);
+                const std::string Got = Gdt::Document(B.Entries("\r\n"));
+                Check(Got == Want, Convert ? "Bo3 gdt golden: Treyarch text unchanged with conversion on" : "Bo3 gdt golden: Treyarch text with conversion off", Got);
+                Check(Count(B.Counters(), "normal_xy") == 1 && Count(B.Counters(), "images_derived") == 0 && Count(B.Counters(), "materials") == 1,
+                    "Bo3 gdt golden: Treyarch counters and no derived files", std::format("{}", Count(B.Counters(), "images_derived")));
+            }
+        }
+        fs::remove_all(Dir, Ec);
+    }
+
     // Salsa20 against the published eSTREAM vector: Black Ops 2 fast files are encrypted with it.
     {
         // Set 1, vector 0 for a 256 bit key: a single set bit, a zero nonce
@@ -507,6 +978,18 @@ static int SelfTest(std::string& Failures)
 
     // The mesh decoder every model reader shares
     Failed += MeshDecode::SelfTest(Failures);
+
+    // Module 4: the gdt.db name rules, match modes and stock rule on synthetic rows
+    Failed += Bo3Target::GdtDb::SelfTest(Failures);
+
+    // Module 3: the placement rules, the fixes, name shortening and the game tokens on synthetic rows
+    Failed += Bo3Target::Placement::SelfTest(Failures);
+
+    // Module 5: the manifest, the never-overwrite rule, GDT merge, the install guard; then the publish step end to end
+    Failed += Bo3Target::Output::SelfTest(Failures);
+    Failed += Bo3Target::Techsets::SelfTest(Failures);
+    Failed += MaterialGdt::SelfTest(Failures);
+    Failed += Bo3Target::Publish::SelfTest(Failures);
 
     return Failed;
 }

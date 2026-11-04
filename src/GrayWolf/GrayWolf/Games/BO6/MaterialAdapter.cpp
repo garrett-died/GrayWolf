@@ -35,6 +35,8 @@ namespace
         void Refine(const Materials::Source& M, Materials::Description& D, bool) const override
         {
             D.NormalEnc = Materials::NormalEncoding::AG;
+            // the exported nog image is raw (this game sets no image patch): its maps share the pack
+            Materials::MarkPacked(D, D.Normal.Path, Materials::PackKind::Nog);
             if (!IwMaterialAlpha::Apply(M, At(M, 0, OpacityMap), D))
                 if (const auto* Op = At(M, 0, OpacityMap))
                 {
@@ -57,7 +59,7 @@ namespace
                 }
                 Materials::Layer Layer;
                 if (C) Layer.Albedo = { C->Path, 0, false };
-                if (N) Layer.Roughness = { N->Path, 0, true };
+                if (N) Layer.Roughness = { N->Path, 0, true, Materials::PackKind::Nog };
                 Layer.Mask = { Mask->Path, 0, false };
                 D.Layers.push_back(Layer);
             }

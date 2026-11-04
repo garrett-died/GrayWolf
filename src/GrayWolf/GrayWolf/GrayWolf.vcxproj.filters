@@ -51,6 +51,27 @@
     <ClCompile Include="CliSupport.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Bo3Target.GdtDb.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Bo3Target.Placement.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Bo3Target.Output.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Bo3Target.Techsets.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Bo3Target.Publish.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Bo3Target.ImageUnpack.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Bo3Target.MaterialImages.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="CliCommands.Misc.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -234,6 +255,27 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CliSupport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Bo3Target.GdtDb.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Bo3Target.Placement.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Bo3Target.Output.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Bo3Target.Techsets.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Bo3Target.Publish.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Bo3Target.ImageUnpack.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Bo3Target.MaterialImages.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CliCommands.h">

@@ -252,10 +252,51 @@ zone defines, material books) for the next runs.
   (`--map-cast`); `--map-radiant` writes a Radiant `.map` with its models, `--map-textures
   full|2k|1k` sizes the textures.
 - **Black Ops III Mod Tools**: `--material-gdt` writes a GDT for the exported materials,
-  `--sound-aliases` an alias CSV, `--type gdt` asset entries.
+  `--sound-aliases` an alias CSV, `--type gdt` asset entries. `--target` converts a whole export
+  into the Mod Tools layout: see [below](#converting-to-black-ops-iii-mod-tools).
 
 A `graywolf.json` from an earlier version keeps its formats; a format given on the command line
 holds for that run only.
+
+## Converting to Black Ops III Mod Tools
+
+`--target` turns an export from any game with models and materials into Black Ops III Mod Tools
+assets, laid out where the Mod Tools keep their own:
+
+```
+GrayWolf.exe disk-export --game bo4 --install <game> --out <dir> --type model,image --target folder \
+  --mod-tools-root <Black Ops III> casc:mp_frenetic.ff
+```
+
+- **Materials**: each is given a real Black Ops III techset, chosen from the slots it fills, so its
+  gloss, occlusion and specular maps are not dropped. Entries carry every key the Mod Tools write,
+  and Black Ops 4's tints and gloss ranges where the techset's layout is proven. A material matched
+  approximately is listed in `graywolf_approximations.tsv`.
+- **Images**: packed maps are unpacked per game from the material's own slots (normal/gloss/occlusion
+  images, fused colour and specular, roughness to gloss, single channels) and named from the slot
+  they fill. Files are `.tif`, as stock.
+- **Paths**: assets land in stock-style folders and GDTs (`model_export\t8_props\...`,
+  `texture_assets\t8_metal.gdt`), and models get `.xmodel_bin` entries.
+- **GDTDB check**: `--check-gdtdb` (on) reads the Mod Tools' `gdt.db` and skips what they already
+  hold, matched by `--gdtdb-match type|name`, while still exporting any image a held material is
+  missing.
+- **Nothing is overwritten**: a file GrayWolf did not write is never touched, and what it writes is
+  listed in `graywolf\manifest.json`. `--gdt merge` (the default) keeps other entries of a GDT.
+  `--plan` lists the destinations and writes nothing else. A stock GDT never gets a new entry: it
+  goes to `graywolf_<file>.gdt` beside it.
+
+`--target folder` builds the layout under `<out>/<game>/bo3/`, to review or copy by hand.
+`--target modtools` writes straight into the install, and only into a `--mod-tools-root` given on
+that command line, never one from the settings. Each run writes `graywolf_placement.tsv`: every
+asset, what was done with it, why, and where it went.
+
+**How far this has been checked.** On Black Ops 4 zones: every file a GDT names exists, no name is
+defined twice, every image a material references is defined or already in `gdt.db`, and a second
+run changes nothing (a whole map zone: 4,214 assets written, 2,229 already in the Mod Tools). The
+placement rules are scored against every stock asset by `bo3-placement-backtest`. **Not checked
+yet**: loading the output in the Asset Property Editor, linking it, or seeing it in game; `--target
+modtools` has not been run on a real install; other games share this path but have not been run
+through it. See [docs/BO3-CONVERSION.md](docs/BO3-CONVERSION.md).
 
 ## Other tools in the command line
 
@@ -345,7 +386,10 @@ Studio Small 09 and Empty Warehouse 01 by Sergej Majboroda, Kloofendal Overcast 
 Partly Cloudy by Greg Zaal (`environments\NOTICE.txt`). The model viewport's ambient occlusion is
 Intel's [XeGTAO](https://github.com/GameTechDev/XeGTAO) and its optional anti-aliasing filter
 [SMAA](https://github.com/iryoku/smaa) (both MIT; their licenses are beside their sources in
-`src/GrayWolf/GrayWolf/PreviewPost/ThirdParty`).
+`src/GrayWolf/GrayWolf/PreviewPost/ThirdParty`). The Black Ops III conversion follows
+HydraX's Mod Tools rules and techset mapping, and its image
+unpacking follows Scobalula's [GameImageUtil](https://github.com/Scobalula/GameImageUtil), both
+GPL-3.0.
 
 GrayWolf is distributed under the GNU General Public License v3.0, as the projects it comes from;
 see [LICENSE](LICENSE).

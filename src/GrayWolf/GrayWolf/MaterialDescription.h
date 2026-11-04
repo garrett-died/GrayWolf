@@ -26,13 +26,25 @@ namespace Materials
     // XY: x in r, y in g, z rebuilt. AG: x in a, y in g (DXT5nm). XYZ: all three.
     enum class NormalEncoding { XY, AG, XYZ };
 
+    // How the exported image file of a map is packed, when it holds more than the one value the
+    // map names (data the adapter states; never guessed from a file name). None: the file is one
+    // plain map and Channel picks the value. The kinds below describe the file as exported:
+    //   Nog                R gloss, G and A the hemi-octahedral normal (u, v), B occlusion
+    //   NormalAlphaGreen   normal x in A, y in G (DXT5nm style), z not stored
+    //   ColorMetalAlpha    colour in RGB, the metal mask in A (this map and the albedo share the file)
+    //   ColorMetalMask     the metal mask of the albedo, held in another file: metal in R, the
+    //                      insulator range in A (set on the Metalness map; the albedo is the colour)
+    enum class PackKind { None, Nog, NormalAlphaGreen, ColorMetalAlpha, ColorMetalMask };
+
     // A texture file (relative to the model file) and the channel holding the value (0..3 = rgba;
     // colour maps use rgb). Invert: the value is 1 - sample (a gloss map read as roughness).
+    // Pack: how the file is packed (PackKind); saved in the sidecar as "pack" when not None.
     struct Map
     {
         std::string Path;
         int Channel = 0;
         bool Invert = false;
+        PackKind Pack = PackKind::None;
         bool Empty() const { return Path.empty(); }
     };
 
@@ -138,6 +150,13 @@ namespace Materials
         const Image* BySemantic(uint32_t Semantic) const;
     };
 
+    // Marks every map of D (and of its layers) whose file is Path as packed Kind: what an adapter
+    // calls once it knows how a game packs the image its slots share.
+    void MarkPacked(Description& D, const std::string& Path, PackKind Kind);
+    // The sidecar's name of a kind ("none", "nog", "normal_ag", "color_metal_alpha", "color_metal_mask")
+    const char* PackName(PackKind Kind);
+    PackKind PackFromName(const std::string& Name);   // an unknown name is None
+
     // The row a game's zonekit profile gives a technique set in shading.txt (read off the game's
     // pixel shaders): "recipe" and the constant offsets it names; null when none.
     using Recipe = std::map<std::string, std::string>;
@@ -221,7 +240,11 @@ namespace Materials
         std::vector<Source> Sources;    // the raw inputs, parallel to Materials
     };
     std::string SidecarPath(const std::string& ModelPath);  // <dir>/<stem>.materials.json
+    // While on, WriteSidecar also keeps the first 0x100 bytes of each material's first constant block ("constants", hex),
+    // which the BO3 target reads colorTint and glossRange from. Set by a run with a --target; off, the sidecar is what it was.
+    void KeepConstantsInSidecar(bool On);
     bool WriteSidecar(const std::string& Path, const Sidecar& S);   // a file already holding it is left alone
     bool SidecarHolds(const std::string& Path, const Sidecar& S);   // the file holds exactly what WriteSidecar writes
+    // Reads the descriptions and, parallel to them, the raw inputs the sidecar kept (techset, image semantics, constants).
     bool ReadSidecar(const std::string& Path, Sidecar& S);
 }

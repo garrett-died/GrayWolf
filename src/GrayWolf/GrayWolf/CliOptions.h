@@ -189,6 +189,13 @@ struct CliOptions
     bool EstimateKept = false;  // disk-estimate --kept: the samples kept from the last run, not measured again
     bool KeepOutput = false;    // disk-weigh --keep: what its export wrote is kept
     std::string EstimateZones; // disk-estimate --picked: the zones picked, comma-separated (as the panel lists them)
-    std::string WhereNames;    // disk-where --names: asset names, comma-separated, matched whole (no case)
+    std::string WhereNames;    // disk-where, bo3-gdtdb-info --names: asset names, comma-separated, matched whole (no case)
+    std::string ModToolsRoot;  // --mod-tools-root: the BO3 Mod Tools folder (else the BO3 install found, else TA_TOOLS_PATH)
+    // disk-export's BO3 publish step (Bo3Target.Publish.h). The target is never read from graywolf.json.
+    std::string PublishTarget; // --target none|folder|modtools (none: the export is what it always was)
+    std::string CheckGdtDb;    // --check-gdtdb on|off (on): skip what the Mod Tools gdt.db already holds
+    std::string GdtDbMatch;    // --gdtdb-match type|name (type)
+    std::string GdtMode;       // --gdt merge|overwrite (merge)
+    bool PublishPlan = false;  // --plan: decide and report, write nothing but the reports
 };
 

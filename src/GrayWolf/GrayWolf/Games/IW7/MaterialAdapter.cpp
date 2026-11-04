@@ -11,6 +11,9 @@
 // in the specOcclusionMap slot); unpacked ones are IW6's (specular rgb, gloss in its a; _o occlusion).
 // The second layer's "...Map1" slots (camo) left out. The alpha mode from the sort key
 // (Games/IW/IwMaterialAlpha.h) and an "_atest" techset; a packed colour map's alpha is never an opacity.
+// No Materials::PackKind is set here on purpose: this game's export patches the images (Games/IW7/DiskGame.cpp,
+// Normal_COD_NOG on normals, Color_StripAlpha on colours), so the exported files no longer hold the
+// packed channels (gloss, occlusion, the metal alpha) that the BO3 unpack needs.
 namespace
 {
     constexpr uint32_t ColorMap = 0xA0AB1041, NormalMap = 0x59D30D0F, SpecularMap = 0x34ECCCB3, SpecOcclusionMap = 0xA52C26B4,
