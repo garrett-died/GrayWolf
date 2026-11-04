@@ -18,8 +18,18 @@ namespace
     }
 
     // Rebuilds a normal from the two kept components. Where they already reach unit length
-    // there's no root for Z, so blue is written flat black (not the midpoint, matching the
-    // original) to signal at a glance that this pixel has no usable Z.
+    // there's no root for Z: that is Z = 0, which a channel stores as 0.5 (Image.cpp NormalZ does
+    // the same). GameImageUtil writes 0.0 there.
+    //
+    // The rim stays 0.5 for every caller and takes no parameter (a reviewer asked for one; rejected).
+    // The reason is the encoding, not a score: a channel holds (Z + 1) / 2, so Z = 0 is 0.5 in any game,
+    // and 0.0 would mean Z = -1, a vector pointing into the surface. The earlier comparison here (0.5
+    // at 60.7 dB against 0.0 at 53.8 dB, 299 pairs) is not cited: 261 of those 299 pairs were copies of
+    // earlier HydraX exports, which hold 0.5 by construction. Against the independent pairs only
+    // (stock sources in other folders, tools/bo3target/image_oracle.py), 0.5 measures: Black Ops 4,
+    // 162 normals, Z 38.0 dB median against a ceiling of 38.8 dB (the stock Z against the Z its own X and
+    // Y imply); Black Ops III, 476 normals, Z 36.1 dB against a ceiling of 33.6 dB. 0.0 was not
+    // re-measured on them.
     ImagePixel RebuildNormal(float X, float Y)
     {
         const auto Z = 1.0f - (X * X) - (Y * Y);
@@ -27,7 +37,7 @@ namespace
         ImagePixel Result;
         Result.R = ToChannel(X);
         Result.G = ToChannel(Y);
-        Result.B = Z > 0.0f ? ToChannel(std::sqrt(Z)) : 0.0f;
+        Result.B = Z > 0.0f ? ToChannel(std::sqrt(Z)) : ToChannel(0.0f);
         Result.A = 1.0f;
         return Result;
     }

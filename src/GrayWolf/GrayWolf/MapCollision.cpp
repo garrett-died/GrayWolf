@@ -159,6 +159,25 @@ namespace
                 if (L.SideSurface >= 0) Out1.Surface = At<uint32_t>(Img, S + L.SideSurface);
                 Out.Sides.push_back(Out1);
             }
+            // the corners: a brush whose pointer or count does not read keeps its sides alone
+            if (L.BrushVertexCount >= 0 && L.BrushVertices >= 0)
+            {
+                const uint32_t Corners = L.BrushVertexCountBytes == 2 ? At<uint16_t>(Img, B + L.BrushVertexCount) : At<uint32_t>(Img, B + L.BrushVertexCount);
+                if (Corners)
+                {
+                    const int64_t V = Follow(B + L.BrushVertices);
+                    if (V >= 0 && Corners <= 65536 && V + (int64_t)Corners * 12 <= (int64_t)Img.size())
+                    {
+                        Out.Vertices.resize((size_t)Corners * 3);
+                        for (size_t K = 0; K < Out.Vertices.size(); K++) Out.Vertices[K] = At<float>(Img, V + (int64_t)K * 4);
+                        Counters["collision_brush_vertices_read"]++;
+                    }
+                    else
+                        Counters["collision_brush_vertices_unread"]++;
+                }
+                else
+                    Counters["collision_brush_vertices_none"]++;
+            }
             return true;
         }
 

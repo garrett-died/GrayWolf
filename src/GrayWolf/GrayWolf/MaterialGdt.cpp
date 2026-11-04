@@ -568,8 +568,9 @@ Builder::Resolved Builder::Resolve() const
     Resolved Out;
     for (const auto& [Name, M] : Defined)
     {
+        const auto Used = Usage.find(M.Source);
         Gdt::Fields F = { { "materialCategory", M.Category }, { "materialType", M.Type }, { "surfaceType", "<none>" },
-                          { "template", "material.template" }, { "usage", "<not in editor>" } };
+                          { "template", "material.template" }, { "usage", Used != Usage.end() ? Used->second : "<not in editor>" } };
         ResolvedMaterial R;
         R.Name = Name;
         R.Source = M.Source;
@@ -819,6 +820,23 @@ int SelfTest(std::string& Failures)
         return Out.Materials.size() == 1;
     };
 
+    // usage: <not in editor> unless the builder was told one for the material (a map's geometry), and then only that one
+    {
+        Builder B(Base, "t_");
+        B.TechsetData(&Data);
+        Materials::Source Src;
+        Materials::Description A = Make("mtl_floor", 0), C = Make("mtl_model_only", 0);
+        Src.Name = A.Name;
+        B.Add(A, Dir, &Src, "bo4");
+        Src.Name = C.Name;
+        B.Add(C, Dir, &Src, "bo4");
+        std::string Before, UsedA, UsedC;
+        for (const auto& M : B.Resolve().Materials) Before += Value(M, "usage") + ";";
+        B.SetUsage({ { "mtl_floor", "floor" } });
+        for (const auto& M : B.Resolve().Materials) (M.Name == "mtl_floor" ? UsedA : UsedC) = Value(M, "usage");
+        Check(Before == "<not in editor>;<not in editor>;", "usage defaults to <not in editor>", Before);
+        Check(UsedA == "floor" && UsedC == "<not in editor>", "a named material gets its usage, the others keep <not in editor>", UsedA + " / " + UsedC);
+    }
     // colour plus normal: lit; every key of the techset and the stock defaults are written
     {
         Builder::Resolved R;
@@ -827,6 +845,26 @@ int SelfTest(std::string& Failures)
         Check(Ok && R.Materials[0].Fields.size() > 100 && Value(R.Materials[0], "heatmap") == "" &&
               Value(R.Materials[0], "glossSurfaceType") == "<custom>" && Value(R.Materials[0], "colorTint") == "1 1 1 1", "the entry holds every key with the stock defaults",
               Ok ? std::to_string(R.Materials[0].Fields.size()) : "");
+    }
+    // a Treyarch normal (X and Y, no pack kind, no flip: ImageRoles has rebuilt its Z in the file) is the
+    // same image under --target: the same name (no second tag), nothing derived
+    {
+        const auto Names = [&](bool Convert) {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            B.ConvertImages(Convert);
+            Materials::Source Src;
+            Materials::Description D = Make("mtl_treyarch", 0);
+            D.NormalEnc = Materials::NormalEncoding::XY;
+            Src.Name = D.Name;
+            B.Add(D, Dir, &Src, "bo4");
+            const auto R = B.Resolve();
+            std::string Out = R.Materials.empty() ? std::string("(none)") : Value(R.Materials[0], "normalMap");
+            for (const auto& I : R.ImagesOut) Out += ";" + I.Name;
+            return Out;
+        };
+        const std::string Plain = Names(false), Converted = Names(true);
+        Check(Plain == Converted && Plain.find("_n_n") == std::string::npos, "a Treyarch normal under --target keeps its image and its name", Plain + " / " + Converted);
     }
     // gloss and occlusion: a techset that has both slots, and the images are written to them
     {

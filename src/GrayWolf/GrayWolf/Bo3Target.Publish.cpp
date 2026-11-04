@@ -8,6 +8,7 @@
 #include "DiskGame.h"
 #include "ExportNaming.h"
 #include "GdtWriter.h"
+#include "MapFullExport.h"
 #include "MaterialGdt.h"
 #include "MaterialDescription.h"
 #include "XMEImport.h"
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <format>
 #include <fstream>
 #include <regex>
@@ -371,6 +373,52 @@ namespace Bo3Target::Publish
         }
         Count("models", Models.size());
 
+        // 1b. --full-map: what each map of the run names (<run>/maps/*.full_map.tsv, written by the map export). The
+        // models and their materials are published above like any model's; the list says which of them the maps name, the
+        // usage Radiant lists the geometry materials under, and the model that carries the geometry materials
+        std::vector<Maps::MapDependencyList> MapLists;
+        std::map<std::string, std::string> GeometryUsage;       // material source name -> usage
+        std::set<std::string> GeometryOwners;                   // model names that have materials and no file
+        // the files the map export made THIS run (graywolf_map_index.tsv): a .map or a list left in the folder by an
+        // earlier run is not published, and not read
+        const fs::path MapFolder = RunRoot / DiskGame::KindFolder(DiskGame::Kind::Map);
+        std::vector<std::pair<std::string, std::string>> MapIndex;
+        const bool HaveMapIndex = Maps::ReadMapIndex(MapFolder, MapIndex);
+        if (O.FullMap)
+        {
+            std::vector<fs::path> Files;
+            for (const auto& [Kind, Name] : MapIndex)
+                if (Kind == "list" && Lower(Name).ends_with(Maps::FullMapListSuffix)) Files.push_back(MapFolder / Name);
+            Ec.clear();
+            std::sort(Files.begin(), Files.end());
+            for (const fs::path& File : Files)
+            {
+                Maps::MapDependencyList List;
+                if (!Maps::ParseDependencyList(Slurp(File), List))
+                {
+                    R.Warnings.push_back("the map list " + File.filename().string() + " does not read: its map is not walked");
+                    Count("full_map_lists_unread");
+                    continue;
+                }
+                if (!List.Owner.empty()) GeometryOwners.insert(MaterialGdt::AssetName(List.Owner));
+                for (const Maps::MapDependency& D : List.Dependencies)
+                {
+                    if (D.Type != "material" || !StartsWith(D.Detail, "usage=")) continue;
+                    // two maps may use a material differently: the stronger use stays, whichever map came first
+                    const auto [Have, New] = GeometryUsage.emplace(D.Name, D.Detail.substr(6));
+                    if (!New && Have->second != D.Detail.substr(6))
+                    {
+                        Have->second = Maps::StrongerUsage(Have->second, D.Detail.substr(6));
+                        Count("map_usage_disagreements");
+                    }
+                }
+                MapLists.push_back(std::move(List));
+            }
+            Count("full_map_lists", MapLists.size());
+            if (MapLists.empty())
+                R.Warnings.push_back("--full-map found no map list of this run under " + MapFolder.string() + (HaveMapIndex ? ": the run exported no map" : " (no " + std::string(Maps::MapIndexFile) + ": the maps were not exported by this build)"));
+        }
+
         // 2. the materials and images of all of them
         // a sidecar is data: a path outside the run (absolute, ../) gives no baseImage, so no slot, read or write
         MaterialGdt::Builder B([&RunRoot](const fs::path& File) { return Out::IsUnder(RunRoot, File) ? File.generic_string() : std::string(); }, "m_");
@@ -378,6 +426,8 @@ namespace Bo3Target::Publish
         B.ConvertImages(true);
         B.TechsetData(&Techsets::Shared());     // a missing data file is counted (m_techset_data_missing) and reported below
         B.PlanOnly(O.Plan);
+        B.SetUsage(GeometryUsage);              // a map's geometry materials are listed in Radiant; every other material stays <not in editor>
+        std::map<std::string, std::vector<std::string>> ModelMaterials;     // model name -> its material asset names
         std::map<std::string, std::vector<std::string>> MaterialModels;     // material asset name -> models using it
         std::map<std::string, std::string> TechsetOf;
         for (auto& [Name, M] : Models)
@@ -412,6 +462,8 @@ namespace Bo3Target::Publish
                     if (Asset.empty()) continue;
                     auto& Users = MaterialModels[Asset];
                     if (std::find(Users.begin(), Users.end(), Name) == Users.end()) Users.push_back(Name);
+                    auto& Mine = ModelMaterials[Name];
+                    if (std::find(Mine.begin(), Mine.end(), Asset) == Mine.end()) Mine.push_back(Asset);
                     if (I < Techsets.size() && !Techsets[I].empty()) TechsetOf.emplace(Asset, Techsets[I]);
                 }
             }
@@ -501,7 +553,7 @@ namespace Bo3Target::Publish
         }
         for (const auto& [Name, M] : Models)
         {
-            if (M.Bins.empty() && !M.Sidecars.empty()) Count("models_without_xmodel_bin");
+            if (M.Bins.empty() && !M.Sidecars.empty() && !GeometryOwners.count(Name)) Count("models_without_xmodel_bin");
         }
         for (const auto& M : Resolved.Materials)
         {
@@ -1021,6 +1073,93 @@ namespace Bo3Target::Publish
         }
         SaveManifest();
 
+        // 9b. the maps: the Radiant source and its prefab files of the run (<run>/maps/*.map) go to
+        // map_source/graywolf_maps, where a misc_prefab's "model" (graywolf_maps/<file>) names them
+        {
+            // only the maps this run's map export made (the index); any other .map in the folder is an earlier run's
+            std::vector<fs::path> MapFiles;
+            std::set<std::string> ThisRun;
+            for (const auto& [Kind, Name] : MapIndex)
+                if (Kind == "map" && Lower(fs::path(Name).extension().string()) == ".map")
+                {
+                    MapFiles.push_back(MapFolder / Name);
+                    ThisRun.insert(Lower(Name));
+                }
+            size_t NotThisRun = 0;
+            for (fs::directory_iterator It(MapFolder, Ec), End; !Ec && It != End; It.increment(Ec))
+            {
+                std::error_code Ec2;
+                if (It->is_regular_file(Ec2) && Lower(It->path().extension().string()) == ".map" && !ThisRun.count(Lower(It->path().filename().string())))
+                    NotThisRun++;
+            }
+            Ec.clear();
+            if (NotThisRun != 0) Count("map_files_not_this_run", NotThisRun);
+            if (!HaveMapIndex && NotThisRun != 0)
+                R.Warnings.push_back(std::string("the maps under ") + MapFolder.string() + " have no " + Maps::MapIndexFile + ": none was published");
+            std::sort(MapFiles.begin(), MapFiles.end());
+            for (const fs::path& From : MapFiles)
+            {
+                const std::string FileName = From.filename().string();
+                const std::optional<std::string> Dest = Pl::SlotPath(Pl::Slot::MapGeometry, FileName);
+                if (!Dest) continue;
+                // the source read whole, its size checked: an unreadable or cut-short map must not become an empty (or
+                // partial) file over a valid one the manifest owns
+                std::string Bytes;
+                bool Readable = false;
+                {
+                    std::error_code SizeEc;
+                    const std::uintmax_t Size = fs::file_size(From, SizeEc);
+                    std::ifstream In(From, std::ios::binary);
+                    if (!SizeEc && In)
+                    {
+                        Bytes.assign(std::istreambuf_iterator<char>(In), std::istreambuf_iterator<char>());
+                        Readable = !In.bad() && Bytes.size() == Size;
+                    }
+                }
+                if (!Readable)
+                {
+                    Rows.push_back({ "map", FileName, "write_failed", "the source map cannot be read whole: nothing was published over the placed file", "", *Dest });
+                    Count("write_failed");
+                    Count("map_source_unreadable");
+                    continue;
+                }
+                const std::string Hash = Out::Sha256Hex(Bytes);
+                const Out::Verdict V = Gate.Check(*Dest, Hash);
+                Row Info{ "map", FileName, "unchanged", "", "", *Dest };
+                if (!Out::Allowed(V))
+                {
+                    Info.Action = "placement_conflict";
+                    Info.Reason = std::format("{} is {}", *Dest, Out::VerdictName(V));
+                    Count("placement_conflict");
+                    Count("map_conflicts");
+                }
+                else
+                {
+                    Gate.Claim(*Dest, Hash);
+                    if (V != Out::Verdict::Unchanged)
+                    {
+                        Info.Action = O.Plan ? "would_write" : "written";
+                        std::string Error;
+                        if (!O.Plan && (SaveFailed || !Out::WriteAtomic(Gate.Absolute(*Dest), Bytes.data(), Bytes.size(), Error, V != Out::Verdict::Create)))
+                        {
+                            Info.Action = "write_failed";
+                            Info.Reason = SaveFailed ? "not written: the manifest could not be saved" : Error;
+                            Count("write_failed");
+                        }
+                        else if (!O.Plan)
+                        {
+                            Record(*Dest, Hash, "map", From.stem().string());
+                            SaveManifest();
+                            Count("map_files_written");
+                        }
+                    }
+                    else
+                        Count("map_files_unchanged");
+                }
+                Rows.push_back(std::move(Info));
+            }
+        }
+
         // 10. the reports
         std::string Placement = Tsv({ "kind", "name", "action", "reason", "gdt", "files" });
         for (Asset& A : Assets)
@@ -1048,6 +1187,110 @@ namespace Bo3Target::Publish
             !Out::WriteAtomic(RunRoot / "graywolf_approximations.tsv", Approximations.data(), Approximations.size(), Error))
             R.Warnings.push_back("a report was not written: " + Error);
         Count("assets", Assets.size());
+
+        // 10b. --full-map: the report. Each name a map gives is walked through what the run published (the model, then its
+        // materials, then their images), the assets the Mod Tools hold followed as well, and told by its fate
+        if (O.FullMap)
+        {
+            std::map<std::string, const Asset*> ByKey;      // "kind|source name"
+            for (const Asset& A : Assets) ByKey[A.Kind + "|" + A.From] = &A;
+            std::map<std::string, const MaterialGdt::Builder::ResolvedMaterial*> MaterialByName;
+            for (const auto& M : Resolved.Materials) MaterialByName[M.Name] = &M;
+            std::string Report = Tsv({ "map", "kind", "type", "name", "via", "detail" });
+            const auto Classify = [](const Asset* A, std::string& Detail) -> std::string {
+                if (A == nullptr) return "unresolved";
+                if (A->Action == "already_in_mod_tools" || A->Action == "name_conflict")
+                {
+                    Detail = A->Reason;
+                    return "in_mod_tools";
+                }
+                if (A->Action == "written" || A->Action == "would_write" || A->Action == "unchanged" || A->Action == "gdt_duplicate_name" || A->Action == "kept_in_place")
+                {
+                    // the same on a second run and in a plan: where it goes, not what this run did (graywolf_placement.tsv says)
+                    Detail = A->Dest;
+                    return "exported";
+                }
+                Detail = A->Action + ": " + A->Reason;
+                return "unresolved";
+            };
+            struct Item
+            {
+                std::string Type, Name, Via, Detail;
+            };
+            for (const Maps::MapDependencyList& List : MapLists)
+            {
+                std::deque<Item> Queue;
+                std::set<std::string> Seen;
+                std::map<std::string, size_t> Kinds;
+                for (const Maps::MapDependency& D : List.Dependencies) Queue.push_back({ D.Type, D.Name, D.Via, D.Detail });
+                while (!Queue.empty())
+                {
+                    const Item It = std::move(Queue.front());
+                    Queue.pop_front();
+                    std::string Key;
+                    if (It.Type == "xmodel") Key = MaterialGdt::AssetName(ExportNaming::SafeFileName(It.Name));
+                    else if (It.Type == "material") Key = MaterialGdt::AssetName(It.Name);
+                    else Key = It.Name;
+                    if (!Seen.insert(It.Type + "|" + (Key.empty() ? Lower(It.Name) : Key)).second) continue;
+                    std::string Kind, Detail;
+                    if (It.Type == "fx" || It.Type == "xanim")
+                    {
+                        Kind = "not_exported_yet";
+                        Detail = It.Type == "fx" ? "effects do not publish yet" : "xanims do not publish yet";
+                    }
+                    else
+                    {
+                        const Asset* A = nullptr;
+                        if (const auto Hit = ByKey.find(It.Type + "|" + Key); Hit != ByKey.end()) A = Hit->second;
+                        Kind = Classify(A, Detail);
+                        if (A == nullptr && It.Type == "xmodel")
+                        {
+                            const auto Model = Models.find(Key);
+                            Detail = Model == Models.end() ? "no xmodel_bin was exported: the zone does not hold the model and no zone of the install gave it"
+                                                           : "the model export wrote no XMODEL_BIN";
+                        }
+                        else if (A == nullptr && It.Type == "material")
+                            Detail = "no model or geometry sidecar describes it (the map reader did not read it)";
+                        else if (A == nullptr)
+                            Detail = "no image entity was made for it";
+                        if (A != nullptr && A->Name != Key) Detail += " asset=" + A->Name;
+                        // the walk goes on from what is held as well: each reference of it is checked
+                        if (It.Type == "xmodel")
+                        {
+                            if (const auto Mats = ModelMaterials.find(Key); Mats != ModelMaterials.end())
+                                for (const std::string& Mat : Mats->second) Queue.push_back({ "material", Mat, "xmodel " + Key, "" });
+                        }
+                        else if (It.Type == "material")
+                        {
+                            if (const auto Mat = MaterialByName.find(Key); Mat != MaterialByName.end())
+                                for (const std::string& Image : Mat->second->Images) Queue.push_back({ "image", Image, "material " + Key, "" });
+                        }
+                    }
+                    Kinds[Kind]++;
+                    Count("full_map_" + Kind);
+                    Count("full_map_" + Kind + "_" + It.Type);
+                    Report += Tsv({ List.Map, Kind, It.Type, It.Name, It.Via, Detail });
+                    // the map file names this model and was published anyway (its geometry is useful): the model is not placed,
+                    // so the map shows a hole in Radiant. Said here and in the summary, never silent.
+                    if (It.Type == "xmodel" && Kind == "unresolved")
+                    {
+                        Kinds["map_model_unplaced"]++;
+                        Count("map_model_unplaced");
+                        Report += Tsv({ List.Map, "map_model_unplaced", "xmodel", It.Name, It.Via, "the map names this model and it is not placed: " + Detail });
+                    }
+                }
+                if (Kinds["map_model_unplaced"] != 0)
+                    R.Warnings.push_back(std::format("{}: {} models the map names are not placed (map_model_unplaced in graywolf_full_map_report.tsv)", List.Map, Kinds["map_model_unplaced"]));
+                size_t Total = 0;
+                for (const auto& [K, N] : Kinds)
+                    if (K != "map_model_unplaced") Total += N;   // a note on a model counted above
+                Report += Tsv({ List.Map, "summary", "", "", "", std::format("{} names: exported={}, in_mod_tools={}, unresolved={}, not_exported_yet={}, map_model_unplaced={}", Total, Kinds["exported"],
+                                                                         Kinds["in_mod_tools"], Kinds["unresolved"], Kinds["not_exported_yet"], Kinds["map_model_unplaced"]) });
+            }
+            std::string ReportError;
+            if (!Out::WriteAtomic(RunRoot / "graywolf_full_map_report.tsv", Report.data(), Report.size(), ReportError))
+                R.Warnings.push_back("the full map report was not written: " + ReportError);
+        }
         return R;
     }
 
@@ -1619,6 +1862,168 @@ namespace Bo3Target::Publish
             Check(ChooseRoot(Target::Folder, "", Scan.string(), "", Root, How, Error) && Root == fs::absolute(Scan, E), "folder root: the scan still serves the read-only lookups", Root.string());
             Root.clear();
             Check(ChooseRoot(Target::Folder, "", "", "", Root, How, Error) && Root.empty(), "folder root: none found is not an error", Error);
+        }
+
+        // 18. the maps: the Radiant source and its prefab files go to map_source\graywolf_maps, nothing foreign is replaced
+        {
+            const fs::path Run = Base / "t18" / "bo4", Root = Run / "bo3";
+            std::error_code E;
+            fs::create_directories(Run / "maps", E);
+            std::ofstream(Run / "maps" / "mp_x.map", std::ios::binary) << "iwmap 4\n// main\n";
+            std::ofstream(Run / "maps" / "mp_x_prefab_lights.map", std::ios::binary) << "iwmap 4\n// lights\n";
+            std::ofstream(Run / "maps" / "mp_x.glb", std::ios::binary) << "not a map source";
+            std::ofstream(Run / "maps" / "mp_stale.map", std::ios::binary) << "iwmap 4\n// an earlier run's\n";   // in the folder, not in this run's index
+            Maps::BeginRunMapFiles(Run / "maps");
+            Maps::NoteRunMapFile(Run / "maps", "mp_x.map", "map");
+            Maps::NoteRunMapFile(Run / "maps", "mp_x_prefab_lights.map", "map");
+            Result R = Go(Run, Root, Know);
+            Check(R.Error.empty(), "maps: no error", R.Error);
+            Check(Slurp(Root / "map_source" / "graywolf_maps" / "mp_x.map") == "iwmap 4\n// main\n" &&
+                      Slurp(Root / "map_source" / "graywolf_maps" / "mp_x_prefab_lights.map") == "iwmap 4\n// lights\n",
+                  "maps: the main map and the prefab file are in map_source\\graywolf_maps", "");
+            Check(!Exists(Root / "map_source" / "graywolf_maps" / "mp_x.glb"), "maps: only .map files are placed", "");
+            Check(!Exists(Root / "map_source" / "graywolf_maps" / "mp_stale.map") && R.Counters["publish_map_files_not_this_run"] == 1,
+                  "maps: a stale .map the run did not make is not published, and counted", std::to_string(R.Counters["publish_map_files_not_this_run"]));
+            Check(R.Counters["publish_map_files_written"] == 2, "maps: two files written", std::to_string(R.Counters["publish_map_files_written"]));
+            Result Again = Go(Run, Root, Know);
+            Check(Again.Counters["publish_map_files_unchanged"] == 2 && Again.Counters["publish_map_files_written"] == 0, "maps: a second run leaves them as they are",
+                  std::to_string(Again.Counters["publish_map_files_unchanged"]));
+            // a file the manifest does not list is foreign: never replaced
+            std::ofstream(Root / "map_source" / "graywolf_maps" / "mp_y.map", std::ios::binary) << "hand made";
+            std::ofstream(Run / "maps" / "mp_y.map", std::ios::binary) << "iwmap 4\n// graywolf\n";
+            Maps::NoteRunMapFile(Run / "maps", "mp_y.map", "map");
+            Result Foreign = Go(Run, Root, Know);
+            Check(Slurp(Root / "map_source" / "graywolf_maps" / "mp_y.map") == "hand made" && Foreign.Counters["publish_map_conflicts"] == 1, "maps: a foreign map is not replaced",
+                  Slurp(Root / "map_source" / "graywolf_maps" / "mp_y.map"));
+            // a map the index names whose source cannot be read: skipped as write_failed, the placed file keeps its bytes
+            Maps::NoteRunMapFile(Run / "maps", "mp_gone.map", "map");
+            Result Gone = Go(Run, Root, Know);
+            Check(Gone.Counters["publish_map_source_unreadable"] == 1 && !Exists(Root / "map_source" / "graywolf_maps" / "mp_gone.map") &&
+                      Slurp(Root / "map_source" / "graywolf_maps" / "mp_x.map") == "iwmap 4\n// main\n",
+                  "maps: an unreadable source map is write_failed and publishes nothing", std::to_string(Gone.Counters["publish_map_source_unreadable"]));
+        }
+        // 19. --full-map: a map's list is walked through the published assets and reported
+        {
+            const fs::path Run = Base / "t19" / "bo4", Root = Run / "bo3";
+            std::error_code E;
+            MakeModel(Run, "p7_crate_x", { { "mtl_shared", { "i_mtl_shared_c", "i_mtl_shared_n" } }, { "mtl_prop", { "i_mtl_prop_c" } } });
+            MakeModel(Run, "p7_crate_a", { { "mtl_held_one", { "i_mtl_held_new_c" } } });        // a model the Mod Tools hold, a held material, a new image
+            MakeModel(Run, "mp_x_geometry", { { "mtl_floor", { "i_mtl_floor_c" } }, { "mtl_shared", { "i_mtl_shared_c", "i_mtl_shared_n" } } });
+            fs::remove(Run / "models" / "mp_x_geometry" / "mp_x_geometry_LOD0.XMODEL_BIN", E);       // the geometry materials' owner has no model file
+            fs::create_directories(Run / "maps", E);
+            Maps::MapDependencyList List;
+            List.Map = "mp_x";
+            List.Owner = "mp_x_geometry";
+            List.Dependencies = { { "xmodel", "p7_crate_x", "staticModel", "" },
+                                  { "xmodel", "p7_crate_a", "model", "" },
+                                  { "xmodel", "p7_missing", "model", "" },
+                                  { "material", "mtl_floor", "surface:floor", "usage=floor" },
+                                  { "material", "mtl_shared", "surface:interior wall", "usage=interior wall" },
+                                  { "fx", "debris/a.efx", "rattleEfx", "" },
+                                  { "xanim", "a_walk", "walkAnim1", "" } };
+            std::ofstream(Run / "maps" / ("mp_x" + std::string(Maps::FullMapListSuffix)), std::ios::binary) << Maps::FormatDependencyList(List);
+            Maps::BeginRunMapFiles(Run / "maps");
+            Maps::NoteRunMapFile(Run / "maps", "mp_x" + std::string(Maps::FullMapListSuffix), "list");
+            const auto GoFull = [&](const fs::path& Where, bool Plan) {
+                Options O;
+                O.Which = Target::Folder;
+                O.OutputRoot = Where;
+                O.Plan = Plan;
+                O.FullMap = true;
+                return Publish::Run(O, Know, Run, "bo4");
+            };
+            const auto KindOf = [&](const std::string& Type, const std::string& Name) {
+                for (const auto& Row : ReadTsv(Run / "graywolf_full_map_report.tsv"))
+                    if (Row.size() >= 6 && Row[2] == Type && Row[3] == Name) return Row[1];
+                return std::string("(no row)");
+            };
+            const auto AllGdt = [&](const fs::path& Where, std::vector<std::string>& Names) {
+                std::string Text;
+                for (fs::recursive_directory_iterator It(Where, E), End; !E && It != End; It.increment(E))
+                {
+                    if (!It->is_regular_file() || Lower(It->path().extension().string()) != ".gdt") continue;
+                    const std::string One = Slurp(It->path());
+                    Text += One;
+                    std::vector<Out::GdtEntryText> Entries;
+                    std::string Error;
+                    if (Out::ParseGdt(One, Entries, Error))
+                        for (const auto& Entry : Entries) Names.push_back(Lower(Entry.Name) + "|" + Lower(Entry.Gdf));
+                }
+                return Text;
+            };
+            Result R = GoFull(Root, false);
+            Check(R.Error.empty(), "full map: no error", R.Error);
+            Check(KindOf("xmodel", "p7_crate_x") == "exported", "full map: a published model is exported", KindOf("xmodel", "p7_crate_x"));
+            Check(KindOf("xmodel", "p7_crate_a") == "in_mod_tools", "full map: a model the Mod Tools hold is in_mod_tools", KindOf("xmodel", "p7_crate_a"));
+            Check(KindOf("xmodel", "p7_missing") == "unresolved", "full map: a model no zone gave is unresolved, never silent", KindOf("xmodel", "p7_missing"));
+            Check(KindOf("material", "mtl_held_one") == "in_mod_tools" && KindOf("image", "i_mtl_held_new_c") == "exported",
+                  "full map: the walk follows a held model: its held material is in_mod_tools and its new image is exported", KindOf("image", "i_mtl_held_new_c"));
+            Check(KindOf("material", "mtl_prop") == "exported" && KindOf("image", "i_mtl_prop_c") == "exported", "full map: a prop's material and image are walked through the model", "");
+            Check(KindOf("material", "mtl_floor") == "exported" && KindOf("image", "i_mtl_floor_c") == "exported", "full map: the geometry materials are exported", "");
+            Check(KindOf("fx", "debris/a.efx") == "not_exported_yet" && KindOf("xanim", "a_walk") == "not_exported_yet", "full map: effects and xanims are not_exported_yet", "");
+            Check(R.Counters["publish_full_map_unresolved_xmodel"] == 1 && R.Counters["publish_full_map_not_exported_yet"] == 2 && R.Counters["publish_full_map_in_mod_tools_xmodel"] == 1,
+                  "full map: the counters", std::to_string(R.Counters["publish_full_map_unresolved_xmodel"]));
+            std::string Summary;
+            for (const auto& Row : ReadTsv(Run / "graywolf_full_map_report.tsv"))
+                if (Row.size() >= 6 && Row[1] == "summary") Summary = Row[5];
+            Check(Contains(Summary, "unresolved=1") && Contains(Summary, "not_exported_yet=2"), "full map: a summary line", Summary);
+            Check(Contains(Summary, "map_model_unplaced=1") && R.Counters["publish_map_model_unplaced"] == 1,
+                  "full map: a model the map names and no placement gave is map_model_unplaced in the summary", Summary);
+            {
+                size_t Unplaced = 0;
+                for (const auto& Row : ReadTsv(Run / "graywolf_full_map_report.tsv"))
+                    if (Row.size() >= 6 && Row[1] == "map_model_unplaced" && Row[3] == "p7_missing") Unplaced++;
+                Check(Unplaced == 1, "full map: the report has a map_model_unplaced row for it", std::to_string(Unplaced));
+            }
+            Check(R.Counters["publish_models_without_xmodel_bin"] == 0, "full map: the geometry owner is no model without a file", std::to_string(R.Counters["publish_models_without_xmodel_bin"]));
+
+            // usage: a material a world surface draws is listed in Radiant, also when a prop uses it; the prop's alone is not
+            std::vector<std::string> Names;
+            const std::string Gdts = AllGdt(Root, Names);
+            const auto EntryOf = [&](const std::string& Name) {
+                const size_t At = Gdts.find("\"" + Name + "\" ( \"material.gdf\" )");
+                return At == std::string::npos ? std::string() : Gdts.substr(At, Gdts.find('}', At) - At);
+            };
+            Check(Contains(EntryOf("mtl_floor"), "\"usage\" \"floor\""), "full map: the floor material carries its usage", EntryOf("mtl_floor"));
+            Check(Contains(EntryOf("mtl_shared"), "\"usage\" \"interior wall\""), "full map: a material a prop also uses keeps the world surface's usage", EntryOf("mtl_shared"));
+            Check(Contains(EntryOf("mtl_prop"), "\"usage\" \"<not in editor>\""), "full map: a material only a prop uses stays <not in editor>", EntryOf("mtl_prop"));
+            std::set<std::string> Unique(Names.begin(), Names.end());
+            Check(Unique.size() == Names.size() && !Names.empty(), "full map: no name twice across the GDTs", std::to_string(Names.size()) + " / " + std::to_string(Unique.size()));
+
+            // a list of an earlier run, not in the index, is not read; two maps that use a material differently: the stronger use, counted
+            {
+                Maps::MapDependencyList Other;
+                Other.Map = "mp_y";
+                Other.Dependencies = { { "material", "mtl_shared", "surface:floor", "usage=floor" } };
+                std::ofstream(Run / "maps" / ("mp_old" + std::string(Maps::FullMapListSuffix)), std::ios::binary) << Maps::FormatDependencyList(Other);
+                const fs::path Stale = Run / "bo3_stale";
+                Result One = GoFull(Stale, true);
+                Check(One.Counters["publish_map_usage_disagreements"] == 0, "full map: a list the run did not make is not read", std::to_string(One.Counters["publish_map_usage_disagreements"]));
+                Maps::NoteRunMapFile(Run / "maps", "mp_old" + std::string(Maps::FullMapListSuffix), "list");
+                const fs::path Both = Run / "bo3_both";
+                Result Two = GoFull(Both, true);
+                Check(Two.Error.empty() && Two.Counters["publish_map_usage_disagreements"] == 1, "full map: two maps disagreeing on a usage are counted", std::to_string(Two.Counters["publish_map_usage_disagreements"]));
+                Check(Maps::StrongerUsage("interior wall", "floor") == "floor" && Maps::StrongerUsage("floor", "interior wall") == "floor" && Maps::StrongerUsage("decal", "floor") == "decal",
+                      "full map: the stronger usage does not depend on the order", Maps::StrongerUsage("interior wall", "floor"));
+                // the one map again: the checks below compare against it
+                fs::remove(Run / "maps" / ("mp_old" + std::string(Maps::FullMapListSuffix)), E);
+                Maps::BeginRunMapFiles(Run / "maps");
+                Maps::NoteRunMapFile(Run / "maps", "mp_x" + std::string(Maps::FullMapListSuffix), "list");
+                GoFull(Run / "bo3_restore", true);   // the report of the one map again
+            }
+
+            // a second run changes nothing
+            const auto Before = Tree(Root);
+            const std::string ReportBefore = Slurp(Run / "graywolf_full_map_report.tsv");
+            Result Again = GoFull(Root, false);
+            Check(Tree(Root) == Before && Slurp(Run / "graywolf_full_map_report.tsv") == ReportBefore, "full map: a second run changes nothing", "");
+            Check(Again.Counters["publish_files_written"] == 0, "full map: a second run writes no file", std::to_string(Again.Counters["publish_files_written"]));
+
+            // a plan lists and writes nothing in the target
+            const fs::path PlanRoot = Run / "bo3_plan";
+            Result Plan = GoFull(PlanRoot, true);
+            Check(Plan.Error.empty() && !Exists(PlanRoot / "model_export") && !Exists(PlanRoot / "graywolf" / "manifest.json"), "full map: a plan writes nothing in the target", Plan.Error);
+            Check(KindOf("xmodel", "p7_crate_x") == "exported" && Contains(Slurp(Run / "graywolf_placement.tsv"), "would_write"), "full map: a plan reports what it would write", "");
         }
         fs::remove_all(Base, Ec);
         return Failed;

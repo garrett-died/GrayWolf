@@ -150,6 +150,15 @@ namespace ExportWriters
     bool MakeDirs(const std::filesystem::path& Dir);
     void ForgetDirs();
 
+    // The image files this run's writers put on disk (ImageSink's pool and its links, WriteImage's
+    // callers), as ImageKey names them: the one set a pass over the images folder may touch (ImageRoles).
+    // A file the run did not write is not in it, whatever its name. Thread safe; DiskGame::Export
+    // clears it at a run's start (ForgetWrittenImages).
+    std::wstring ImageKey(const std::filesystem::path& File);
+    void NoteImageWritten(const std::filesystem::path& File);
+    bool ImageWritten(const std::filesystem::path& File);
+    void ForgetWrittenImages();
+
     // What this run knows of a file without asking the file system (a stat costs as much as a
     // CreateDirectoryW: a skip check per asset in a fresh output tree found nothing, thousands of
     // times). MayExist is false only when MakeDirs created File's folder this run (so it was empty)

@@ -10,6 +10,8 @@
 #include "ExportNaming.h"
 #include "FastFile.h"
 #include "Games/GameModule.h"
+#include "ImageRoles.h"
+#include "MapFullExport.h"
 #include "MaterialGdt.h"
 #include "MemoryBudget.h"
 #include "SettingsManager.h"
@@ -485,12 +487,55 @@ namespace
         return std::string(KindName(A.K)) + " " + A.Name + ": " + Why;
     }
 
+    // The slot every image of the zone's materials is bound to, into the run's roles (ImageRoles.h): the
+    // materials it defines, and those it only names (a header with no slots), from the zones the install
+    // index says define them, as a model's headers are filled (Context::MaterialsElsewhere)
+    void CollectRoles(IDiskZone& Zone, ImageRoles::Book& Roles, const Context& Run, Totals& T, RunMonitor& Mon)
+    {
+        const auto Start = std::chrono::steady_clock::now();
+        MaterialBook Materials;
+        if (Zone.MaterialImages(Materials))
+        {
+            Roles.Add(Materials);
+            T.Counters["role_materials_read"] += Materials.size();
+        }
+        // images met inside a model, their material not walked: the slot stored beside the pointer to them
+        {
+            MaterialBook Linked;
+            Zone.ImageSlotsByLink(Materials, Linked);
+            for (const auto& [Material, Images] : Linked) T.Counters["role_images_by_link"] += Images.size();
+            Roles.Add(Linked);
+        }
+        if (Run.MaterialsElsewhere)
+        {
+            std::set<std::string> Headers;
+            Zone.MaterialHeaders(Headers);
+            for (auto It = Headers.begin(); It != Headers.end();)
+            {
+                const auto Here = Materials.find(*It);
+                It = Here != Materials.end() && !Here->second.empty() ? Headers.erase(It) : std::next(It);
+            }
+            if (!Headers.empty())
+            {
+                MaterialBook Elsewhere;
+                Run.MaterialsElsewhere(Zone, Headers, Elsewhere);
+                Roles.Add(Elsewhere);
+                T.Counters["role_headers_asked"] += Headers.size();
+                T.Counters["role_headers_filled"] += Elsewhere.size();
+            }
+        }
+        Mon.AddTime("roles", Seconds(Start));
+    }
+
     // Each round groups the pending dependencies by a zone that defines them (the one giving the
     // most first) and opens each such zone once, alone; what those exports need in turn is the
     // next round. An asset is asked of a zone at most once: no cycle, nothing written twice.
+    // Roles: the run's image roles (nullptr: none), which the materials of a zone pulled for its
+    // materials add to.
     void PullDependencies(const IDiskGame& Game, const ExportOptions& Options, const std::string& Install,
                           const std::string& ReaderKey, Wanted Pending, Context& Run, Ledger& L, Totals& T,
-                          Progress& P, const ProgressFn& OnProgress, const std::function<bool()>& Cancelled, RunMonitor& Mon)
+                          Progress& P, const ProgressFn& OnProgress, const std::function<bool()>& Cancelled, RunMonitor& Mon,
+                          ImageRoles::Book* Roles)
     {
         P.ZoneName = "indexing the install";
         P.Current.reset();
@@ -660,6 +705,9 @@ namespace
                     for (const auto& A : Take) Elsewhere(A, Why);
                     continue;
                 }
+                // a material pulled writes its images: their roles come with the zone's materials
+                if (Roles != nullptr && std::any_of(Take.begin(), Take.end(), [](const AssetId& A) { return A.K == Kind::Material; }))
+                    CollectRoles(*Zone, *Roles, Run, T, Mon);
                 for (Kind K : AllKinds())
                 {
                     auto Only = std::make_shared<Selection>();
@@ -979,6 +1027,8 @@ Totals Export(const IDiskGame& Game, const ExportOptions& Options, const std::ve
     if (!Options.Install.empty()) Siren::AddSearchDir(fs::path(Options.Install).wstring());
     else if (!Zones.empty()) Siren::AddSearchDir(fs::path(Game.InstallOfZone(Zones.front())).wstring());
     const auto SoundsBefore = ExportWriters::SoundCounters();   // the sound writer's, this run's share added at the end
+    if (C.Kinds.count(Kind::Map)) Maps::BeginRunMapFiles(fs::path(C.OutRoot) / KindFolder(Kind::Map));   // the publish step reads only this run's maps
+    ExportWriters::ForgetWrittenImages();   // the files ImageRoles may rewrite are the ones this run writes
     ExportWriters::ForgetDirs();   // a folder deleted since the last run is made again
     ExportWriters::MakeDirs(C.OutRoot);
     RunMonitor Mon(RunLogPath(C), [&](const std::string& Stalled) {
@@ -1057,6 +1107,12 @@ Totals Export(const IDiskGame& Game, const ExportOptions& Options, const std::ve
         if (Declared.count(K)) Any = true;
         else T.Unsupported.insert(K);
     const auto Cancelled = [&] { return T.Cancelled = T.Cancelled || Run.Cancelled(); };
+    // a game that ships two-component normals: the slot each image is bound to, read from the materials
+    // of every zone opened (and of the zones pulled for their materials), then the Z of the normals
+    // rebuilt once the images are written (ImageRoles.h)
+    ImageRoles::Book RoleBook;
+    const bool Roled = Game.RebuildsNormalZ() && !T.Cancelled &&
+                       std::any_of(C.Kinds.begin(), C.Kinds.end(), [](Kind K) { return K == Kind::Image || K == Kind::Model || K == Kind::Map || K == Kind::Material || K == Kind::Fx; });
     // the zones that wrote anims, for the game's anim owners (IDiskGame::AnimOwners)
     const bool OwnAnims = C.Kinds.count(Kind::Anim) && Declared.count(Kind::Anim);
     std::vector<IDiskGame::AnimZone> AnimZones;
@@ -1089,6 +1145,7 @@ Totals Export(const IDiskGame& Game, const ExportOptions& Options, const std::ve
         Mon.Log("zone " + P.ZoneName + " (" + std::to_string(I + 1) + "/" + std::to_string(Zones.size()) + ") " + Opened(*Zone, OpenS, Mon, "open_"));
         if (Zone->WalkedToEnd()) T.ZonesWalked++;
         if (ReaderKey.empty()) ReaderKey = Zone->IndexKey();
+        if (Roled) CollectRoles(*Zone, RoleBook, Run, T, Mon);
         for (Kind K : AllKinds())
         {
             if (!C.Kinds.count(K) || !Declared.count(K) || Cancelled()) continue;
@@ -1136,7 +1193,8 @@ Totals Export(const IDiskGame& Game, const ExportOptions& Options, const std::ve
         const std::string Install = !Options.Install.empty() ? Options.Install : Game.InstallOfZone(Zones.front());
         P.Zone = Zones.size() - 1;
         const auto Start = std::chrono::steady_clock::now();
-        PullDependencies(Game, Options, Install, ReaderKey, std::move(Pending), Run, L, T, P, OnProgress, Cancelled, Mon);
+        PullDependencies(Game, Options, Install, ReaderKey, std::move(Pending), Run, L, T, P, OnProgress, Cancelled, Mon,
+                         Roled ? &RoleBook : nullptr);
         Mon.AddTime("deps_total", Seconds(Start));
     }
     if (!Later.empty())
@@ -1159,6 +1217,18 @@ Totals Export(const IDiskGame& Game, const ExportOptions& Options, const std::ve
             }
         }
         Mon.AddTime("after", Seconds(Start));
+    }
+    // the images are all written (zones, dependencies, After work): the Z of the normal maps
+    if (Roled && !T.Cancelled)
+    {
+        const auto Start = std::chrono::steady_clock::now();
+        const ImageRoles::Outcome O = ImageRoles::RebuildNormals(RoleBook, fs::path(C.OutRoot) / KindFolder(Kind::Image), T);
+        Mon.AddTime("normals_z", Seconds(Start));
+        Mon.Log("normal maps: " + std::to_string(O.Rebuilt) + " Z rebuilt, " + std::to_string(O.AlreadyZ) + " had Z, " + std::to_string(O.Failed) +
+                " failed, " + std::to_string(O.LeftDds) + " left as DDS, " + std::to_string(O.Conflict) + " bound to normal and other slots (" + std::to_string(O.ConflictRebuilt) + " rebuilt as they look like normals, " + std::to_string(O.ConflictLeft) + " left), " +
+                std::to_string(O.NotNormal) + " not normal-looking, " + std::to_string(O.SkippedLayout) + " not 8-bit RGB(A), " + std::to_string(O.NotThisRun) + " not written this run, " + std::to_string(O.Collision) + " name collisions, " +
+                std::to_string(O.Unknown) + " images of no known role, " + std::to_string(O.NotInFolder) + " normals not in the folder (" +
+                std::to_string(O.Roles) + " images bound)");
     }
     // which models the anims play on, as the game says, once per run (no zone open)
     if (!AnimZones.empty() && !T.Cancelled)

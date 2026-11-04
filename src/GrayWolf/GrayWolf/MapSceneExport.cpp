@@ -4,6 +4,7 @@
 
 #include "ExportNaming.h"
 #include "ExportWriters.h"
+#include "MapFullExport.h"
 #include "MapSceneWriter.h"
 #include "MaterialDescription.h"
 
@@ -58,6 +59,15 @@ bool WriteMapFiles(MapScene& Scene, const std::set<std::string>& Names,
         }
     }
     Scene.Images = std::move(Images);
+    // --full-map: what the map names as data for the publish step, and its geometry materials as the sidecar of a model
+    // that has no file (their images are named now, from the files above)
+    const bool FullMap = FullMapOn(C.Settings);
+    if (FullMap)
+    {
+        std::string Why;
+        if (!WriteFullMapFiles(Scene, Adapter, C.KindDir(Kind::Model), Stem, Counters, Why)) T.Fail(Zone, Kind::Map, Scene.Name, "full map: " + Why);
+        else NoteRunMapFile(MapDir, std::filesystem::path(Stem + FullMapListSuffix).filename().string(), "list");   // this run's list: the publish step reads only these
+    }
     if (!Unsigned.empty())
         C.After([Unsigned, &T]() {
             size_t Failed = 0;
@@ -88,7 +98,11 @@ bool WriteMapFiles(MapScene& Scene, const std::set<std::string>& Names,
     std::vector<const Maps::ISceneWriter*> Writers = { &Maps::GlbWriter() };
     if (DiskGame::MapCast.Of(C.Settings) == "on") Writers.push_back(&Maps::CastWriter());
     if (DiskGame::MapRadiant.Of(C.Settings) == "on")
-        Writers.push_back(&Maps::RadiantWriter(DiskGame::GdtMaterials.Of(C.Settings) == "on"));
+    {
+        const auto Prefabs = C.Settings.find("map_prefabs");
+        Writers.push_back(&Maps::RadiantWriter(DiskGame::GdtMaterials.Of(C.Settings) == "on", Prefabs == C.Settings.end() ? std::string() : Prefabs->second,
+                                               FullMap ? C.KindDir(Kind::Model) : std::string()));
+    }
     if (DiskGame::MapCollision.Of(C.Settings) == "on") Writers.push_back(&Maps::CollisionWriter());
     bool Written = false;
     for (const Maps::ISceneWriter* W : Writers)
@@ -102,6 +116,12 @@ bool WriteMapFiles(MapScene& Scene, const std::set<std::string>& Names,
             continue;
         }
         if (W == Writers.front()) Written = true;
+        // the Radiant source and its prefab files: this run's, for the publish step (graywolf_map_index.tsv)
+        if (std::string(W->Extension()) == ".map")
+        {
+            NoteRunMapFile(MapDir, std::filesystem::path(Stem + W->Extension()).filename().string(), "map");
+            for (const std::string& File : Result.Files) NoteRunMapFile(MapDir, File, "map");
+        }
         for (const auto& [Key, V] : Result.Counters) Counters[Key] += V;
         if (Result.Later)
             C.After([Later = Result.Later, Key = Result.LaterCounter, &T]() { T.Counters[Key] += Later(); });

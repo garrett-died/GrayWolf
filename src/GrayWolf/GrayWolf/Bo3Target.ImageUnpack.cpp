@@ -144,7 +144,8 @@ namespace
         const size_t Count = (size_t)Source.Width * Source.Height;
         for (size_t i = 0; i < Count; i++)
         {
-            // Core's rebuild matches the digest (Z output 0.0 when nZ <= 0, alpha 1)
+            // Core's rebuild: Z = 0 (nZ <= 0) is stored as 0.5, alpha 1. GameImageUtil stores 0.0 there; that
+            // measured worse against stock (see GameImageProcessors.cpp)
             const auto Pixel = ReadPixel(Source, i);
             WritePixel(Result.Normal, i, XInAlpha ? GameImageProcessors::UnpackNormalFromAlphaGreen(Pixel)
                                                   : GameImageProcessors::UnpackNormalFromRedGreen(Pixel));

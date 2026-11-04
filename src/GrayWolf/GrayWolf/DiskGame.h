@@ -422,6 +422,14 @@ namespace DiskGame
         // The images of every material it defines whole, by name, as its reader reads them; false
         // when its reader reads none (Context::MaterialsElsewhere)
         virtual bool MaterialImages(MaterialBook&) { return false; }
+        // The materials it names but another zone defines (a header with no image slot), by name, as
+        // the zones define them
+        virtual void MaterialHeaders(std::set<std::string>&) const {}
+        // The slot of the images no material of MaterialImages' book names (an image the walk met
+        // inside a model, its material not a walked instance of its own): the semantic hash stored
+        // beside the pointer to the image, taken when the book already knows that hash. Out gets one
+        // entry, "" , holding them.
+        virtual void ImageSlotsByLink(const MaterialBook& Known, MaterialBook& Out) const { (void)Known, (void)Out; }
 
         // The one dispatch: K's exporter, false when this reader has none ("not supported").
         bool Export(Kind K, const Context& C, Totals& T) const;
@@ -504,6 +512,12 @@ namespace DiskGame
 
         // The image format when --image-format is not given (nullptr: the saved setting).
         virtual const char* DefaultImageFormat() const { return nullptr; }
+
+        // True for a game whose normal maps ship as two components (X and Y, Z left to the shader):
+        // Export reads each zone's materials for the slot every image is bound to and, once the run's
+        // images are written, rebuilds the Z of those bound to a normal slot (ImageRoles.h). Black Ops
+        // III, 4 and Cold War. The other games set an ImagePatch when they decode the image.
+        virtual bool RebuildsNormalZ() const { return false; }
 
         // Where its levels' display names are, in its own localized strings (LevelNames): the
         // zones holding them, and the keys a level zone's name is looked up with. Names are

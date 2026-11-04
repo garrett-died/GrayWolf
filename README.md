@@ -253,7 +253,10 @@ zone defines, material books) for the next runs.
   full|2k|1k` sizes the textures.
 - **Black Ops III Mod Tools**: `--material-gdt` writes a GDT for the exported materials,
   `--sound-aliases` an alias CSV, `--type gdt` asset entries. `--target` converts a whole export
-  into the Mod Tools layout: see [below](#converting-to-black-ops-iii-mod-tools).
+  into the Mod Tools layout: see [below](#converting-to-black-ops-iii-mod-tools). With `--map-radiant on`,
+  `--map-prefabs LIST` writes parts of the map (brushes, models, lights, ...) as prefab maps of their own, and
+  Black Ops III lights carry the keys fitted against the stock `zm_giant` lights (see
+  [docs/BO3-CONVERSION.md](docs/BO3-CONVERSION.md#maps)).
 
 A `graywolf.json` from an earlier version keeps its formats; a format given on the command line
 holds for that run only.
@@ -285,6 +288,12 @@ GrayWolf.exe disk-export --game bo4 --install <game> --out <dir> --type model,im
   `--plan` lists the destinations and writes nothing else. A stock GDT never gets a new entry: it
   goes to `graywolf_<file>.gdt` beside it.
 
+With `--type map --map-radiant on --full-map`, a map also brings what it names (its models, their materials and
+images, the render surfaces' materials, the sky model) through the same path, and
+`graywolf_full_map_report.tsv` tells each name: exported, held by the Mod Tools, unresolved, or an effect or
+animation not exported yet. Checked on one Black Ops 4 zone to a folder target; see
+[docs/BO3-CONVERSION.md](docs/BO3-CONVERSION.md#maps).
+
 `--target folder` builds the layout under `<out>/<game>/bo3/`, to review or copy by hand.
 `--target modtools` writes straight into the install, and only into a `--mod-tools-root` given on
 that command line, never one from the settings. Each run writes `graywolf_placement.tsv`: every
@@ -293,10 +302,15 @@ asset, what was done with it, why, and where it went.
 **How far this has been checked.** On Black Ops 4 zones: every file a GDT names exists, no name is
 defined twice, every image a material references is defined or already in `gdt.db`, and a second
 run changes nothing (a whole map zone: 4,214 assets written, 2,229 already in the Mod Tools). The
-placement rules are scored against every stock asset by `bo3-placement-backtest`. **Not checked
+placement rules are scored against every stock asset by `bo3-placement-backtest`. Normal maps are
+rebuilt per material slot: Black Ops III, 4, Cold War and WWII have run through that fix, and WWII
+through `--target` on a real map zone. On Black Ops 4 the rebuilt Z measures 38.0 dB against a
+ceiling of 38.8 dB, against stock sources that are not copies of an earlier export. **Not checked
 yet**: loading the output in the Asset Property Editor, linking it, or seeing it in game; `--target
-modtools` has not been run on a real install; other games share this path but have not been run
-through it. See [docs/BO3-CONVERSION.md](docs/BO3-CONVERSION.md).
+modtools` has not been run on a real install; Black Ops 6 and Black Ops 7 are untested, since their
+data was not installed; `.dds` output keeps the game's two-channel normals; 5 Cold War images
+with no material role stay unconverted. Radiant maps have no Black Ops 4 terrain yet, patches are
+2x2, and collision triangles are thin brushes. See [docs/BO3-CONVERSION.md](docs/BO3-CONVERSION.md).
 
 ## Other tools in the command line
 

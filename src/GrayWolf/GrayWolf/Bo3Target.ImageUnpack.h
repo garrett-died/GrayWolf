@@ -65,8 +65,9 @@ struct UnpackedSpecularGloss
 
 namespace Bo3Target
 {
-    // Normal with X in red and Y in green (modern games, BC5). Z is rebuilt; it is 0 where
-    // X and Y already reach unit length. Output alpha is 1.
+    // Normal with X in red and Y in green (modern games, BC5). Z is rebuilt; where X and Y
+    // already reach unit length Z is 0, stored as 0.5 (GameImageUtil's 0.0 measured worse against
+    // stock). Output alpha is 1.
     UnpackedNormal UnpackNormalRedGreen(const Rgba8Image& Source);
 
     // Normal with X in alpha and Y in green (MW, WaW, MW2, MW3, BO1). Same output rules.

@@ -33,6 +33,13 @@ namespace Treyarch
     struct LightFields
     {
         int64_t Size = 0, Color = 0, Dir = 0, CosHalfFov = 0, Radius = 0, Origin = 72;
+        // Black Ops 4's 600-byte record read whole (the Radiant export's light entity): guid u32 at 68, right
+        // and up vectors at 96 and 108, the definition's name (64 bytes) at 328, floats at 204 and 448
+        bool Compiled = false;
+        // Black Ops III's 564-byte record read whole: the radiance at Color (RGB), the falloff distance at 84,
+        // specular scale 100, cut on 104, near and far edge 112 and 116, penumbra 148, super ellipse 280, bulb
+        // radius 308 and forward 312 (docs/LIGHT-CONVERSION.md)
+        bool Bo3 = false;
     };
     void Lights(ByteView Image, int64_t List, uint32_t Count, const LightFields& F, Maps::MapScene& Scene);
 

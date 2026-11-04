@@ -44,6 +44,7 @@ namespace Bo3Target::Publish
         GdtDb::MatchMode Match = GdtDb::MatchMode::Type;
         bool Merge = true;                      // --gdt merge; false: overwrite (a file GrayWolf owns is replaced whole)
         bool Plan = false;                      // decide and report, write nothing but the reports
+        bool FullMap = false;                   // --full-map: the maps' dependency lists (<run>/maps/*.full_map.tsv) are walked and reported
     };
 
     // The Mod Tools root: the value given, else the BO3 install the install scan finds (InstallScan, which

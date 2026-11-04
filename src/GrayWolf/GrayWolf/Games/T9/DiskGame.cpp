@@ -51,6 +51,9 @@ namespace
     public:
         explicit ColdWarZone(std::string Path) : ZonekitZone(std::move(Path))
         {
+            // the slot each image is bound to, for the run's image roles (MaterialImages; ImageRoles.h)
+            ReadsImageSlots([](uint64_t A) { return GameBlackOpsCW::ReadXMaterialImages(A); });
+            SlotSemanticAt(8);
             // scriptparsetree {hash, buffer 8, u32 len 0x10}: a GSCOBJ of the T9 VM, decompiled by acts;
             // its string literals are encrypted (first byte 0x80-0xBF), decrypted by the game's own
             // function, which acts finds in the dumped exe
@@ -699,6 +702,7 @@ namespace
         const char* Title() const override { return "Call of Duty: Black Ops Cold War"; }
         const char* Engine() const override { return "T9"; }
         std::vector<std::string> Aliases() const override { return { "coldwar-disk-export" }; }
+        bool RebuildsNormalZ() const override { return true; }
         std::unique_ptr<DiskGame::IDiskZone> Unopened() const override { return std::make_unique<ColdWarZone>(std::string()); }
         // the language's core_common strings, decrypted, their keys hashed as BO4's
         // (Treyarch::HashedLocalizeKey): multiplayer maps by mpui/ (mp_black_sea "Armada"),

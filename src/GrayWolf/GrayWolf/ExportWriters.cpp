@@ -109,6 +109,44 @@ namespace ExportWriters
         Folders().clear();
     }
 
+    namespace
+    {
+        std::mutex WrittenImagesLock;
+        std::unordered_set<std::wstring>& WrittenImages()
+        {
+            static std::unordered_set<std::wstring> All;
+            return All;
+        }
+    }
+
+    std::wstring ImageKey(const std::filesystem::path& File)
+    {
+        std::error_code Ec;
+        std::filesystem::path Abs = std::filesystem::absolute(File, Ec);
+        if (Ec) Abs = File;
+        return LowerKey(Abs.lexically_normal().make_preferred().native());
+    }
+
+    void NoteImageWritten(const std::filesystem::path& File)
+    {
+        const std::wstring Key = ImageKey(File);
+        std::lock_guard<std::mutex> G(WrittenImagesLock);
+        WrittenImages().insert(Key);
+    }
+
+    bool ImageWritten(const std::filesystem::path& File)
+    {
+        const std::wstring Key = ImageKey(File);
+        std::lock_guard<std::mutex> G(WrittenImagesLock);
+        return WrittenImages().count(Key) != 0;
+    }
+
+    void ForgetWrittenImages()
+    {
+        std::lock_guard<std::mutex> G(WrittenImagesLock);
+        WrittenImages().clear();
+    }
+
     bool MayExist(const std::filesystem::path& File)
     {
         const std::wstring DirKey = LowerKey(NormalDir(File.parent_path()).native()), Name = LowerKey(File.filename().native());
@@ -202,9 +240,12 @@ namespace
             Holds(Path, reinterpret_cast<const uint8_t*>(Dds.DataBuffer), Dds.DataSize))
         {
             Times().Unchanged++;
+            NoteImageWritten(Path);
             return true;
         }
-        return WriteImage(Dds, Path, Format);
+        const bool Ok = WriteImage(Dds, Path, Format);
+        if (Ok) NoteImageWritten(Path);
+        return Ok;
     }
 }
 
@@ -423,6 +464,7 @@ ImageSinkStats ImageSink::Finish(const std::function<std::unique_ptr<XImageDDS>(
         {
             St->Stats.Written++;
             St->Stats.Linked++;
+            NoteImageWritten(LinkPath);
             continue;
         }
         auto Dds = Rebuild ? Rebuild(Tag) : nullptr;

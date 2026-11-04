@@ -29,16 +29,25 @@ namespace
 bool ZonekitZone::MaterialImages(DiskGame::MaterialBook& Out)
 {
     using DiskGame::Kind;
-    if (!MaterialOf || MaterialType == nullptr || !Session) return false;
+    const auto& Read = MaterialOf ? MaterialOf : SlotsOf;
+    const char* const Type = MaterialType != nullptr ? MaterialType : "material";
+    if (!Read || !Session) return false;
     for (const auto& I : R.Instances)
     {
-        if (!OwnerIs(I, MaterialType)) continue;
+        if (!OwnerIs(I, Type)) continue;
         const std::string N = AssetName(Kind::Material, I.Pos);
-        if (N.empty() || IsReference(Kind::Material, N, I.Pos) || Out.count(N)) continue;
+        Counter("material_instances")++;
+        if (N.empty() || IsReference(Kind::Material, N, I.Pos))
+        {
+            Counter(N.empty() ? "material_instances_unnamed" : "material_instances_reference")++;
+            continue;
+        }
+        // (a name met twice: the instance that has images counts, whichever came first)
+        if (const auto Known = Out.find(N); Known != Out.end() && !Known->second.empty()) continue;
         XMaterial_t M(0);
         try
         {
-            M = MaterialOf(Live().Addr((uint64_t)I.Pos));
+            M = Read(Live().Addr((uint64_t)I.Pos));
         }
         catch (const std::exception&)
         {
@@ -53,6 +62,52 @@ bool ZonekitZone::MaterialImages(DiskGame::MaterialBook& Out)
         }
     }
     return true;
+}
+
+void ZonekitZone::ImageSlotsByLink(const DiskGame::MaterialBook& Known, DiskGame::MaterialBook& Out) const
+{
+    using DiskGame::Kind;
+    if (SemanticAt < 0) return;
+    std::set<uint32_t> Hashes;
+    std::set<std::string> Named;
+    for (const auto& [Material, Images] : Known)
+        for (const auto& I : Images) Hashes.insert(I.Hash), Named.insert(ExportNaming::Lower(I.Image));
+    // data -> every pointer field to it: an image met through several fields has a slot for each, and a
+    // first-only map would hide the one that disagrees with the others (a role conflict)
+    std::unordered_multimap<int64_t, int64_t> FieldOf;
+    FieldOf.reserve(R.Links.size());
+    for (const auto& [Field, Data] : R.Links) FieldOf.emplace(Data, Field);
+    auto& Loose = Out[std::string()];
+    for (const auto& I : R.Instances)
+    {
+        if (!OwnerIs(I, ImageType())) continue;
+        std::string Name = AssetName(Kind::Image, I.Pos + LinkedNameAt);
+        if (!Name.empty() && Name[0] == ',') Name.erase(0, 1);
+        if (Name.empty() || Named.count(ExportNaming::Lower(Name))) continue;
+        const auto [From, To] = FieldOf.equal_range(I.Pos);
+        std::set<uint32_t> Seen;
+        for (auto Field = From; Field != To; ++Field)
+        {
+            if (Field->second + SemanticAt + 4 > (int64_t)Image().size()) continue;
+            const uint32_t Semantic = At<uint32_t>(Image(), Field->second + SemanticAt);
+            // a hash some material of the zone binds a slot with: other bytes beside a pointer are not one
+            if (Hashes.count(Semantic) && Seen.insert(Semantic).second) Loose.push_back({ 0, Semantic, Name });
+        }
+    }
+    if (Loose.empty()) Out.erase(std::string());
+}
+
+void ZonekitZone::MaterialHeaders(std::set<std::string>& Out) const
+{
+    using DiskGame::Kind;
+    const char* const Type = MaterialType != nullptr ? MaterialType : "material";
+    for (const auto& I : R.Instances)
+    {
+        if (!OwnerIs(I, Type)) continue;
+        const std::string N = AssetName(Kind::Material, I.Pos);
+        if (!IsReference(Kind::Material, N, I.Pos)) continue;
+        if (std::string H = Referenced(Kind::Material, N); !H.empty()) Out.insert(std::move(H));
+    }
 }
 
 std::function<void(XMaterial_t& Material)> ZonekitZone::HeaderFiller(const DiskGame::Context& C)

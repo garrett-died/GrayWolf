@@ -25,6 +25,8 @@ namespace Maps
         std::string LaterCounter;
         // the same, for work that measures several things: it adds them to the counters it is given
         std::function<void(std::map<std::string, size_t>& Counters)> LaterCounters;
+        // other files the writer made beside Path (the Radiant prefab files): their names, in Path's folder
+        std::vector<std::string> Files;
     };
 
     class ISceneWriter
@@ -40,6 +42,8 @@ namespace Maps
     const ISceneWriter& CastWriter();   // MapCastWriter.cpp: the Cast scene (Maya, the Cast plugins)
     // MapRadiantWriter.cpp: the Radiant source (the mod tools); Materials: with the material GDT
     // entries of its models' materials (the material_gdt setting)
-    const ISceneWriter& RadiantWriter(bool Materials = false);
+    // Prefabs: the --map-prefabs list ("" none): each part a standalone map beside it (MapRadiantRules.h)
+    // FullMapModels: --full-map, the run's models folder; the models then go there as XMODEL_BIN for the publish step
+    const ISceneWriter& RadiantWriter(bool Materials = false, const std::string& Prefabs = std::string(), const std::string& FullMapModels = std::string());
     const ISceneWriter& CollisionWriter();   // MapCollisionWriter.cpp: the clip map's collision as JSON
 }

@@ -40,9 +40,13 @@
 #include "Bo3Target.Output.h"
 #include "Bo3Target.Techsets.h"
 #include "Bo3Target.Publish.h"
+#include "MapFullExport.h"
 #include "Bo3Target.ImageUnpack.h"
 #include "Bo3Target.MaterialImages.h"
+#include "ImageRoles.h"
 #include "MaterialGdt.h"
+#include "MapRadiantRules.h"
+#include "MapRadiantWriter.h"
 #include "MaterialDescription.h"
 #include "GdtWriter.h"
 #include "Image.h"
@@ -338,12 +342,13 @@ static int SelfTest(std::string& Failures)
         Check(std::fabs(FromAlpha.R - FromRed.R) < 1e-6f && std::fabs(FromAlpha.B - FromRed.B) < 1e-6f,
             "both normal map forms agree when their X channels match", "");
 
-        // A channel pair that already overreaches unit length leaves nothing for Z, and has
-        // to come back flat rather than as the root of a negative number
+        // A channel pair that already overreaches unit length leaves nothing for Z: Z = 0, which a
+        // channel stores as 0.5 (GameImageUtil writes 0.0; that measured worse against stock), and
+        // never the root of a negative number
         ImagePixel Overreaching;
         Overreaching.A = 1.0f; Overreaching.G = 1.0f;
         const auto NoZ = GameImageProcessors::UnpackNormalFromAlphaGreen(Overreaching);
-        Check(NoZ.B == 0.0f && std::isfinite(NoZ.B), "a normal with no room left for Z comes back flat",
+        Check(NoZ.B == 0.5f && std::isfinite(NoZ.B), "a normal with no room left for Z comes back as Z = 0 (0.5)",
             std::format("{:f}", NoZ.B));
 
         // The packed normal, occlusion and gloss map hands back three images, and its
@@ -417,16 +422,17 @@ static int SelfTest(std::string& Failures)
         };
 
         // XY in RG: 128,128 is about zero tilt so Z is 1 (255). 255,255 overshoots unit length
-        // (nZ = -1), so Z is 0.0 and not 0.5
+        // (nZ = -1), so Z is 0, stored as 0.5 (128). GameImageUtil stores 0.0 here; that measured
+        // worse against Treyarch's stock sources
         const auto RG = Bo3Target::UnpackNormalRedGreen(Make(2, 1, { 128, 128, 7, 9,  255, 255, 7, 9 }));
         Check(Near(RG.Normal, 0, 128, 128, 255, 255), "Bo3 normal RG straight up", Show(RG.Normal, 0));
-        Check(Near(RG.Normal, 1, 255, 255, 0, 255), "Bo3 normal RG Z is 0.0 when nZ <= 0", Show(RG.Normal, 1));
+        Check(Near(RG.Normal, 1, 255, 255, 128, 255), "Bo3 normal RG Z = 0 (stored 0.5) when nZ <= 0", Show(RG.Normal, 1));
 
         // XY in AG: X from alpha, Y from green, red ignored. A=128,G=128 is straight up.
-        // A=255,G=128 is X=1, Y~0, so nZ is not above zero and Z is 0.0
+        // A=255,G=128 is X=1, Y~0, so nZ is not above zero and Z is 0 (stored 0.5)
         const auto AG = Bo3Target::UnpackNormalAlphaGreen(Make(2, 1, { 10, 128, 0, 128,  10, 128, 0, 255 }));
         Check(Near(AG.Normal, 0, 128, 128, 255, 255), "Bo3 normal AG straight up", Show(AG.Normal, 0));
-        Check(Near(AG.Normal, 1, 255, 128, 0, 255), "Bo3 normal AG X comes from alpha, Z 0.0 at nZ <= 0", Show(AG.Normal, 1));
+        Check(Near(AG.Normal, 1, 255, 128, 128, 255), "Bo3 normal AG X comes from alpha, Z = 0 (stored 0.5) at nZ <= 0", Show(AG.Normal, 1));
 
         // NOG: R gloss 64, B occlusion 192. u=1,v=-1 (G=255,A=0): x=0,y=1,z=0 -> normal (0,1,0).
         // u=1,v=1 (G=255,A=255): x=1,y=0,z=0 -> (1,0,0). G=A=128 is about zero: straight up
@@ -989,7 +995,13 @@ static int SelfTest(std::string& Failures)
     Failed += Bo3Target::Output::SelfTest(Failures);
     Failed += Bo3Target::Techsets::SelfTest(Failures);
     Failed += MaterialGdt::SelfTest(Failures);
+    Failed += ImageRoles::SelfTest(Failures);
     Failed += Bo3Target::Publish::SelfTest(Failures);
+    Failed += Maps::FullMapSelfTest(Failures);
+
+    // The Radiant source export's stand-alone rules (hulls, limits, tiny faces, contents, lights, angles, usage)
+    Failed += Maps::RadiantRulesSelfTest(Failures);
+    Failed += Maps::RadiantWriterSelfTest(Failures);
 
     return Failed;
 }

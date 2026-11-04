@@ -265,6 +265,26 @@ struct BOCWXMaterialEx
 };
 #pragma pack(pop)
 
+const XMaterial_t GameBlackOpsCW::ReadXMaterialImages(uint64_t MaterialPointer)
+{
+    auto MaterialData = CoDAssets::GameInstance->Read<BOCWXMaterialEx>(MaterialPointer);
+    MaterialData.NamePtr &= 0xFFFFFFFFFFFFFFF;
+    XMaterial_t Result(MaterialData.ImageCount);
+    Result.MaterialName = std::format("xmaterial_{:x}", MaterialData.NamePtr);
+    if (const auto Named = AssetNameCache.NameDatabase.find(MaterialData.NamePtr); Named != AssetNameCache.NameDatabase.end())
+        Result.MaterialName = FileSystems::GetFileNamePurgeExtensions(Named->second);
+    // the same image naming as ReadXMaterial's
+    GameReaders::AddMaterialImages<BOCWXMaterialImage>(
+        Result, MaterialData.ImageTablePtr, MaterialData.ImageCount,
+        [](uint64_t ImagePtr) {
+            const auto ImageHash = CoDAssets::GameInstance->Read<uint64_t>(ImagePtr) & 0xFFFFFFFFFFFFFFF;
+            const auto Found = AssetNameCache.NameDatabase.find(ImageHash);
+            return Found != AssetNameCache.NameDatabase.end() ? Found->second : std::format("ximage_{:x}", ImageHash);
+        },
+        GameReaders::TreyarchSemanticUsage);
+    return Result;
+}
+
 const XMaterial_t GameBlackOpsCW::ReadXMaterial(uint64_t MaterialPointer)
 {
     auto MaterialData = CoDAssets::GameInstance->Read<BOCWXMaterialEx>(MaterialPointer);

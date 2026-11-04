@@ -44,6 +44,12 @@ void AddSharedOptions(CLI::App& App, CliOptions& Options)
                    "on|off: also write the map as a Radiant source (<map>.map: the clip map's brushes, the entities, "
                    "misc_model placements; <map>_radiant/: the world and models as XMODEL_EXPORT, a GDT), for the mod tools")
         ->group("Shared options");
+    App.add_option("--map-prefabs", Options.MapPrefabs,
+                   "LIST: with --map-radiant on, each listed part of the map as a standalone map beside it "
+                   "(<map>_prefab_<part>.map: a worldspawn and the part), the main map holding a misc_prefab for each "
+                   "(\"model\" graywolf_maps/<file>, relative to map_source; --target places the files there). "
+                   "brushes, patches, decals, models, effects, entities, brush-entities, lights, or all; none (default)")
+        ->group("Shared options");
     App.add_option("--material-gdt", Options.MaterialGdt,
                    "on|off: also write Black Ops III Mod Tools material and image GDT entries for the exported materials "
                    "(models: source_data/graywolf_<out folder>.gdt, their XMODEL_EXPORT files naming them; maps: in the "
@@ -70,6 +76,12 @@ void AddSharedOptions(CLI::App& App, CliOptions& Options)
         ->group("Shared options");
     App.add_flag("--plan", Options.PublishPlan,
                  "With --target: decide and report (graywolf_placement.tsv, graywolf_approximations.tsv), write no file in the target")
+        ->group("Shared options");
+    App.add_flag("--full-map", Options.FullMap,
+                 "With --target: a map also brings everything it names into the Mod Tools layout through the publish step: its models "
+                 "(placed, entity model keys, the sky) as XMODEL_BIN with their materials and images, the render surfaces' materials, "
+                 "worldspawn skyboxmodel and lutmaterial; with --map-radiant, no <map>_radiant folder or GDT of its own. "
+                 "graywolf_full_map_report.tsv lists unresolved, in_mod_tools, exported and not_exported_yet (effects, xanims)")
         ->group("Shared options");
     App.add_option("--sound-aliases", Options.SoundAliases,
                    "on|off: the sound kind also writes each zone's sound aliases as a Black Ops III mod tools alias CSV "

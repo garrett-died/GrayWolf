@@ -26,6 +26,15 @@ namespace Bo3Target
     // (or one that appears before the move) is left alone and Error is "exists". Other failures: "write_failed".
     bool SaveRgba8(const std::filesystem::path& File, const Rgba8Image& Image, std::string& Error);
 
+    // Writes File's replacement: encoded (by File's extension) into a unique temp beside it, claimed
+    // exclusively and named .tmp (never an image extension), then moved over File. Only that temp is ever
+    // removed, and only when this call created it. File's other hard links keep their bytes.
+    bool ReplaceRgba8(const std::filesystem::path& File, const Rgba8Image& Image, std::string& Error);
+
+    // The channels and bit depth of the image file, from its header alone (no pixels read): false when
+    // it cannot be read. Width and Height too, to cost a load before it is made. Used to leave a one-channel or 16-bit file as it is.
+    bool ImageFileLayout(const std::filesystem::path& File, size_t& Channels, size_t& BitsPerChannel, size_t& Width, size_t& Height);
+
     // Inverts the green channel in place (a DirectX normal map to OpenGL and back).
     void FlipGreen(Rgba8Image& Image);
 

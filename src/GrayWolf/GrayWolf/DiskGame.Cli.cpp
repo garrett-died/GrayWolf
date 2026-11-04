@@ -12,6 +12,7 @@
 #include "CliSupport.h"
 #include "GameCommand.h"
 #include "GameInstalls.h"
+#include "MapRadiantRules.h"
 #include "SettingsManager.h"
 #include "ZonekitZone.h"
 #include "ZoneTableWalker.h"
@@ -80,6 +81,18 @@ namespace
                 return false;
             }
         }
+        // --map-prefabs: a list of parts, not one of a setting's values; kept as the names in part order
+        if (!Cli.MapPrefabs.empty())
+        {
+            std::vector<std::string> Unknown;
+            const std::vector<Maps::PrefabPart> Parts = Maps::ParsePrefabParts(Cli.MapPrefabs, Unknown);
+            if (!Unknown.empty())
+            {
+                Error = "unknown --map-prefabs " + Unknown.front() + ": brushes, patches, decals, models, effects, entities, brush-entities, lights, all or none";
+                return false;
+            }
+            O.Settings["map_prefabs"] = Maps::PrefabPartList(Parts);
+        }
         for (const Setting* S : Game.AllSettings())
             for (const SettingFlag& F : SettingFlags)
             {
@@ -126,14 +139,15 @@ namespace
         }
         if (P.Which == Pb::Target::None)
         {
-            if (Cli.PublishPlan || !Cli.CheckGdtDb.empty() || !Cli.GdtDbMatch.empty() || !Cli.GdtMode.empty())
+            if (Cli.PublishPlan || Cli.FullMap || !Cli.CheckGdtDb.empty() || !Cli.GdtDbMatch.empty() || !Cli.GdtMode.empty())
             {
-                Error = "--plan, --check-gdtdb, --gdtdb-match and --gdt need --target folder or modtools";
+                Error = "--plan, --full-map, --check-gdtdb, --gdtdb-match and --gdt need --target folder or modtools";
                 return false;
             }
             return true;
         }
         P.Plan = Cli.PublishPlan;
+        P.FullMap = Cli.FullMap;
         const std::string Check = SavedDefault(Cli.CheckGdtDb, "bo3_check_gdtdb");
         if (!Check.empty() && !OnOff(Check, P.CheckGdtDb))
         {
@@ -261,6 +275,7 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
         // the target needs the material GDT's model files (assets named as the GDT names them), TIFF pictures
         // (stock's format) and XMODEL_BIN (what an xmodel entry references), unless the command line chose others
         O.Settings["material_gdt"] = "on";
+        if (Options.FullMap) O.Settings["full_map"] = "on";
         C.ConvertImages = true;
         Materials::KeepConstantsInSidecar(true);    // the BO3 techset step reads colorTint and glossRange from the kept constant block
         if (Options.ImageFormat.empty()) SettingsManager::SetRunSetting("exportimg", "TIFF");

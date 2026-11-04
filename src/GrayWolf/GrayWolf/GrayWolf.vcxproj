@@ -245,6 +245,8 @@
     <ClCompile Include="MapCollision.cpp" />
     <ClCompile Include="MapRadiantWriter.cpp" />
     <ClCompile Include="MapRadiantTextures.cpp" />
+    <ClCompile Include="MapFullExport.cpp" />
+    <ClCompile Include="MapRadiantRules.cpp" />
     <ClCompile Include="SoundAliasCsv.cpp" />
     <ClCompile Include="MapCollisionWriter.cpp" />
     <ClCompile Include="MapMaterials.cpp" />
@@ -297,6 +299,7 @@
     <ClCompile Include="Bo3Target.Techsets.cpp" />
     <ClCompile Include="Bo3Target.Publish.cpp" />
     <ClCompile Include="Bo3Target.MaterialImages.cpp" />
+    <ClCompile Include="ImageRoles.cpp" />
     <ClCompile Include="CliCommands.AssetExport.cpp" />
     <ClCompile Include="CliCommands.Tools.cpp" />
     <ClCompile Include="CliCommands.Mcp.cpp" />
@@ -332,6 +335,7 @@
     <ClInclude Include="Bo3Target.Techsets.h" />
     <ClInclude Include="Bo3Target.Publish.h" />
     <ClInclude Include="Bo3Target.MaterialImages.h" />
+    <ClInclude Include="ImageRoles.h" />
     <ClInclude Include="McpServer.h" />
     <ClInclude Include="MemoryBudget.h" />
     <ClInclude Include="ZoneTableWalker.h" />
@@ -402,6 +406,8 @@
     <ClInclude Include="MapCollision.h" />
     <ClInclude Include="MapRadiantWriter.h" />
     <ClInclude Include="MapRadiantTextures.h" />
+    <ClInclude Include="MapFullExport.h" />
+    <ClInclude Include="MapRadiantRules.h" />
     <ClInclude Include="MapRadiantGeometry.h" />
     <ClInclude Include="SoundAliasCsv.h" />
     <ClInclude Include="MapCollisionWriter.h" />

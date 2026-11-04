@@ -61,6 +61,20 @@ namespace Maps
         float Color[3] = { 1, 1, 1 };   // as the game gives it (HDR: its brightness is its intensity)
         float Radius = 0.0f;
         float CosHalfFovOuter = 0.0f;
+        // A compiled primary light read whole (Black Ops 4): its basis, guid, definition name and the
+        // fields no conversion is proven for (the Radiant export keeps them under unresolved keys)
+        bool Compiled = false;
+        float Right[3] = { 0, 1, 0 }, Up[3] = { 0, 0, 1 };
+        uint32_t Guid = 0;
+        std::string Def;
+        float Unresolved204 = 0.0f, Unresolved448 = 0.0f;
+        // A Black Ops III compiled primary light read whole (564 bytes): the fields the stock light keys were
+        // fitted against (docs/LIGHT-CONVERSION.md). Color is then the linear radiance
+        // srgb2lin(_color) * 2^stops, which the compiled light keeps and not the two keys apart.
+        bool Bo3 = false;
+        float Forward[3] = { 1, 0, 0 };
+        float FalloffDistance = 0.0f, NearEdge = 0.0f, FarEdge = 0.0f, SpecScale = 1.0f, CutOn = 0.0f, Penumbra = 0.0f, BulbRadius = 0.0f;
+        float SuperEllipse[4] = { 1, 1, 1, 1 };
     };
 
     // A texture a material uses: the game's semantic hash (0 when it has none) and the image.
@@ -117,6 +131,9 @@ namespace Maps
     {
         uint32_t Contents = 0;
         std::vector<BrushSide> Sides;
+        // The brush's corners (three floats each) when the clip map keeps them (Black Ops III, 4):
+        // the brush is their convex hull, the sides give materials and flags
+        std::vector<float> Vertices;
     };
 
     // The level's collision, from its clip map: the world's brushes, and each brush model's, in
@@ -127,6 +144,9 @@ namespace Maps
         std::vector<std::vector<Brush>> Models;
         // the entity string's trigger volumes (MapTriggers: "model" "?N" is element N), in its entity's space
         std::vector<std::vector<Brush>> Triggers;
+        // the game's brush contents are Radiant's `contents weaponClip detail umbraTarget;` bits
+        // (Black Ops III; Black Ops 4 writes none)
+        bool ContentsKeywords = false;
         size_t ClipBrushes = 0;   // the clip map's brush count (world and models): what was read from
         // the clip map's materials (name, content flags): what names the tool materials of this game
         std::vector<std::pair<std::string, uint32_t>> Materials;

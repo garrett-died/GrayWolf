@@ -116,7 +116,47 @@ namespace Bo3Target
         return true;
     }
 
+    bool ImageFileLayout(const fs::path& File, size_t& Channels, size_t& BitsPerChannel, size_t& Width, size_t& Height)
+    {
+        Channels = BitsPerChannel = Width = Height = 0;
+        EnsureCom();
+        DirectX::TexMetadata Meta;
+        const std::string Ext = ExportNaming::Lower(File.extension().string());
+        HRESULT R;
+        if (Ext == ".tga") R = DirectX::GetMetadataFromTGAFile(File.c_str(), Meta);
+        else if (Ext == ".png" || Ext == ".tif" || Ext == ".tiff") R = DirectX::GetMetadataFromWICFile(File.c_str(), DirectX::WIC_FLAGS_NONE, Meta);
+        else return false;
+        if (FAILED(R)) return false;
+        const size_t Bits = DirectX::BitsPerColor(Meta.format), PerPixel = DirectX::BitsPerPixel(Meta.format);
+        if (Bits == 0 || PerPixel == 0) return false;
+        BitsPerChannel = Bits;
+        Channels = IsOneChannel(Meta.format) ? 1 : (PerPixel + Bits - 1) / Bits;
+        Width = Meta.width;
+        Height = Meta.height;
+        return true;
+    }
+
+    namespace
+    {
+        // SaveRgba8 (Replace false) and ReplaceRgba8 (true): the same encode into a unique temp claimed
+        // exclusively beside File. Replace: the temp's name ends .tmp, not in the image's extension, so a
+        // crash leaves nothing a later image scan would take for an image; File is moved over.
+        bool SaveImpl(const fs::path& File, const Rgba8Image& Pixels, bool Replace, std::string& Error);
+    }
+
     bool SaveRgba8(const fs::path& File, const Rgba8Image& Pixels, std::string& Error)
+    {
+        return SaveImpl(File, Pixels, false, Error);
+    }
+
+    bool ReplaceRgba8(const fs::path& File, const Rgba8Image& Pixels, std::string& Error)
+    {
+        return SaveImpl(File, Pixels, true, Error);
+    }
+
+    namespace
+    {
+    bool SaveImpl(const fs::path& File, const Rgba8Image& Pixels, bool Replace, std::string& Error)
     {
         const std::string Ext = ExportNaming::Lower(File.extension().string());
         const ImageFormat Format = Ext == ".png" ? ImageFormat::Standard_PNG
@@ -141,7 +181,7 @@ namespace Bo3Target
         std::error_code Ec;
         fs::create_directories(File.parent_path(), Ec);
         // Never removes or replaces: a file that is there (or appears before the move) stays, and the failure is reported
-        if (fs::exists(File, Ec) || Ec)
+        if (!Replace && (fs::exists(File, Ec) || Ec))
         {
             Error = "exists";
             return false;
@@ -156,7 +196,7 @@ namespace Bo3Target
                 Error = "write_failed";
                 return false;
             }
-            Temp = File.parent_path() / (File.stem().native() + L".gw" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(Counter.fetch_add(1)) + L".tmp" + File.extension().native());
+            Temp = File.parent_path() / (File.stem().native() + L".gw" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(Counter.fetch_add(1)) + L".tmp" + (Replace ? std::wstring() : File.extension().native()));
             const HANDLE Claim = CreateFileW(Temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (Claim != INVALID_HANDLE_VALUE)
             {
@@ -196,13 +236,14 @@ namespace Bo3Target
             Error = "write_failed";
             return false;
         }
-        if (!MoveFileExW(Temp.c_str(), File.c_str(), MOVEFILE_WRITE_THROUGH))
+        if (!MoveFileExW(Temp.c_str(), File.c_str(), Replace ? (MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) : MOVEFILE_WRITE_THROUGH))
         {
             Drop();
             Error = GetLastError() == ERROR_ALREADY_EXISTS || GetLastError() == ERROR_FILE_EXISTS ? "exists" : "write_failed";
             return false;
         }
         return true;
+    }
     }
 
     void FlipGreen(Rgba8Image& Image)

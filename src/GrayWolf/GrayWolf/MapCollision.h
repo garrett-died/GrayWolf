@@ -57,6 +57,11 @@ namespace Maps
         int BrushSideCountBytes = 4;
         int64_t BrushContentsSize = 4;   // a record of Info's BrushContents array, the flags first (WWII 8)
         int64_t AxialMaterial = -1, AxialContents = -1, AxialSurface = -1;
+        // the brush's corners: their count (BrushVertexCountBytes: u16 or u32) and a pointer to that many
+        // vec3 (-1: the game keeps none read). A brush with them is their convex hull; its sides give
+        // the hull's faces their materials and flags.
+        int64_t BrushVertexCount = -1, BrushVertices = -1;
+        int BrushVertexCountBytes = 4;
 
         // a side: its size, its plane pointer (cplane_s: normal, dist), its material number (u16
         // or u32) or its flags (u32)

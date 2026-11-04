@@ -8,6 +8,7 @@
 #include "CoDAssets.h"
 #include "ExportNaming.h"
 #include "FastFile.h"
+#include "MapFullExport.h"
 #include "MapSceneWriter.h"
 #include "MapGlbWriter.h"
 #include "MapLive.h"
@@ -1426,6 +1427,42 @@ void ZonekitZone::ExportMap(const DiskGame::Context& C, DiskGame::Totals& T)
         if (Code < 0) T.Fail(ZoneName, Kind::Map, Name, "model " + Crash);
     }
     C.Advance(Models.size(), Models.size());
+
+    // --full-map: every model the map names (placed, destroyed, the sky's, the entities' model keys) written as the model
+    // kind writes a model - XMODEL_BIN, the materials' sidecar, the images - for the publish step. The ones this zone only
+    // refers to are needed from the zones that define them; the ones no zone defines stay unwritten and the publish step's
+    // report lists them unresolved.
+    if (Maps::FullMapOn(C.Settings) && ExporterOf(Kind::Model) != nullptr)
+    {
+        auto Only = std::make_shared<DiskGame::Selection>();
+        std::set<std::string> Wanted;
+        for (const auto& D : Maps::CollectMapDependencies(Scene))
+            if (D.Type == "xmodel" && Wanted.insert(D.Name).second) Only->insert({ Kind::Model, D.Name });
+        DiskGame::Context Mdl = C;
+        Mdl.Only = std::move(Only);
+        Mdl.Kinds = { Kind::Model };
+        std::set<std::string> Met;
+        Mdl.OnWanted = [&](const DiskGame::AssetId& A) {
+            if (A.K == Kind::Model) Met.insert(A.Name);
+            if (C.OnWanted) C.OnWanted(A);
+        };
+        DiskGame::Totals Own;   // counted as the map's models, not as the run's
+        Export(Kind::Model, Mdl, Own);
+        const DiskGame::KindTotals& Written = Own.Kinds[Kind::Model];
+        auto& Into = T.Kinds[Kind::Model];
+        Into.Seen += Written.Seen, Into.Written += Written.Written, Into.Known += Written.Known, Into.Linked += Written.Linked;
+        Into.References += Written.References;
+        T.Failures.insert(T.Failures.end(), Own.Failures.begin(), Own.Failures.end());
+        T.Absent.insert(T.Absent.end(), Own.Absent.begin(), Own.Absent.end());
+        Counter("map_full_models_named") += Wanted.size();
+        Counter("map_full_models_written") += Written.Written + Written.Known + Written.Linked;
+        for (const std::string& N : Wanted)
+            if (!Met.count(N))
+            {
+                C.Needs(Kind::Model, N);
+                Counter("map_full_models_not_in_zone")++;
+            }
+    }
 
     // a material the level names only (",name": no image slot) gets the images of the material it
     // stands for, this zone's or another's, as a model's do (HeaderFiller)

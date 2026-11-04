@@ -68,6 +68,51 @@ void Lights(ByteView Img, int64_t List, uint32_t Count, const LightFields& F, Ma
         }
         Out.CosHalfFovOuter = At<float>(Img, L + F.CosHalfFov);
         Out.Radius = At<float>(Img, L + F.Radius);
+        if (F.Compiled)
+        {
+            Out.Compiled = true;
+            Out.Guid = At<uint32_t>(Img, L + 68);
+            for (int J = 0; J < 3; J++)
+            {
+                Out.Right[J] = At<float>(Img, L + 96 + J * 4);
+                Out.Up[J] = At<float>(Img, L + 108 + J * 4);
+            }
+            Out.Unresolved204 = At<float>(Img, L + 204);
+            Out.Unresolved448 = At<float>(Img, L + 448);
+            for (int64_t J = 0; J < 64 && L + 328 + J < (int64_t)Img.size(); J++)
+            {
+                const char C = (char)Img[(size_t)(L + 328 + J)];
+                if (C == 0) break;
+                Out.Def += C;
+            }
+        }
+        if (F.Bo3)
+        {
+            Out.Bo3 = true;
+            Out.Guid = At<uint32_t>(Img, L + 68);
+            Out.FalloffDistance = At<float>(Img, L + 84);
+            Out.SpecScale = At<float>(Img, L + 100);
+            Out.CutOn = At<float>(Img, L + 104);
+            Out.NearEdge = At<float>(Img, L + 112);
+            Out.FarEdge = At<float>(Img, L + 116);
+            Out.Penumbra = At<float>(Img, L + 148);
+            Out.BulbRadius = At<float>(Img, L + 308);
+            for (int J = 0; J < 3; J++) Out.Forward[J] = At<float>(Img, L + 312 + J * 4);
+            for (int J = 0; J < 4; J++) Out.SuperEllipse[J] = At<float>(Img, L + 280 + J * 4);
+        }
+        if (FILE* Dbg = Maps::DebugFile())
+        {
+            std::fprintf(Dbg, "[light] %u type %u origin %g %g %g\n", K, (unsigned)Type, Out.Origin[0], Out.Origin[1], Out.Origin[2]);
+            // the whole record as hex (docs/LIGHT-CONVERSION.md fits the stock keys against its fields)
+            std::string Hex;
+            for (int64_t J = 0; J < F.Size && L + J < (int64_t)Img.size(); J++)
+            {
+                char B[3];
+                std::snprintf(B, sizeof(B), "%02x", (unsigned)Img[(size_t)(L + J)]);
+                Hex += B;
+            }
+            std::fprintf(Dbg, "[lightraw] %u %s\n", K, Hex.c_str());
+        }
         Scene.Lights.push_back(Out);
     }
 }

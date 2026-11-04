@@ -177,8 +177,16 @@ public:
     // Parked: the session ended (its lock freed), the relocated zone kept; Resume serves it again.
     bool Park() override;
     void Resume() override;
-    // its MaterialType materials' images through ReadsMaterials' reader (ZonekitZone.Materials.cpp)
+    // its MaterialType ("material" when a game sets none) materials' images through ReadsMaterials'
+    // reader, else ReadsImageSlots' (ZonekitZone.Materials.cpp)
     bool MaterialImages(DiskGame::MaterialBook& Out) override;
+    // the MaterialType materials this zone only names (ZonekitZone.Materials.cpp)
+    void MaterialHeaders(std::set<std::string>& Out) const override;
+    void ImageSlotsByLink(const DiskGame::MaterialBook& Known, DiskGame::MaterialBook& Out) const override;
+    // Where, from the pointer field to an image in a material's image table, the slot's semantic hash
+    // is (u32; Black Ops III, 4 and Cold War: 8). Unset: ImageSlotsByLink gives none.
+    // NameAt: where the image's name pointer is (AssetName's Pos + NameAt)
+    void SlotSemanticAt(int64_t Offset, int64_t NameAt = 0) { SemanticAt = Offset, LinkedNameAt = NameAt; }
     // Visit each zone-level asset of the profile's gdt type Id (<profile>/gdt/<Id>/) with the type
     // and how it reads the zone (Gdt::Type::Values); false and Error when the profile has no such type
     bool ForEachGdtAsset(const std::string& Id, const std::function<void(const Gdt::Type&, const Gdt::Memory&, int64_t Pos)>& Visit,
@@ -435,6 +443,10 @@ protected:
     // of Type, ExportsMaterials', this zone or another defines whole) that one's images
     // (Context::MaterialsElsewhere; ExportsEffects sets it). ZonekitZone.Materials.cpp
     void ReadsMaterials(std::function<XMaterial_t(uint64_t Address)> Read) { MaterialOf = std::move(Read); }
+    // A reader of a material's image slots (semantic hash and image name) for MaterialImages alone: the
+    // model kind's header filling (ReadsMaterials') stays off. The run's image roles come from it
+    // (ImageRoles.h).
+    void ReadsImageSlots(std::function<XMaterial_t(uint64_t Address)> Read) { SlotsOf = std::move(Read); }
     // Images some materials name (a game's own fx kind), as the material kind writes them: by the
     // image kind, those not in the zone needed from the one that defines them
     void ExportMaterialImages(std::set<std::string> Images, const DiskGame::Context& C, DiskGame::Totals& T);
@@ -711,6 +723,8 @@ private:
     std::map<std::string, std::vector<int64_t>> WholeRanked;   // a partial open's: Ranked's instances
     const char* MaterialType = nullptr;   // ExportsMaterials' type: Defines lists those materials
     std::function<XMaterial_t(uint64_t Address)> MaterialOf;   // ReadsMaterials'
+    std::function<XMaterial_t(uint64_t Address)> SlotsOf;      // ReadsImageSlots'
+    int64_t SemanticAt = -1, LinkedNameAt = 0;                  // SlotSemanticAt's
     // the model kind's: the images of the material headers this zone names (MaterialImages, its
     // own or Context::MaterialsElsewhere's), for ModelTextures::Fill; empty when none is
     std::function<void(XMaterial_t& Material)> HeaderFiller(const DiskGame::Context& C);

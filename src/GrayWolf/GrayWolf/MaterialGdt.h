@@ -70,6 +70,10 @@ namespace MaterialGdt
         void Add(const Materials::Description& D, const std::filesystem::path& Dir, const Materials::Source* Source = nullptr,
                  const std::string& Game = std::string());
 
+        // The usage Radiant lists the materials under (their Source names): every material has
+        // "<not in editor>", which hides it, except those named here (a map's geometry materials)
+        void SetUsage(std::map<std::string, std::string> BySource) { Usage = std::move(BySource); }
+
         bool Empty() const;
         // the material entries then the image entries, each by name
         std::vector<std::string> Entries(const char* Eol) const;
@@ -128,6 +132,7 @@ namespace MaterialGdt
         std::string Prefix;
         std::map<std::string, Material> Defined;                // by asset name
         std::map<std::string, std::set<std::string>> Collisions;
+        std::map<std::string, std::string> Usage;
         std::map<std::string, size_t> Count;
         bool Convert = false;
         std::filesystem::path RunRoot;

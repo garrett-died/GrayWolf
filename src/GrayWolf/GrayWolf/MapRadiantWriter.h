@@ -9,6 +9,8 @@
 // per piece of world geometry a patch cannot carry); and <map>_radiant/ the models it names as
 // XMODEL_EXPORT with a GDT of them.
 
+#include "MapLive.h"
+#include "MapRadiantRules.h"
 #include "MapRadiantTextures.h"
 #include "MapScene.h"
 
@@ -23,8 +25,10 @@ namespace Maps
     // A side of a brush that bounds something: its polygon (counter-clockwise seen from outside)
     struct BrushFace
     {
-        size_t Side = 0;
+        size_t Side = 0;   // the side it lies on (a hull face on no side: -1)
         std::vector<std::array<double, 3>> Points;
+        std::array<double, 3> Normal = { 0, 0, 1 };   // its plane, outward: Normal . p == Dist
+        double Dist = 0;
     };
     // The faces of a convex brush (its sides clipped by one another); a side bounding nothing (a
     // bevel, a duplicate) has none; nor has a sliver, or a face lying on another side's plane, when
@@ -36,10 +40,19 @@ namespace Maps
     // area (a game's reader making a brush model's triangles into brushes uses it)
     bool TrianglePrism(const std::array<double, 3> P[3], double Thick, Brush& B);
 
+    // A prefab file written beside the map (--map-prefabs): <map>_prefab_<part>.map, a worldspawn and the part
+    struct RadiantPrefabFile
+    {
+        PrefabPart Part = PrefabPart::Brushes;
+        std::string File;   // the file name
+        size_t Entities = 0, Brushes = 0, Meshes = 0;   // entities besides the worldspawn; its brushes, meshes (patches) in all
+    };
+
     struct RadiantStats
     {
         size_t Brushes = 0, BrushesDropped = 0, BrushesUnsound = 0, Faces = 0, Entities = 0, BrushEntities = 0, BrushEntitiesEmpty = 0;
         size_t Placements = 0, WorldModels = 0, ModelFiles = 0, ModelsElsewhere = 0, Triangles = 0, TrianglesDropped = 0, TriggerBrushes = 0;
+        size_t ModelsPublished = 0;   // --full-map: placed models left to the publish step
         size_t TrianglesDuplicate = 0;
         // the sides given the drawn world's materials: the clip map's world brushes', the collision
         // triangles' prisms', the brush entities'
@@ -47,6 +60,24 @@ namespace Maps
         // the drawn triangles no brush side draws: patches (of them vertex-coloured), left out
         // (no area), left to the world's misc_models (no material, a coordinate not finite)
         size_t Patches = 0, PatchesColoured = 0, TrianglesDegenerate = 0, TrianglesInModels = 0;
+        // brushes written as the hull of the clip map's corners (pieces of them, when split to Radiant's
+        // limits); brushes with corners whose hull was no solid or no sound brush (the sides instead);
+        // split; over the limits and not written (listed in Unresolved); the hull faces that lie on a
+        // side and on none (the brush's most common material)
+        size_t BrushesHull = 0, BrushPieces = 0, BrushesHullNone = 0, BrushesHullUnsound = 0, BrushesSplit = 0, BrushesOverLimit = 0;
+        size_t HullFacesMatched = 0, HullFacesUnmatched = 0;
+        // light entities written; static models at pitch +-90 (the horizontal part of their forward under
+        // 1e-4: roll 0, yaw from the left vector), of them the ones in [1e-6, 1e-4) the plain formulas
+        // gave a noise yaw and roll; entity keys moved to graywolf_unresolved_<key>
+        // patches whose front (as written) agrees with the vertex normals of the triangle, and does not
+        size_t PatchesFacingNormal = 0, PatchesFacingAgainst = 0;
+        size_t Lights = 0, PlacementsPolar = 0, PlacementsPolarNoise = 0, KeysUnresolved = 0;
+        // what was not written or not resolved, one line each (<map>.unresolved.txt)
+        std::vector<std::string> Unresolved;
+        // the prefab files written (empty parts write none) and what the main map keeps: its entities besides the
+        // worldspawn and the misc_prefab calls, its brushes and meshes
+        std::vector<RadiantPrefabFile> PrefabFiles;
+        size_t MainEntities = 0, MainBrushes = 0, MainMeshes = 0;
     };
     // With Gdt (the material_gdt setting), the model files name their materials by their GDT asset
     // names (MaterialGdt::AssetName) and the GDT is left to the caller: its model entries and the
@@ -58,6 +89,19 @@ namespace Maps
         std::vector<std::string> ModelEntries;  // the xmodel entries (LF)
         std::set<std::string> Materials;       // scene material names
     };
+    // The writer on small synthetic scenes (a temp folder, no game files); the number failed
+    int RadiantWriterSelfTest(std::string& Failures);
+    // --full-map: the placed models are not written here (the model export wrote them as XMODEL_BIN and the publish step
+    // places them: the map names them by FullMapAssetName), the pieces of the world are XMODEL_BIN in ModelsDir too, and
+    // there is no <map>_radiant folder and no GDT of its own
+    struct RadiantFullMap
+    {
+        std::filesystem::path ModelsDir;
+    };
+    // The scene's entities as the Radiant writer reads them: the entity string parsed, the numbered keys named
+    std::vector<Entity> SceneEntities(const MapScene& Scene);
+    // Prefabs: the parts written to a standalone map each, the main map then holding one misc_prefab per file
+    // (Prefabs empty: one map, as ever)
     bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStats& Stats, std::string& Error,
-                      RadiantGdt* ForGdt = nullptr);
+                      RadiantGdt* ForGdt = nullptr, const std::vector<PrefabPart>& Prefabs = {}, const RadiantFullMap* Full = nullptr);
 }

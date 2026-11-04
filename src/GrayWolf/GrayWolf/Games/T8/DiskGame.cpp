@@ -20,6 +20,7 @@
 #include "Games/Treyarch/TreyarchWeaponStats.h"
 #include "XPAKCache.h"
 #include "MapLive.h"
+#include "MapRadiantRules.h"
 #include "WraithX.h"
 #include "ZonekitZone.h"
 #include "WraithNameIndex.h"
@@ -73,6 +74,9 @@ namespace
         {
             using namespace DiskGame;
             ServesPackages(std::move(P));
+            // the slot each image is bound to, for the run's image roles (MaterialImages; ImageRoles.h)
+            ReadsImageSlots([](uint64_t A) { return GameBlackOps4::ReadXMaterial(A); });
+            SlotSemanticAt(8);
             Exports(Kind::Image, [this](const Context& C, Totals& T) { ExportImages(C, T); });
             Exports(Kind::Sound, [this](const Context& C, Totals& T) { ExportSounds(C, T); });
             // without --install, the models whose mesh is in the packages are left out (Unwritable),
@@ -489,6 +493,8 @@ namespace
     constexpr int64_t WorldModelCount = 0x180, WorldModels = 0x188, BrushModelSize = 80;
     constexpr int64_t WorldSurfaces = 0x3f8;
     constexpr int64_t WorldSModelCount = 0x1bc, WorldSModels = 0x400, WorldSModelPlaces = 0x408, SModelSize = 0x38;
+    // a placement (64 bytes): quaternion xyzw, origin at 16, scale at 28, world bounds at 32, model index at 56
+    constexpr int64_t SModelPlaceSize = 64, SModelPlaceModel = 56;
     // ComWorld: its primary lights (600 bytes each); clipMap: two dynamic entity lists (0x188 each)
     constexpr int64_t ComLightCount = 0x14, ComLights = 0x18;
     constexpr int64_t ClipDynCount = 0x148, ClipDyns = 0x150, DynSize = 0x188;
@@ -517,6 +523,7 @@ namespace
         C.MaterialSize = 8, C.MaterialName = -1, C.MaterialSurface = 0, C.MaterialContents = 4;
         C.BrushSize = 0x40, C.BrushSides = 0, C.BrushMins = 0x10, C.BrushContents = 0x1c, C.BrushMaxs = 0x20, C.AxialMaterial = 0x2c;
         C.BrushSideCount = 0x3a, C.BrushSideCountBytes = 2;
+        C.BrushVertexCount = 0x38, C.BrushVertexCountBytes = 2, C.BrushVertices = 8;   // u16 at 56, pointer at 8
         C.SideSize = 0x14, C.SidePlane = 0, C.SidePlaneInline = true, C.SideMaterial = 0x10, C.SideMaterialBytes = 2;
         C.BackRefs = true;
         C.ModelCount = 0xb0, C.Models = 0xb8, C.ModelSize = 88, C.ModelLeafBrushNode = 0x48;
@@ -609,18 +616,72 @@ namespace
 
         // ---- static models: the model at +0; their placements beside (64 bytes each: a rotation
         // quaternion, the origin, the scale at 28)
-        const uint32_t SModels = At<uint32_t>(Img, World + WorldSModelCount);
+        const uint32_t SModels = (std::min)(At<uint32_t>(Img, World + WorldSModelCount), 500000u);
         const int64_t SModelArray = Off(At<uint64_t>(Img, World + WorldSModels));
         const int64_t Places = Off(At<uint64_t>(Img, World + WorldSModelPlaces));
+        // Placement K names its model by an index (u32 at +56, the high bit masked: its meaning is
+        // unknown), not by its own number (HydraX, measured on Classified: pairing by position gave
+        // right positions and wrong models). Maps::StaticModelBounds scores both pairings by the
+        // bounds test: counted below, by_index being what is written.
+        std::vector<uint32_t> ModelOf(SModels, 0);
+        for (uint32_t K = 0; SModelArray >= 0 && Places >= 0 && K < SModels; K++)
+            ModelOf[K] = At<uint32_t>(Img, Places + (int64_t)K * SModelPlaceSize + SModelPlaceModel) & 0x7FFFFFFFu;
+        std::vector<std::string> RecordName(SModels);
+        std::vector<uint64_t> RecordAddress(SModels, 0);
+        for (uint32_t K = 0; SModelArray >= 0 && K < SModels; K++)
+        {
+            RecordAddress[K] = At<uint64_t>(Img, SModelArray + (int64_t)K * SModelSize);
+            RecordName[K] = ModelAt(RecordAddress[K]);
+        }
+        // a model's identity for the bounds test: its name (records of one model repeat across placements)
+        std::map<std::string, uint32_t> Identity;
+        const auto IdOf = [&](uint32_t Record) { return Record < SModels ? Identity.emplace(RecordName[Record], (uint32_t)Identity.size()).first->second : 0xFFFFFFFFu; };
+        if (SModelArray >= 0 && Places >= 0)
+        {
+            std::vector<Maps::StaticPlacementBox> Boxes(SModels), ByPosition(SModels);
+            for (uint32_t K = 0; K < SModels; K++)
+            {
+                const int64_t P = Places + (int64_t)K * SModelPlaceSize;
+                Maps::StaticPlacementBox& B = Boxes[K];
+                for (int J = 0; J < 4; J++) B.Rotation[J] = At<float>(Img, P + J * 4);
+                for (int J = 0; J < 3; J++) B.Origin[J] = At<float>(Img, P + 16 + J * 4);
+                B.Scale = At<float>(Img, P + 28);
+                for (int J = 0; J < 6; J++) B.Bounds[J] = At<float>(Img, P + 32 + J * 4);
+                B.Model = IdOf(ModelOf[K]);
+                ByPosition[K] = B;
+                ByPosition[K].Model = IdOf(K);
+            }
+            if (FILE* Dbg = Maps::DebugFile())
+                for (uint32_t K = 0; K < 8 && K < SModels; K++)
+                    std::fprintf(Dbg, "[smodel] %u model %u rot %g %g %g %g org %g %g %g scale %g bounds %g %g %g %g %g %g\n", K, Boxes[K].Model, Boxes[K].Rotation[0],
+                                 Boxes[K].Rotation[1], Boxes[K].Rotation[2], Boxes[K].Rotation[3], Boxes[K].Origin[0], Boxes[K].Origin[1], Boxes[K].Origin[2], Boxes[K].Scale,
+                                 Boxes[K].Bounds[0], Boxes[K].Bounds[1], Boxes[K].Bounds[2], Boxes[K].Bounds[3], Boxes[K].Bounds[4], Boxes[K].Bounds[5]);
+            const Maps::StaticBoundsResult Index = Maps::StaticModelBounds(Boxes), Position = Maps::StaticModelBounds(ByPosition);
+            for (uint32_t K = 0; K < SModels; K++)
+            {
+                Counter("map_static_models_index_differs") += ModelOf[K] != K;
+                Counter("map_static_models_index_high_bit") += (At<uint32_t>(Img, Places + (int64_t)K * SModelPlaceSize + SModelPlaceModel) & 0x80000000u) != 0;
+                Counter("map_static_models_name_differs") += ModelOf[K] < SModels && RecordName[ModelOf[K]] != RecordName[K];
+            }
+            Counter("map_static_bounds_by_index_hold") += Index.Hold;
+            Counter("map_static_bounds_by_index_fail") += Index.Fail;
+            Counter("map_static_bounds_by_position_hold") += Position.Hold;
+            Counter("map_static_bounds_by_position_fail") += Position.Fail;
+        }
         for (uint32_t K = 0; SModelArray >= 0 && Places >= 0 && K < SModels; K++)
         {
-            const uint64_t Address = At<uint64_t>(Img, SModelArray + (int64_t)K * SModelSize);
-            const std::string ModelName = ModelAt(Address);
+            if (ModelOf[K] >= SModels)
+            {
+                Counter("map_static_models_index_out_of_range")++;
+                continue;
+            }
+            const uint64_t Address = RecordAddress[ModelOf[K]];
+            const std::string& ModelName = RecordName[ModelOf[K]];
             if (ModelName.empty()) continue;
             Maps::Instance In;
             In.Name = "smodel_" + std::to_string(K);
             In.Model = ModelName;
-            const int64_t P = Places + (int64_t)K * 64;
+            const int64_t P = Places + (int64_t)K * SModelPlaceSize;
             float Q[4];
             for (int J = 0; J < 4; J++) Q[J] = At<float>(Img, P + J * 4);
             Maps::AxisFromQuat(Q, In.Axis);
@@ -637,7 +698,7 @@ namespace
                                           DynSize, "dynent_" + std::to_string(List) + "_", Model, Scene, Models);
         if (const int64_t Com = Root("comworld"); Com >= 0)
             Treyarch::Lights(Img, Off(At<uint64_t>(Img, Com + ComLights)), At<uint32_t>(Img, Com + ComLightCount),
-                             { 600, 168, 84, 188, 200 }, Scene);
+                             { 600, 168, 84, 188, 200, 72, true }, Scene);
 
         // ---- the entities as the map_ents text: { "key" "value" ... } per entity; a brush model's
         // its model index as "*N". The trigger_list's entities after them, the first ones each
@@ -694,6 +755,7 @@ namespace
         std::vector<std::string> Aliases() const override { return { "bo4-disk-export" }; }
         // the game's own bytes: no BC decode or PNG encode, half the disk
         const char* DefaultImageFormat() const override { return "DDS"; }
+        bool RebuildsNormalZ() const override { return true; }
         const std::vector<DiskGame::Setting>& Settings() const override
         {
             static const std::vector<DiskGame::Setting> All = { UiRes };

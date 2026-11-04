@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <set>
 #include <unordered_map>
@@ -77,6 +78,8 @@ namespace
             : ZonekitZone(Path), AudioFormat(std::move(Audio)), ActsExe(std::move(Acts))
         {
             using namespace DiskGame;
+            // an image's slot is the u32 8 bytes after the pointer to it (ImageRoles.h)
+            SlotSemanticAt(8, ImageNameAt);
             // the live model and anim readers, with the packages beside the zone
             for (Kind K : { Kind::Model, Kind::Anim })
                 Exports(K, [this, Base = *ExporterOf(K)](const Context& C, Totals& T) { WithPackages([&] { Base(C, T); }); });
@@ -838,7 +841,7 @@ namespace
                                           DynSize, "dynent_" + std::to_string(List) + "_", Model, Scene, Models);
         if (const int64_t Com = Root("com_map"); Com >= 0)
             Treyarch::Lights(Img, Off(At<uint64_t>(Img, Com + ComLights)), At<uint32_t>(Img, Com + ComLightCount),
-                             { 564, 88, 156, 268, 108 }, Scene);
+                             { 564, 88, 156, 268, 108, 72, false, true }, Scene);
         AddMapEnts(Scene);
         // clipMap_t's brushes (the t7 tables' col_map):
         // the world's ClipInfo at 0x10 (0x90: ClipMaterial 0x10 at 0x10/0x18, name, surface 8, contents
@@ -854,11 +857,13 @@ namespace
             C.MaterialSize = 0x10, C.MaterialName = 0, C.MaterialSurface = 8, C.MaterialContents = 0xc;
             C.BrushSize = 0x70, C.BrushMins = 0, C.BrushContents = 0xc, C.BrushMaxs = 0x10, C.BrushSideCount = 0x1c, C.BrushSides = 0x20;
             C.AxialContents = 0x28, C.AxialSurface = 0x40;
+            C.BrushVertexCount = 0x58, C.BrushVertices = 0x60;   // numverts u32 at 88, verts pointer at 96
             C.SideSize = 0x10, C.SidePlane = 0, C.SideContents = 8, C.SideSurface = 0xc;
             C.ModelCount = 0x120, C.Models = 0x128, C.ModelSize = 0x60, C.ModelInfo = 0x20, C.ModelLeafBrushNode = 0x50;
             C.NodeSize = 0x18;
             C.VertexCount = 0xd8, C.Vertices = 0xe0, C.TriangleCount = 0xe8, C.Triangles = 0xf0, C.TriangleIndexBytes = 4;
             AddCollision(Scene, { "col_map" }, C);
+            Scene.Collision.ContentsKeywords = true;   // contents 0x80, 0x2000, 0x80000 are Radiant's keywords here
             AddTriggers(Scene, 0x18);   // MapEnts' MapTriggers
         }
 
@@ -883,6 +888,7 @@ namespace
         const char* Title() const override { return "Call of Duty: Black Ops III"; }
         const char* Engine() const override { return "T7"; }
         std::vector<std::string> Aliases() const override { return { "t7" }; }
+        bool RebuildsNormalZ() const override { return true; }
         std::unique_ptr<DiskGame::IDiskZone> Unopened() const override
         {
             return std::make_unique<T7Zone>(std::string(), std::string(), std::string());
