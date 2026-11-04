@@ -717,13 +717,30 @@ namespace
             if (Open != nullptr && M.Image != 0) Open->emplace_back(M.Image, M.Semantic);
         }
         for (auto It = Book.begin(); It != Book.end();) It = It->second.Images.empty() ? Book.erase(It) : std::next(It);
+        // a material with no image slot (a name-only stub here, or a real material with none) keeps its place for its flags; a lookup prefers an entry with images
+        for (const auto& [Hash, Pos] : Assets.Materials) Book.try_emplace(Hash);
+        // the zone's whole technique sets: their renderFlags by name hash (a stub reads 0 there and is left out)
+        for (const auto& [Type, Pos] : Assets.Roots)
+        {
+            if (Type != "technique_set" || Pos < 0 || Pos + 0x24 > static_cast<int64_t>(Zone.size())) continue;
+            if (const uint32_t Flags = At<uint32_t>(Zone, Pos + 0x20); Flags != 0) Book[(At<uint64_t>(Zone, Pos) & 0xFFFFFFFFFFFFFFFull) | TechsetKey].RenderFlags = Flags;
+        }
         // the technique set (+0x30, its name hash at 0) and the constant blob (+0x120 size, +0x128 bytes)
         std::unordered_map<int64_t, int64_t> Link(Assets.Links.begin(), Assets.Links.end());
         for (const auto& [Hash, Pos] : Assets.Materials)
         {
             const auto Entry = Book.find(Hash);
             if (Entry == Book.end() || Entry->second.Techset != 0) continue;
-            if (const auto Ts = Link.find(Pos + 0x30); Ts != Link.end()) Entry->second.Techset = At<uint64_t>(Zone, Ts->second) & 0xFFFFFFFFFFFFFFFull;
+            if (const auto Ts = Link.find(Pos + 0x30); Ts != Link.end())
+            {
+                Entry->second.Techset = At<uint64_t>(Zone, Ts->second) & 0xFFFFFFFFFFFFFFFull;
+                // a word of 0 is a stub techset: unread (-1)
+                if (Ts->second + 0x24 <= static_cast<int64_t>(Zone.size()))
+                    if (const uint32_t Flags = At<uint32_t>(Zone, Ts->second + 0x20); Flags != 0) Entry->second.RenderFlags = Flags;
+            }
+            // a material with no image slot may be a name-only stub, whose word is 0: only a non-zero word of it is the material's
+            if (Pos + 0x2C <= static_cast<int64_t>(Zone.size()))
+                if (const uint32_t Word = At<uint32_t>(Zone, Pos + 0x28); Word != 0 || !Entry->second.Images.empty()) Entry->second.SurfaceFlags = Word;
             const uint64_t Size = At<uint64_t>(Zone, Pos + 0x120);
             const auto Data = Link.find(Pos + 0x128);
             if (Data != Link.end() && Size > 0 && Size <= 0x4000 && Data->second + static_cast<int64_t>(Size) <= static_cast<int64_t>(Zone.size()))
@@ -750,6 +767,7 @@ namespace
             if (!In.read(reinterpret_cast<char*>(&M.Techset), 8) || !In.read(reinterpret_cast<char*>(&Bytes), 4) || Bytes > 0x4000) return false;
             M.Constants.resize(Bytes);
             if (Bytes && !In.read(reinterpret_cast<char*>(M.Constants.data()), Bytes)) return false;
+            if (!In.read(reinterpret_cast<char*>(&M.SurfaceFlags), 8) || !In.read(reinterpret_cast<char*>(&M.RenderFlags), 8)) return false;
         }
         return true;
     }
@@ -775,6 +793,8 @@ namespace
                 Out.write(reinterpret_cast<const char*>(&M.Techset), 8);
                 Out.write(reinterpret_cast<const char*>(&Bytes), 4);
                 if (Bytes) Out.write(reinterpret_cast<const char*>(M.Constants.data()), Bytes);
+                Out.write(reinterpret_cast<const char*>(&M.SurfaceFlags), 8);
+                Out.write(reinterpret_cast<const char*>(&M.RenderFlags), 8);
             }
             if (!Out) return;
         }
@@ -807,7 +827,7 @@ std::vector<std::shared_ptr<const MaterialBook>> CommonMaterials(const std::stri
         }
         const fs::path Fd = fs::path(Ff).replace_extension(".fd");
         const uint64_t Sizes = fs::file_size(Ff, Ec) * 31 + (fs::exists(Fd, Ec) ? fs::file_size(Fd, Ec) : 0);
-        const std::string File = (fs::path(BookDir) / (Name + "_" + Key + "_" + std::to_string(Sizes) + ".v2.book")).string();
+        const std::string File = (fs::path(BookDir) / (Name + "_" + Key + "_" + std::to_string(Sizes) + ".v5.book")).string();
         std::lock_guard<std::mutex> Guard(Lock);
         if (const auto It = Kept.find(File); It != Kept.end())
         {

@@ -401,23 +401,44 @@ namespace
         }
         void Served(bool On) override
         {
+            TechsetServed.reset();
             ElsewhereServed.reset();
             LiveServed.reset();
             if (!On) return;
             LiveServed.emplace(Zone(), Assets);
             // a material header takes its images from the common zone that defines it
             ElsewhereServed.emplace(GameBlackOps4::ImagesElsewhere, [this](uint64_t Hash, GameBlackOps4::MaterialElsewhere& Out) {
+                // a book entry with images is the material; one without (a stub there too, or a material with no images) is taken only when no book has the real one
+                const Bo4DiskExport::BookMaterial* Imageless = nullptr;
+                const Bo4DiskExport::BookMaterial* Hit = nullptr;
                 for (const auto& Book : Common)
                     if (const auto It = Book->find(Hash); It != Book->end())
                     {
-                        Out.Images = It->second.Images;
-                        Out.Techset = It->second.Techset;
-                        Out.Constants = It->second.Constants;
-                        Booked.insert(Hash);
-                        return true;
+                        if (!It->second.Images.empty())
+                        {
+                            Hit = &It->second;
+                            break;
+                        }
+                        if (Imageless == nullptr) Imageless = &It->second;
                     }
+                if (Hit == nullptr) Hit = Imageless;
+                if (Hit != nullptr)
+                {
+                    Out.Images = Hit->Images;
+                    Out.Techset = Hit->Techset;
+                    Out.Constants = Hit->Constants;
+                    Out.SurfaceFlags = Hit->SurfaceFlags, Out.RenderFlags = Hit->RenderFlags;
+                    Booked.insert(Hash);
+                    return true;
+                }
                 NotBooked.insert(Hash);
                 return false;
+            });
+            // a stub techset's renderFlags from the common zone that holds the whole one
+            TechsetServed.emplace(GameBlackOps4::TechsetFlagsElsewhere, [this](uint64_t Hash) -> int64_t {
+                for (const auto& Book : Common)
+                    if (const auto It = Book->find(Hash | Bo4DiskExport::TechsetKey); It != Book->end()) return It->second.RenderFlags;
+                return -1;   // no common zone holds the whole techset: unread
             });
         }
         std::string AssetName(DiskGame::Kind K, int64_t Pos) const override
@@ -484,6 +505,7 @@ namespace
         // the readers pointed at this zone while it is served (after what they read: they end first)
         std::optional<Bo4DiskExport::ServedZone> LiveServed;
         std::optional<CoDAssets::Scoped<decltype(GameBlackOps4::ImagesElsewhere)>> ElsewhereServed;
+        std::optional<CoDAssets::Scoped<decltype(GameBlackOps4::TechsetFlagsElsewhere)>> TechsetServed;
     };
 
     // GfxWorld (gfxworld, 0x1ab0): the fields C2M's BO4 reader uses, their places from the

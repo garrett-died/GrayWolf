@@ -15,6 +15,7 @@
 #include <fstream>
 #include <memory>
 #include <set>
+#include <span>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -121,8 +122,29 @@ namespace Bo3Target::Verify
             std::set<std::string> Unjudged;     // counters for the notes
             size_t UnresolvedNoDb = 0, SlotImageNotInOutput = 0, UnjudgedRange = 0;
             bool HaveAwi = false;
+            // material asset (lower case) -> the reason its surfaceType is <none>, from graywolf_approximations.tsv
+            std::map<std::string, std::string> SurfaceWhy;
+            bool HaveApproximations = false;
 
-            explicit Context(const Inputs& I) : In(I) {}
+            explicit Context(const Inputs& I) : In(I)
+            {
+                if (I.Approximations.empty()) return;
+                std::ifstream File(I.Approximations, std::ios::binary);
+                if (!File) return;
+                HaveApproximations = true;
+                std::string Line;
+                while (std::getline(File, Line))
+                {
+                    if (!Line.empty() && Line.back() == '\r') Line.pop_back();
+                    std::vector<std::string> Cells;
+                    std::istringstream Row(Line);
+                    for (std::string Cell; std::getline(Row, Cell, '\t');) Cells.push_back(Cell);
+                    if (Cells.size() < 3 || Cells[0].rfind("material.surface_", 0) != 0) continue;
+                    std::string Asset = Cells[1];
+                    for (char& Ch : Asset) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
+                    SurfaceWhy[Asset] = Cells[0] + " " + Cells[2];
+                }
+            }
 
             void Judged(const char* Check) { R.Checks[Check].Judged++; }
             void Incomplete(const std::string& Check, const std::string& Why)
@@ -361,8 +383,8 @@ namespace Bo3Target::Verify
 
         // ---- image headers
 
-        uint32_t U16(const uint8_t* P, bool Big) { return Big ? (uint32_t(P[0]) << 8 | P[1]) : (uint32_t(P[1]) << 8 | P[0]); }
-        uint32_t U32(const uint8_t* P, bool Big)
+        uint32_t U16(std::span<const uint8_t> P, bool Big) { return Big ? (uint32_t(P[0]) << 8 | P[1]) : (uint32_t(P[1]) << 8 | P[0]); }
+        uint32_t U32(std::span<const uint8_t> P, bool Big)
         {
             return Big ? (uint32_t(P[0]) << 24 | uint32_t(P[1]) << 16 | uint32_t(P[2]) << 8 | P[3]) : (uint32_t(P[3]) << 24 | uint32_t(P[2]) << 16 | uint32_t(P[1]) << 8 | P[0]);
         }
@@ -385,7 +407,7 @@ namespace Bo3Target::Verify
         if (std::memcmp(Head, "\x89PNG\r\n\x1a\n", 8) == 0)
         {
             Out.Container = "png";
-            if (!Read(8, Head, 8) || std::memcmp(Head + 4, "IHDR", 4) != 0)
+            if (!Read(8, Head, 8) || std::memcmp(&Head[4], "IHDR", 4) != 0)
             {
                 Out.Why = "PNG without an IHDR chunk";
                 return Out;
@@ -402,7 +424,7 @@ namespace Bo3Target::Verify
                 return Out;
             }
             Out.Width = U32(Ihdr, true);
-            Out.Height = U32(Ihdr + 4, true);
+            Out.Height = U32(std::span<const uint8_t>(Ihdr).subspan(4), true);
             if (Out.Width == 0 || Out.Height == 0)
             {
                 Out.Why = "PNG with a zero width or height";
@@ -427,13 +449,13 @@ namespace Bo3Target::Verify
             return Out;
         }
         Out.Container = "tiff";
-        const uint32_t Magic = U16(Head + 2, Big);
+        const uint32_t Magic = U16(std::span<const uint8_t>(Head).subspan(2), Big);
         if (Magic != 42)
         {
             Out.Why = Magic == 43 ? "BigTIFF is not read" : "bad TIFF magic";
             return Out;
         }
-        const uint64_t Ifd = U32(Head + 4, Big);
+        const uint64_t Ifd = U32(std::span<const uint8_t>(Head).subspan(4), Big);
         uint8_t Count[2];
         if (!Read(Ifd, Count, 2))
         {
@@ -450,13 +472,13 @@ namespace Bo3Target::Verify
         uint32_t Samples = 1;
         bool HaveW = false, HaveH = false;
         // BitsPerSample and SampleFormat hold one value per sample: inline in the entry when they fit in 4 bytes, else through a pointer
-        struct Array { bool Present = false; uint32_t Count = 0; const uint8_t* Cell = nullptr; };
+        struct Array { bool Present = false; uint32_t Count = 0; std::span<const uint8_t> Cell; };
         Array BitsTag, FormatTag;
         for (uint32_t I = 0; I < N; I++)
         {
-            const uint8_t* T = &Tags[static_cast<size_t>(I) * 12];
-            const uint32_t Tag = U16(T, Big), Type = U16(T + 2, Big), Cnt = U32(T + 4, Big);
-            const auto Scalar = [&]() { return Type == 3 ? U16(T + 8, Big) : U32(T + 8, Big); };
+            const std::span<const uint8_t> T = std::span<const uint8_t>(Tags).subspan(static_cast<size_t>(I) * 12, 12);
+            const uint32_t Tag = U16(T, Big), Type = U16(T.subspan(2), Big), Cnt = U32(T.subspan(4), Big);
+            const auto Scalar = [&]() { return Type == 3 ? U16(T.subspan(8), Big) : U32(T.subspan(8), Big); };
             switch (Tag)
             {
             case 256: Out.Width = Scalar(); HaveW = true; break;
@@ -491,12 +513,12 @@ namespace Bo3Target::Verify
             }
             if (A.Count == 0 || A.Count > 64) return false;
             if (A.Count * 2 <= 4)
-                for (uint32_t K = 0; K < A.Count; K++) Into.push_back(U16(A.Cell + 8 + 2 * K, Big));
+                for (uint32_t K = 0; K < A.Count; K++) Into.push_back(U16(A.Cell.subspan(8 + 2 * static_cast<size_t>(K)), Big));
             else
             {
                 std::vector<uint8_t> Raw(static_cast<size_t>(A.Count) * 2);
-                if (!Read(U32(A.Cell + 8, Big), Raw.data(), Raw.size())) return false;
-                for (uint32_t K = 0; K < A.Count; K++) Into.push_back(U16(Raw.data() + 2 * K, Big));
+                if (!Read(U32(A.Cell.subspan(8), Big), Raw.data(), Raw.size())) return false;
+                for (uint32_t K = 0; K < A.Count; K++) Into.push_back(U16(std::span<const uint8_t>(Raw).subspan(2 * static_cast<size_t>(K)), Big));
             }
             if (Into.size() == 1) Into.assign(Samples, Into[0]);
             return Into.size() == Samples;
@@ -997,7 +1019,19 @@ namespace Bo3Target::Verify
                     if (*Surface == "<none>")
                     {
                         C.Judged("material.surface_type");
-                        C.Fail("material.surface_type", E, "surfaceType is <none>. KNOWN FAILURE until Phase 2: the BO4/CW source carries surface flags (BO4: (flags>>20)&0x3F at +0x28) and this gate cannot read the source, so it assumes one was there");
+                        std::string Key = E.Name;
+                        for (char& Ch : Key) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
+                        const auto Why = C.SurfaceWhy.find(Key);
+                        // positive evidence only: a <none> passes (Info) only with a material.surface_none_in_source row, written when the word was read and names none.
+                        // A reported unknown or unmapped is a failure with its reason; no row (no file, a truncated file, a file of an older build) is a failure.
+                        if (Why != C.SurfaceWhy.end() && Why->second.rfind("material.surface_none_in_source", 0) == 0)
+                            C.Add("material.surface_type", E.Id(), Severity::Info, "surfaceType is <none> and the export states why: " + Why->second);
+                        else if (Why != C.SurfaceWhy.end())
+                            C.Fail("material.surface_type", E, "surfaceType is <none> and the export reports why: " + Why->second);
+                        else if (C.HaveApproximations)
+                            C.Fail("material.surface_type", E, "surfaceType is <none> and graywolf_approximations.tsv has no row for it: no evidence that the source's word was read (a truncated file, or one from an older build?)");
+                        else
+                            C.Fail("material.surface_type", E, "surfaceType is <none> and there is no graywolf_approximations.tsv (Inputs::Approximations): no evidence that the source's word was read");
                     }
                     else if (Schema != nullptr)
                         if (const Awi::Entry* D = Schema->Find("surfaceType"); D != nullptr && D->OptionsKnown)
@@ -1685,7 +1719,7 @@ namespace Bo3Target::Verify
         const auto Reader = [](const std::string& Bytes) {
             return [&Bytes](uint64_t At, void* To, size_t N) {
                 if (At + N > Bytes.size()) return false;
-                std::memcpy(To, Bytes.data() + At, N);
+                std::memcpy(To, &Bytes[At], N);
                 return true;
             };
         };
@@ -1851,9 +1885,9 @@ void GenerateUI( asset Asset )
             const std::string Head = std::string("II") + std::string("\x2A\x00\xFE\xFF\xFF\xFF", 6);
             const std::string Wrapped = TiffRaw(8, 8, { 8, 8, 8 }, { 1, 1, 1 });
             const ImageInfo W = ReadImageHeader([&](uint64_t At, void* To, size_t N) {
-                if (At + N <= Head.size()) { std::memcpy(To, Head.data() + At, N); return true; }
+                if (At + N <= Head.size()) { std::memcpy(To, &Head[At], N); return true; }
                 if (At == 0xFFFFFFFEull && N == 2) { const char C[2] = { 10, 0 }; std::memcpy(To, C, 2); return true; }
-                if (At == 0 && N == 120) { std::memcpy(To, Wrapped.data() + 10, 120); return true; }     // what a wrapped Ifd + 2 would read
+                if (At == 0 && N == 120) { std::memcpy(To, &Wrapped[10], 120); return true; }     // what a wrapped Ifd + 2 would read
                 return false;
             });
             Check(!W.Ok, "an IFD offset near 2^32 does not wrap", std::to_string(W.Width));
@@ -1967,7 +2001,7 @@ void GenerateUI( asset Asset )
         const auto Reader = [](const std::string& Bytes) {
             return [&Bytes](uint64_t At, void* To, size_t N) {
                 if (At + N > Bytes.size()) return false;
-                std::memcpy(To, Bytes.data() + At, N);
+                std::memcpy(To, &Bytes[At], N);
                 return true;
             };
         };
@@ -2142,6 +2176,30 @@ void GenerateUI( asset Asset )
         std::string Error;
         Check(WriteReports(Clean, Base / "reports", Error) && fs::is_regular_file(Base / "reports" / "graywolf_gate.tsv") && fs::is_regular_file(Base / "reports" / "graywolf_gate_summary.txt"), "the reports are written", Error);
         Check(ResolveRoots(Base / "out").size() == 1 && ResolveRoots(Base / "out")[0] == Base / "out" / "bo3", "the layout root is found", std::to_string(ResolveRoots(Base / "out").size()));
+
+        // the surfaceType <none> failure with the run's approximations: a reported reason is named, no reported reason is the source's own value (Info)
+        {
+            const auto SurfaceFindings = [&](const Inputs& I, Severity S, const char* Asset) {
+                const Result Got = Run(I);
+                size_t N = 0;
+                for (const Finding& F : Got.Findings)
+                    if (F.Check == "material.surface_type" && F.Level == S && F.Asset == Asset) N++;
+                return N;
+            };
+            Inputs Why = In;
+            Why.Approximations = Base / "approx_why.tsv";
+            Put(Why.Approximations, "code\tasset\tdetail\tmessage\nmaterial.surface_unknown\tmtl_bad\tgame=bo4, why=no_table\tleft <none>\n");
+            Inputs NoRow = In;
+            NoRow.Approximations = Base / "approx_none.tsv";
+            Put(NoRow.Approximations, "code\tasset\tdetail\tmessage\nmaterial.techset_fallback\tmtl_other\tx\ty\n");
+            Inputs Positive = In;
+            Positive.Approximations = Base / "approx_positive.tsv";
+            Put(Positive.Approximations, "code\tasset\tdetail\tmessage\nmaterial.surface_none_in_source\tmtl_bad\tgame=bo4\tread and names none\n");
+            Check(SurfaceFindings(In, Severity::Failure, "material:mtl_bad") == 1, "no approximations: a <none> surfaceType is a failure");
+            Check(SurfaceFindings(Why, Severity::Failure, "material:mtl_bad") == 1 && SurfaceFindings(Why, Severity::Info, "material:mtl_bad") == 0, "a reported reason keeps the failure and names it");
+            Check(SurfaceFindings(NoRow, Severity::Failure, "material:mtl_bad") == 1 && SurfaceFindings(NoRow, Severity::Info, "material:mtl_bad") == 0, "approximations with no row for the material: no evidence, a failure (absence is never 'the source said none')");
+            Check(SurfaceFindings(Positive, Severity::Failure, "material:mtl_bad") == 0 && SurfaceFindings(Positive, Severity::Info, "material:mtl_bad") == 1, "only a material.surface_none_in_source row makes <none> Info");
+        }
 
         // no Mod Tools root and no catalog: those checks are listed as not run
         Inputs None = In2;

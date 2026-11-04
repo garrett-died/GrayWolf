@@ -92,6 +92,7 @@ namespace Maps
         std::vector<Texture> Textures;
         std::vector<std::vector<uint8_t>> Constants;   // the game's constant blocks (the adapter's tint, layers)
         int SortKey = -1;                               // the game's sort key, -1 when unknown
+        int64_t SurfaceFlags = -1, RenderFlags = -1;    // the game's flag words (XMaterial_t), -1 when unknown
     };
 
     // An image's pixels: PNG bytes embedded in the .glb, or files (absolute paths, which may be

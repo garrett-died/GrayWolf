@@ -2,6 +2,7 @@
 
 #include "MaterialDescription.h"
 #include "Games/Treyarch/TreyarchMaterials.h"
+#include "SurfaceTypes.h"
 
 #include <string>
 
@@ -50,7 +51,11 @@ namespace
     public:
         T8Materials() : SemanticAdapter("bo4", TreyarchMaterials::Table()) {}
     protected:
-        void Refine(const Materials::Source& M, Materials::Description& D, bool) const override { DescribeTint(M, D); }
+        void Refine(const Materials::Source& M, Materials::Description& D, bool) const override
+        {
+            DescribeTint(M, D);
+            SurfaceTypes::Apply("bo4", M, D);   // (flags >> 20) & 0x3F of the u32 at +0x28, zonekit/profiles/bo4/flag_names.txt
+        }
     };
     const T8Materials Adapter;
     const Materials::AdapterRegistration Registered("T8", Adapter);

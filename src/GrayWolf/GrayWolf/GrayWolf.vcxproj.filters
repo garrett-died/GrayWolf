@@ -57,6 +57,9 @@
     <ClCompile Include="Bo3Target.Placement.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="SurfaceTypes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="PoolCoverage.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -276,6 +279,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Bo3Target.Placement.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SurfaceTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="PoolCoverage.h">

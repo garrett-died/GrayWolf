@@ -130,6 +130,9 @@ namespace Materials
         float AlphaCutoff = 0.5f;
         float RoughnessValue = 0.6f;    // without a roughness map
         float MetalnessValue = 0.0f;    // without a metalness or specular map
+        // The surface type the game's own flags give, as a BO3 surfaceType combo name ("metal"); empty when it states none.
+        // SurfaceWhy then says why (SurfaceTypes.h): "no_table", "not_read", "none_in_source", "unnamed:0x..."; empty with a type.
+        std::string SurfaceType, SurfaceWhy;
     };
 
     // What an exporter or a model file knows about one material: the input of an adapter.
@@ -147,6 +150,9 @@ namespace Materials
         std::vector<Image> Images;
         std::vector<std::vector<uint8_t>> Constants;   // the game's constant bytes, by its own block index
         int SortKey = -1;                               // the game's sort key, -1 when unknown
+        // The game's own flag words, -1 when its reader gave none: the material's surface flags (BO4 +0x28, BO3 +0x24) and
+        // its techset's renderFlags (BO4 +0x20). Read by SurfaceTypes against the profile's flag_names.txt.
+        int64_t SurfaceFlags = -1, RenderFlags = -1;
         const Image* BySemantic(uint32_t Semantic) const;
     };
 

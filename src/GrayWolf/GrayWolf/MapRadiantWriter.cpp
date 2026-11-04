@@ -9,6 +9,7 @@
 #include "MapMaterials.h"
 #include "MapRadiantGeometry.h"
 #include "MapRadiantRules.h"
+#include "SurfaceTypes.h"
 #include "MapRadiantTextures.h"
 #include "MaterialGdt.h"
 #include "MapSceneWriter.h"
@@ -591,11 +592,10 @@ namespace
     // position, colour ("c", left out when white), UV ("t": UV x 1024) and lightmap coordinates
     // (the plane's texture axes, a texel per 16 units, as "2 2 16 8" says)
     enum class PatchKind { All, NotDecal, Decal };
-    // Whether a surface's material is a decal (its techset names one), as MaterialUsage sees it
+    // Whether a surface's material is a decal, as MaterialUsage sees it (Maps::IsDecalMaterial: the techset's name, or its renderFlags where the name is a hash)
     bool IsDecalSurface(const MapScene& Scene, const Surface& S)
     {
-        const auto Mat = Scene.Materials.find(S.Material);
-        return Mat != Scene.Materials.end() && ExportNaming::Lower(Mat->second.Techset).find("decal") != std::string::npos;
+        return Maps::IsDecalMaterial(Scene, S.Material);
     }
 
     void WritePatches(std::string& Out, const MapScene& Scene, const DrawnWorld& Drawn, uint32_t Owner, RadiantGdt* Gdt, RadiantStats& Stats,
@@ -835,11 +835,17 @@ namespace
                                                                                  RadiantGdt G)
         {
             std::vector<Materials::Description> Described;
-            for (const std::string& Name : G.Materials) Described.push_back(DescribeMaterial(Scene, Name, Adapter, G.Root).second);
+            std::vector<Materials::Source> Sources;     // parallel: the writer's surface evidence is the source's flag word
+            for (const std::string& Name : G.Materials)
+            {
+                auto [Src, Desc] = DescribeMaterial(Scene, Name, Adapter, G.Root);
+                Sources.push_back(std::move(Src));
+                Described.push_back(std::move(Desc));
+            }
             // the materials the map's own render surfaces use are listed in Radiant under a usage by what
             // they draw (decal, window, floor, ceiling, interior wall); the others stay <not in editor>
             std::map<std::string, std::string> Usage = GeometryUsage(Scene, &G.Materials);
-            return [G = std::move(G), Described = std::move(Described), Usage = std::move(Usage)](std::map<std::string, size_t>& Counters) {
+            return [G = std::move(G), Described = std::move(Described), Sources = std::move(Sources), GameId = Scene.Game, Usage = std::move(Usage)](std::map<std::string, size_t>& Counters) {
                 const fs::path Images = G.Root / "model_export" / G.Map / "images";
                 // an image's file name there, the first source to take a name keeping it
                 std::map<fs::path, std::string> Named;
@@ -859,7 +865,7 @@ namespace
                     return "model_export/" + G.Map + "/images/" + It->second;
                 }, "material_gdt_");
                 B.SetUsage(Usage);
-                for (const auto& D : Described) B.Add(D, G.Root);
+                for (size_t K = 0; K < Described.size(); K++) B.Add(Described[K], G.Root, &Sources[K], GameId);
                 std::vector<std::string> Entries = G.ModelEntries;
                 const std::vector<std::string> Mine = B.Entries("\n");
                 Entries.insert(Entries.end(), Mine.begin(), Mine.end());
@@ -1795,6 +1801,28 @@ int RadiantWriterSelfTest(std::string& Failures)
             At = Eol == std::string::npos ? Text.size() : Eol + 1;
         }
         Check(Worst > 0 && Worst <= 64, "no written brush has more than 64 faces", std::to_string(Worst));
+    }
+    // a decal is told by the techset's name where it is a real one, and by its renderFlags where the name is a hash (Black Ops 4)
+    {
+        MapScene Scene;
+        Scene.Game = "bo4";
+        const auto Add = [&](const char* Name, const char* Techset, int64_t Flags) {
+            Material& M = Scene.Materials[Name];
+            M.Name = Name, M.Techset = Techset, M.RenderFlags = Flags;
+        };
+        Add("hash_decal", "1f2e3d4c5b6a798", 0x80000a);
+        Add("hash_emissive_decal", "1f2e3d4c5b6a799", 0x800048);
+        Add("hash_opaque", "1f2e3d4c5b6a79a", 0x10106);
+        Add("hash_unread", "1f2e3d4c5b6a79b", -1);
+        Add("hash_stub", "1f2e3d4c5b6a79c", 0);   // a stub techset reads 0: unread, not "not a decal" (SurfaceTypes::ClassOf)
+        Add("named_decal", "lit_decal", -1);
+        Check(Maps::IsDecalMaterial(Scene, "hash_decal") && Maps::IsDecalMaterial(Scene, "hash_emissive_decal"), "a hashed techset whose renderFlags set decal is a decal (0x80000a, 0x800048)");
+        Check(!Maps::IsDecalMaterial(Scene, "hash_opaque") && !Maps::IsDecalMaterial(Scene, "hash_unread") && !Maps::IsDecalMaterial(Scene, "hash_stub"), "opaque flags, unread flags (-1) and a stub (0) are not a decal");
+        Check(Maps::IsDecalMaterial(Scene, "named_decal") && !Maps::IsDecalMaterial(Scene, "absent"), "a techset name with decal is a decal; an absent material is not");
+        Check(SurfaceTypes::ClassOf("bo4", Scene.Materials["hash_stub"].RenderFlags) == SurfaceTypes::RenderClass::Unread && SurfaceTypes::ClassOf("bo4", Scene.Materials["hash_unread"].RenderFlags) == SurfaceTypes::RenderClass::Unread &&
+              SurfaceTypes::ClassOf("bo4", Scene.Materials["hash_opaque"].RenderFlags) == SurfaceTypes::RenderClass::NotDecal, "a stub (0) and an unread word (-1) are Unread, not NotDecal; 0x10106 is NotDecal");
+        Scene.Game = "bo3";
+        Check(!Maps::IsDecalMaterial(Scene, "hash_decal"), "a game with no render rows gets no decal from flags");
     }
     // prefab separation: every part, a subset, an empty part
     {

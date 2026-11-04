@@ -51,6 +51,10 @@ namespace
         Vf::Inputs In;
         In.Roots = Vf::ResolveRoots(Input);
         if (HaveRoot) In.ModToolsRoot = Root;
+        // the run's approximations beside the layout root (the run folder holds bo3\ and graywolf_approximations.tsv), else in the input folder
+        for (const fs::path& R : In.Roots)
+            for (const fs::path& Candidate : { R.parent_path() / "graywolf_approximations.tsv", R / "graywolf_approximations.tsv" })
+                if (In.Approximations.empty() && fs::is_regular_file(Candidate, Ec)) In.Approximations = Candidate;
         In.Catalog = &Bo3Target::Techsets::Shared();
         for (const fs::path& R : In.Roots)
             if (fs::is_directory(R / "map_source", Ec)) In.MapSources = true;

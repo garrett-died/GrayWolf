@@ -1,0 +1,49 @@
+# Surface and render flag names, read as data (SurfaceTypes.h). Rows: kind|name|value
+#   surface_mask   the bits of the material's surface-flags word that hold the surface type (an enum, not a bit set)
+#   game           the game id the materials sidecar names for this profile (value unused)
+#   surface        a surface type: the masked word equals value
+#   render         a single bit of the techset renderFlags word (BO4 only). decal, opaque: a decal is a material whose techset sets `decal` and not `opaque`
+# Black Ops III (T7) uses the same enum: material header u32 at +0x24 (flags at +8, word +28). Source of the names and values: the Black Ops 4 executable's surface table (83 records, build pe:6a26e179), as read by
+# HydraX (Bo4FlagNames.cs). The render bits were measured by HydraX on 19,989 BO4 materials (techset +0x20). See docs/hydrax-port/p2-surface-decals.md for
+# what is proven here and what is not.
+surface_mask||0x03F00000
+game|bo3|0
+surface|bark|0x100000
+surface|brick|0x200000
+surface|carpet|0x300000
+surface|cloth|0x400000
+surface|concrete|0x500000
+surface|dirt|0x600000
+surface|flesh|0x700000
+surface|foliage|0x800000
+surface|glass|0x900000
+surface|grass|0xA00000
+surface|gravel|0xB00000
+surface|ice|0xC00000
+surface|metal|0xD00000
+surface|mud|0xE00000
+surface|paper|0xF00000
+surface|plaster|0x1000000
+surface|rock|0x1100000
+surface|sand|0x1200000
+surface|snow|0x1300000
+surface|water|0x1400000
+surface|wood|0x1500000
+surface|asphalt|0x1600000
+surface|ceramic|0x1700000
+surface|plastic|0x1800000
+surface|rubber|0x1900000
+surface|cushion|0x1A00000
+surface|fruit|0x1B00000
+surface|paintedmetal|0x1C00000
+surface|player|0x1D00000
+surface|tallgrass|0x1E00000
+surface|riotshield|0x1F00000
+surface|metalthin|0x2000000
+surface|metalhollow|0x2100000
+surface|metalcatwalk|0x2200000
+surface|metalcar|0x2300000
+surface|glasscar|0x2400000
+surface|glassbulletproof|0x2500000
+surface|watershallow|0x2600000
+surface|bodyarmor|0x2700000

@@ -28,6 +28,7 @@
 #include "Games/GameModule.h"
 #include "ZoneAssetTypes.h"
 #include "ZonekitZone.h"
+#include "SurfaceTypes.h"
 
 #include "XMEExport.h"
 #include "XMBExport.h"
@@ -998,6 +999,7 @@ static int SelfTest(std::string& Failures)
     Failed += Bo3Target::Output::SelfTest(Failures);
     Failed += Bo3Target::Techsets::SelfTest(Failures);
     Failed += MaterialGdt::SelfTest(Failures);
+    Failed += SurfaceTypes::SelfTest(Failures);
     Failed += ImageRoles::SelfTest(Failures);
     Failed += Bo3Target::Publish::SelfTest(Failures);
     Failed += Bo3Target::Awi::SelfTest(Failures);

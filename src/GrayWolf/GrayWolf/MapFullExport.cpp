@@ -8,6 +8,7 @@
 #include "MapRadiantRules.h"
 #include "MapRadiantWriter.h"
 #include "MaterialGdt.h"
+#include "SurfaceTypes.h"
 
 #include <algorithm>
 #include <fstream>
@@ -94,6 +95,13 @@ std::vector<MapDependency> CollectMapDependencies(const MapScene& Scene)
     return Out;
 }
 
+bool IsDecalMaterial(const MapScene& Scene, const std::string& MaterialName)
+{
+    const auto Mat = Scene.Materials.find(MaterialName);
+    if (Mat == Scene.Materials.end()) return false;
+    return LowerOf(Mat->second.Techset).find("decal") != std::string::npos || SurfaceTypes::IsDecal(LowerOf(Scene.Game), Mat->second.RenderFlags);
+}
+
 std::map<std::string, std::string> GeometryUsage(const MapScene& Scene, const std::set<std::string>* Only)
 {
     using RadiantGeometry::V3;
@@ -118,7 +126,7 @@ std::map<std::string, std::string> GeometryUsage(const MapScene& Scene, const st
     {
         const auto Mat = Scene.Materials.find(Name);
         const std::string Techset = Mat != Scene.Materials.end() ? Mat->second.Techset : std::string();
-        Usage[Name] = MaterialUsage(LowerOf(Techset).find("decal") != std::string::npos, Techset, Areas);
+        Usage[Name] = MaterialUsage(IsDecalMaterial(Scene, Name), Techset, Areas);
     }
     return Usage;
 }

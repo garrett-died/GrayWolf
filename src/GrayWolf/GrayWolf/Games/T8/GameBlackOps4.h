@@ -32,10 +32,13 @@ public:
         std::vector<std::pair<uint64_t, uint32_t>> Images;
         uint64_t Techset = 0;
         std::vector<uint8_t> Constants;
+        int64_t SurfaceFlags = -1, RenderFlags = -1;   // the material's surface flags (+0x28) and its techset's renderFlags (+0x20), -1 when unread
     };
     // A disk export's: a material header without images (another zone defines the material) ->
     // that zone's material; false when unknown. Unset outside a disk export.
     static thread_local std::function<bool(uint64_t MaterialHash, MaterialElsewhere& Out)> ImagesElsewhere;
+    // A disk export's: the renderFlags of a technique set whose header in this zone is a stub (another zone holds it); 0 when unknown.
+    static thread_local std::function<int64_t(uint64_t TechsetHash)> TechsetFlagsElsewhere;
     static void LoadXModel(const XModelLod_t& ModelLOD, const std::unique_ptr<WraithModel>& ResultModel);
 
     static std::string DecryptString(uint8_t* InputBuffer, uint8_t InputLength, uint8_t EncryptionID, uint64_t StringHash);

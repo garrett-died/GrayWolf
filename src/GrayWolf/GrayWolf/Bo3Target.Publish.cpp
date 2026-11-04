@@ -424,6 +424,7 @@ namespace Bo3Target::Publish
         MaterialGdt::Builder B([&RunRoot](const fs::path& File) { return Out::IsUnder(RunRoot, File) ? File.generic_string() : std::string(); }, "m_");
         B.SetRunRoot(RunRoot);
         B.ConvertImages(true);
+        B.SurfaceOptions(MaterialGdt::SurfaceChoicesOf(O.ModToolsRoot));   // material.awi's surfaceType options: a name it lacks is <none> with a note
         B.TechsetData(&Techsets::Shared());     // a missing data file is counted (m_techset_data_missing) and reported below
         B.PlanOnly(O.Plan);
         B.SetUsage(GeometryUsage);              // a map's geometry materials are listed in Radiant; every other material stays <not in editor>
@@ -1182,10 +1183,16 @@ namespace Bo3Target::Publish
         std::string Approximations = Tsv({ "code", "asset", "detail", "message" });
         for (const Approx& A : Approxes) Approximations += Tsv({ A.Code, A.Asset, A.Detail, A.Message });
         Count("approximations", Approxes.size());
-        std::string Error;
-        if (!Out::WriteAtomic(RunRoot / "graywolf_placement.tsv", Placement.data(), Placement.size(), Error) ||
-            !Out::WriteAtomic(RunRoot / "graywolf_approximations.tsv", Approximations.data(), Approximations.size(), Error))
-            R.Warnings.push_back("a report was not written: " + Error);
+        // The reports are written independently, and the old ones are removed first: a report that fails to write leaves no file, never the
+        // previous run's (the gate reads graywolf_approximations.tsv as this run's evidence, and finds none).
+        std::error_code StaleEc;
+        fs::remove(RunRoot / "graywolf_placement.tsv", StaleEc);
+        fs::remove(RunRoot / "graywolf_approximations.tsv", StaleEc);
+        std::string PlacementError, ApproximationsError;
+        if (!Out::WriteAtomic(RunRoot / "graywolf_placement.tsv", Placement.data(), Placement.size(), PlacementError))
+            R.Warnings.push_back("a report was not written: " + PlacementError);
+        if (!Out::WriteAtomic(RunRoot / "graywolf_approximations.tsv", Approximations.data(), Approximations.size(), ApproximationsError))
+            R.Warnings.push_back("a report was not written: " + ApproximationsError);
         Count("assets", Assets.size());
 
         // 10b. --full-map: the report. Each name a map gives is walked through what the run published (the model, then its
@@ -1486,9 +1493,25 @@ namespace Bo3Target::Publish
 
         // 2. a second run changes nothing
         {
+            // a stale approximations row from an earlier run must not survive this run
+            {
+                std::ofstream Stale(Run1 / "graywolf_approximations.tsv", std::ios::binary | std::ios::trunc);
+                Stale << "code\tasset\tdetail\tmessage\nmaterial.surface_none_in_source\tSTALE_SENTINEL\tx\ty\n";
+            }
             const auto Before = Tree(Root1);
             Result R = Go(Run1, Root1, Know);
             const auto After = Tree(Root1);
+            Check(!Contains(Slurp(Run1 / "graywolf_approximations.tsv"), "STALE_SENTINEL"), "run 2: a stale approximations row is gone", "");
+            // a report that cannot be written leaves no file: a non-empty folder where the file goes
+            {
+                const fs::path Blocked = Base / "t1_blocked" / "bo4";
+                fs::create_directories(Blocked / "graywolf_approximations.tsv", Ec);
+                std::ofstream(Blocked / "graywolf_approximations.tsv" / "keep.txt") << "x";
+                const Result Failed2 = Go(Blocked, Root1, Know);
+                bool Warned = false;
+                for (const std::string& W : Failed2.Warnings) Warned = Warned || W.find("a report was not written") != std::string::npos;
+                Check(Warned && !fs::is_regular_file(Blocked / "graywolf_approximations.tsv", Ec) && fs::is_regular_file(Blocked / "graywolf_placement.tsv", Ec), "a report that cannot be written warns and leaves no file; the other report is still written", "");
+            }
             Check(Before == After, "run 2: the tree is byte-identical", std::format("{} vs {} files", Before.size(), After.size()));
             Check(R.Counters["publish_files_written"] == 0 && R.Counters["publish_gdt_files_written"] == 0, "run 2: nothing is written", std::to_string(R.Counters["publish_files_written"]));
             bool Written = false;

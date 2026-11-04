@@ -3,6 +3,7 @@
 #include "GameBlackOpsCW.h"
 
 #include "GameReaders.h"
+#include "SurfaceTypes.h"
 
 #include "CoDAssets.h"
 
@@ -293,6 +294,12 @@ const XMaterial_t GameBlackOpsCW::ReadXMaterial(uint64_t MaterialPointer)
     XMaterial_t Result(MaterialData.ImageCount);
     Result.MaterialName = std::format("xmaterial_{:x}", MaterialData.NamePtr);
     Result.TechsetName = std::format("xtechset_{:x}", CoDAssets::GameInstance->Read<uint64_t>(MaterialData.TechsetPtr));
+    // The Black Ops 4 words at the places its layout gives, less the 8 bytes this header lacks before the techset pointer: the surface flags (+0x28 -> +0x20)
+    // and, from HydraX, the techset's renderFlags at +0x10. The surface flags are TESTED (zonekit/profiles/t9/flag_names.txt, docs/hydrax-port/p2-surface-decals.md);
+    // the renderFlags read 0 in a disk export (a stub techset), so nothing takes a decal class from them.
+    Result.SurfaceFlags = SurfaceTypes::ReadWord(MaterialPointer + 0x20);   // -1 when the read fails
+    if (MaterialData.TechsetPtr != 0) Result.RenderFlags = SurfaceTypes::ReadWord(MaterialData.TechsetPtr + 0x10);
+    if (Result.RenderFlags == 0) Result.RenderFlags = -1;   // a stub techset
 
     if (AssetNameCache.NameDatabase.find(MaterialData.NamePtr) != AssetNameCache.NameDatabase.end())
         Result.MaterialName = FileSystems::GetFileNamePurgeExtensions(AssetNameCache.NameDatabase[MaterialData.NamePtr]);

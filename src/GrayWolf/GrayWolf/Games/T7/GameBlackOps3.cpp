@@ -6,6 +6,7 @@
 #include "GameBlackOps3.h"
 
 #include "GameReaders.h"
+#include "SurfaceTypes.h"
 
 #include "CoDAssets.h"
 #include "SABSupport.h"   // BO3 audio lives in .sabl banks under zone\snd\, not in the live asset pool
@@ -81,6 +82,9 @@ const XMaterial_t GameBlackOps3::ReadXMaterial(uint64_t MaterialPointer)
     // The technique set's name (+0x278 -> its name pointer) and each technique's static pixel
     // cbuffer (constantBufferInfo[12] at +0x30, 0x30 apart, psStatic[0] at +0x20 -> init data
     // pointer +0x28, size +0x30): the adapter reads them through shading.txt.
+    // The surface flags: the u32 at +0x24 (the material's flags and settings start at +8, the word is their 28th byte); the surface type is
+    // (flags >> 20) & 0x3F, zonekit/profiles/t7/flag_names.txt.
+    Result.SurfaceFlags = SurfaceTypes::ReadWord(MaterialPointer + 8 + 28);   // -1 when the read fails
     const uint64_t Techset = CoDAssets::GameInstance->Read<uint64_t>(MaterialPointer + 0x278);
     if (Techset != 0)
     {

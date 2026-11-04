@@ -6,6 +6,8 @@
 #include "ExportNaming.h"
 #include "ExportWriters.h"
 #include "GdtWriter.h"
+#include "SurfaceTypes.h"
+#include "Bo3Target.Awi.h"
 #include "Bo3Target.Output.h"
 
 #include <nlohmann/json.hpp>
@@ -17,6 +19,7 @@
 #include <cstring>
 #include <cstdio>
 #include <limits>
+#include <memory>
 #include <fstream>
 #include <regex>
 #include <tuple>
@@ -220,6 +223,38 @@ void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Ma
     M.Source = D.Name;
     if (Name != D.Name) Counter("renamed")++;
 
+    // the surface type: the game's own flags (SurfaceTypes.h), never a guess; <none> with a note when the game gave none
+    if (!D.SurfaceType.empty())
+    {
+        const std::string Value = SurfaceChoices.empty() ? D.SurfaceType : SurfaceTypes::ToBo3(D.SurfaceType, SurfaceChoices);
+        if (Value.empty())
+        {
+            Counter("surface_unmapped")++;
+            M.Notes.push_back({ "material.surface_unmapped", "source_surface=" + D.SurfaceType, "material.awi's surfaceType has no option of that name: left <none>" });
+        }
+        else
+        {
+            M.SurfaceType = Value;
+            Counter("surface_" + Value)++;
+        }
+    }
+    else if (D.SurfaceWhy == "none_in_source" && Source != nullptr && SurfaceTypes::ReadAndNamesNoSurface(Game, Source->SurfaceFlags))
+    {
+        // positive evidence: a word was read and names no surface. Every <none> carries a row, so the gate can tell this from a word never read.
+        Counter("surface_none_in_source")++;
+        M.Notes.push_back({ "material.surface_none_in_source", "game=" + Game, "the source's surface word was read and names no surface type: <none> is the source's own value" });
+    }
+    else
+    {
+        // a description that says none_in_source but whose source flags do not show a read word with no type bits (a sidecar written by hand, or one
+        // without the flags) is not evidence: it is reported unknown
+        const std::string Why = D.SurfaceWhy == "none_in_source" ? "none_in_source_unverified" : D.SurfaceWhy.empty() ? "not_read" : D.SurfaceWhy;
+        Counter("surface_unknown")++;
+        Counter("surface_unknown_" + Why.substr(0, Why.find(':')))++;
+        M.Notes.push_back({ "material.surface_unknown", "game=" + Game + ", why=" + Why,
+                            "the source's surface type is not known (no_table: the game's flag word is not measured; not_read: the reader gives none; unnamed: a value no table row declares): left <none>, not guessed" });
+    }
+
     // the colour and roughness of a layered material are its layers': the first one's
     Materials::Map Albedo = D.Albedo, Roughness = D.Roughness;
     if (!D.Layers.empty())
@@ -260,6 +295,16 @@ void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Ma
             Counter("not_converted_metal_fused_inputs")++;
     }
     if (!D.Metalness.Empty() && !Fused) Counter("metalness_dropped")++;
+
+    // render class: where a game's techset flags decide the decal class (BO4), a material whose flags were not read is reported, never guessed
+    if (Source != nullptr)
+        if (const SurfaceTypes::Names* Table = SurfaceTypes::For(ExportNaming::Lower(Game)); Table != nullptr && Table->HasRenderBits() &&
+                                                                                       SurfaceTypes::ClassOf(ExportNaming::Lower(Game), Source->RenderFlags) == SurfaceTypes::RenderClass::Unread)
+        {
+            Counter("render_class_unread")++;
+            M.Notes.push_back({ "material.render_class_unread", "game=" + Game + ", techset=" + Source->Techset,
+                                "the techset's renderFlags were not read (a stub techset or a failed read): the material is not classed as a decal, by flags or by anything else" });
+        }
 
     // the technique: emission, then light through the surface, then the alpha, then a colour specular
     const bool Emissive = !D.Emissive.Empty(), Backlit = !D.Transmission.Empty() && D.Transmission.Image.Invert;
@@ -398,7 +443,7 @@ namespace
     bool ReadFloat(const std::vector<uint8_t>& Block, uint32_t At, float& Out)
     {
         if (static_cast<size_t>(At) + 4 > Block.size()) return false;
-        std::memcpy(&Out, Block.data() + At, 4);
+        std::memcpy(&Out, &Block[At], 4);
         return std::isfinite(Out);
     }
 }
@@ -415,8 +460,11 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
         Rq.Wanted.emplace_back(Key, I.Builtin.empty() ? I.Semantic : IntentOfKey(Key));
     }
     Rq.Class = Blend ? Tc::Blend::Blend : Cutout ? Tc::Blend::AlphaTest : Tc::Blend::Opaque;
-    // a decal is told by the game's own techset name; a hash names none
-    if (!Rq.SourceTechset.empty() && ExportNaming::Lower(Rq.SourceTechset).find("decal") != std::string::npos) Rq.Class = Tc::Blend::Decal;
+    // a decal is told by the game's own techset name when it has one, and by the techset's renderFlags where the name is a hash (BO4)
+    const bool DecalByName = !Rq.SourceTechset.empty() && ExportNaming::Lower(Rq.SourceTechset).find("decal") != std::string::npos;
+    const bool DecalByFlags = Source != nullptr && SurfaceTypes::IsDecal(ExportNaming::Lower(Game), Source->RenderFlags);
+    if (DecalByName || DecalByFlags) Rq.Class = Tc::Blend::Decal;
+    if (DecalByFlags && !DecalByName) Counter("decal_from_render_flags")++;
     Rq.Emissive = Emissive;
     Rq.HasColorSpec = Spec;
     Rq.ColorSpec = true;    // Description.Specular is an RGB colour (F0)
@@ -569,7 +617,7 @@ Builder::Resolved Builder::Resolve() const
     for (const auto& [Name, M] : Defined)
     {
         const auto Used = Usage.find(M.Source);
-        Gdt::Fields F = { { "materialCategory", M.Category }, { "materialType", M.Type }, { "surfaceType", "<none>" },
+        Gdt::Fields F = { { "materialCategory", M.Category }, { "materialType", M.Type }, { "surfaceType", M.SurfaceType },
                           { "template", "material.template" }, { "usage", Used != Usage.end() ? Used->second : "<not in editor>" } };
         ResolvedMaterial R;
         R.Name = Name;
@@ -657,10 +705,21 @@ namespace
 
 }
 
+std::vector<std::string> SurfaceChoicesOf(const fs::path& ModToolsRoot)
+{
+    std::vector<std::string> Options;
+    if (ModToolsRoot.empty()) return Options;
+    Bo3Target::Awi::Schema Schema;
+    std::string Error;
+    if (!Bo3Target::Awi::Load(ModToolsRoot, "material", Schema, Error)) return Options;
+    if (const Bo3Target::Awi::Entry* E = Schema.Find("surfaceType"); E != nullptr && E->OptionsKnown) Options = E->Options;
+    return Options;
+}
+
 int LodNumber(const std::string& Digits)
 {
     int V = 0;
-    const char* End = Digits.data() + Digits.size();
+    const char* End = std::to_address(Digits.end());
     const auto R = std::from_chars(Digits.data(), End, V);
     return R.ec == std::errc() ? V : std::numeric_limits<int>::max();   // a long run of digits is capped, never thrown on
 }
@@ -836,6 +895,56 @@ int SelfTest(std::string& Failures)
         for (const auto& M : B.Resolve().Materials) (M.Name == "mtl_floor" ? UsedA : UsedC) = Value(M, "usage");
         Check(Before == "<not in editor>;<not in editor>;", "usage defaults to <not in editor>", Before);
         Check(UsedA == "floor" && UsedC == "<not in editor>", "a named material gets its usage, the others keep <not in editor>", UsedA + " / " + UsedC);
+    }
+    // surfaceType: the description's own, never a guess; <none> with a note when the game gave none or the awi has no such option
+    {
+        const auto SurfaceOf = [&](const char* Type, const char* Why, const std::vector<std::string>& Options, std::string& Note, std::map<std::string, size_t>& Counters, int64_t Flags = -1) {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            B.SurfaceOptions(Options);
+            Materials::Description D = Make("mtl_surface", 0);
+            D.SurfaceType = Type;
+            D.SurfaceWhy = Why;
+            Materials::Source Src;
+            Src.Name = D.Name;
+            Src.SurfaceFlags = Flags;
+            B.Add(D, Dir, &Src, "bo4");
+            const auto R = B.Resolve();
+            Counters = B.Counters();
+            Note.clear();
+            if (!R.Materials.empty())
+                for (const auto& N : R.Materials[0].Notes)
+                    if (N.Code.rfind("material.surface_", 0) == 0) Note = N.Code;
+            return R.Materials.empty() ? std::string("(none)") : Value(R.Materials[0], "surfaceType");
+        };
+        std::string Note;
+        std::map<std::string, size_t> Counters;
+        const std::vector<std::string> Options = { "<error>", "<none>", "concrete", "metal" };
+        Check(SurfaceOf("metal", "", Options, Note, Counters) == "metal" && Counters["t_surface_metal"] == 1, "a surface type the awi holds is written", "");
+        Check(SurfaceOf("metal", "", {}, Note, Counters) == "metal", "without the awi's options the game's name is written as it is", "");
+        Check(SurfaceOf("ladder", "", Options, Note, Counters) == "<none>" && Note == "material.surface_unmapped" && Counters["t_surface_unmapped"] == 1, "a name the awi lacks is <none> with a surface_unmapped note", Note);
+        Check(SurfaceOf("", "no_table", Options, Note, Counters) == "<none>" && Note == "material.surface_unknown" && Counters["t_surface_unknown_no_table"] == 1, "a game with no table is <none> with a surface_unknown note", Note);
+        Check(SurfaceOf("", "unnamed:0x2800000", Options, Note, Counters) == "<none>" && Counters["t_surface_unknown_unnamed"] == 1, "a value no row declares is unknown, not guessed", "");
+        Check(SurfaceOf("", "none_in_source", Options, Note, Counters, 0x440A0) == "<none>" && Note == "material.surface_none_in_source" && Counters["t_surface_none_in_source"] == 1, "a word that was read and names no surface is <none> with a positive surface_none_in_source row", Note);
+        // a description that only SAYS none_in_source (a hand-made or flag-less sidecar) is not evidence: no flags, -1, or a typed word give an unknown row and no positive row
+        for (const int64_t Forged : { int64_t(-1), int64_t(0xD00000) })
+            Check(SurfaceOf("", "none_in_source", Options, Note, Counters, Forged) == "<none>" && Note == "material.surface_unknown" && Counters["t_surface_none_in_source"] == 0 && Counters["t_surface_unknown_none_in_source_unverified"] == 1,
+                  "a forged none_in_source (flags -1, or a typed word) is surface_unknown, never the positive row", Note + " " + std::to_string(Forged));
+        // render class: a BO4 material whose techset flags were not read (-1) or read 0 (a stub) is reported; a decal word is not
+        for (const int64_t Flags : { int64_t(-1), int64_t(0), int64_t(0x80000a) })
+        {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            Materials::Description D = Make("mtl_render", 0);
+            Materials::Source Src;
+            Src.Name = D.Name;
+            Src.RenderFlags = Flags;
+            B.Add(D, Dir, &Src, "bo4");
+            Check(B.Counters().count("t_render_class_unread") == (Flags > 0 ? 0u : 1u), "render_class_unread is counted for -1 and 0, not for a decal word", std::to_string(Flags));
+        }
+        // a word never read is unknown, and gets no positive row
+        Check(SurfaceOf("", "table_missing", Options, Note, Counters) == "<none>" && Note == "material.surface_unknown" && Counters["t_surface_unknown_table_missing"] == 1, "table_missing is unknown with a surface_unknown row", Note);
+        Check(SurfaceOf("", "", Options, Note, Counters) == "<none>" && Counters["t_surface_unknown_not_read"] == 1, "a reader that gives nothing counts as not_read", "");
     }
     // colour plus normal: lit; every key of the techset and the stock defaults are written
     {

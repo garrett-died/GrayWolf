@@ -2,6 +2,7 @@
 
 #include "MaterialDescription.h"
 #include "Games/Treyarch/TreyarchMaterials.h"
+#include "SurfaceTypes.h"
 
 #include <algorithm>
 #include <cmath>
@@ -172,6 +173,7 @@ namespace
             if (D.Layers.empty()) DescribeColor(M, D);   // the layers carry their own tints
             DescribeEmissive(M, D);
             DescribeBacklight(M, D);
+            SurfaceTypes::Apply("t7", M, D);   // (flags >> 20) & 0x3F of the u32 at +0x24, zonekit/profiles/t7/flag_names.txt
         }
     };
     const T7Materials Adapter;

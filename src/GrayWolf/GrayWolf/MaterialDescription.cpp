@@ -496,6 +496,8 @@ std::string SidecarText(const Sidecar& S)
             J["alpha_map"]["uv_scale"] = Floats(D.AlphaMap.UVScale, 2);
         }
         if (D.Roughness.Empty()) J["roughness_value"] = Rounded(D.RoughnessValue);
+        if (!D.SurfaceType.empty()) J["surface_type"] = D.SurfaceType;
+        if (!D.SurfaceWhy.empty()) J["surface_why"] = D.SurfaceWhy;
         if (!D.Color.Empty())
         {
             nlohmann::json C = nlohmann::json::object();
@@ -516,6 +518,8 @@ std::string SidecarText(const Sidecar& S)
             const Source& Src = S.Sources[i];
             if (!Src.Techset.empty()) J["techset"] = Src.Techset;
             if (Src.SortKey >= 0) J["sort_key"] = Src.SortKey;
+            if (Src.SurfaceFlags >= 0) J["surface_flags"] = Src.SurfaceFlags;
+            if (Src.RenderFlags >= 0) J["render_flags"] = Src.RenderFlags;
             nlohmann::json Imgs = nlohmann::json::array();
             char Hex[16];
             for (const auto& Img : Src.Images)
@@ -597,6 +601,8 @@ bool ReadSidecar(const std::string& Path, Sidecar& S)
             }
             D.RoughnessValue = J.value("roughness_value", D.RoughnessValue);
             D.MetalnessValue = J.value("metalness_value", D.MetalnessValue);
+            D.SurfaceType = J.value("surface_type", std::string());
+            D.SurfaceWhy = J.value("surface_why", std::string());
             if (J.contains("tint") && J["tint"].is_object()) TintFromJson(J["tint"], D.Tint);
             if (J.contains("color_tint") && J["color_tint"].is_object())
             {
@@ -609,6 +615,8 @@ bool ReadSidecar(const std::string& Path, Sidecar& S)
             Src.Name = D.Name;
             Src.Techset = J.value("techset", std::string());
             Src.SortKey = J.value("sort_key", -1);
+            Src.SurfaceFlags = J.value("surface_flags", static_cast<int64_t>(-1));
+            Src.RenderFlags = J.value("render_flags", static_cast<int64_t>(-1));
             for (const auto& One : J.value("sources", nlohmann::json::array()))
             {
                 if (!One.is_object()) continue;

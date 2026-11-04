@@ -120,8 +120,9 @@ not proof Black Ops III accepts the asset. `pool-coverage` puts each pool in one
 its zones are the zones walked, and a gate only if its GDT hash still holds. `converted` counts are per GDF in that run, not
 per asset of a zone.
 
-Checked on the Black Ops 4 zone `mp_frenetic` (25 models): 29 GDTs, 145 entries, 54 failures, all `surfaceType <none>`, and 31
-warnings. Compared with t7kb `gdt_check` on the same files. Not built: sound, weapon, animation and stock comparison checks. A
+Checked on the Black Ops 4 zone `mp_frenetic` (25 models): 0 failures and 31 warnings. `surfaceType <none>` passes only with a
+report row showing the flag word was read and names no surface type; with no such row it is a failure. Compared with t7kb
+`gdt_check` on the same files. Not built: sound, weapon, animation and stock comparison checks. A
 slot bound to a stock image is not judged yet, so that output cannot reach exit 0. `--target modtools` has not been run.
 
 ## Known limits
@@ -131,8 +132,12 @@ slot bound to a stock image is not judged yet, so that output cannot reach exit 
 - Black Ops 4 has run end to end. Black Ops III, Black Ops 4, Cold War and WWII have run through the normal map fix
   below; WWII also through `--target` on a real map zone, which worked. Black Ops 6 and Black Ops 7 data was not
   installed here, so those two games are untested.
-- Black Ops 4 decals are not detected, since their techset names are hashes.
-- `surfaceType` is `<none>`. `usage` is set for a map's geometry materials (`--full-map`); every other material
+- `surfaceType` comes from the material flags in Black Ops III, Black Ops 4 and Cold War. Cold War rests on measurement only
+  (165 of 173 stock names on one map). Other games write `<none>` and a `material.surface_unknown` row: GrayWolf does not read
+  their flag word yet.
+- Black Ops 4 decals come from the techset `renderFlags`. A material whose techset record could not be read gets no class and a
+  `material.render_class_unread` row: 335 of 2,209 materials on `mp_frenetic`. Cold War has no decal class yet.
+- `usage` is set for a map's geometry materials (`--full-map`); every other material
   stays `<not in editor>`, so Radiant lists the map's geometry and not yet a model's materials.
 - Normal maps are rebuilt per material slot, not per file name. The Black Ops III, 4 and Cold War readers keep a
   normal as two components (X in red, Y in green, blue holds a variance term), so the export rebuilds blue as the Z

@@ -265,6 +265,7 @@
     <ClCompile Include="Gdt.cpp" />
     <ClCompile Include="GdtWriter.cpp" />
     <ClCompile Include="MaterialGdt.cpp" />
+    <ClCompile Include="SurfaceTypes.cpp" />
     <ClCompile Include="GameInstalls.cpp" />
     <ClCompile Include="Languages.cpp" />
     <ClCompile Include="XboxPackages.cpp" />
@@ -437,6 +438,7 @@
     <ClInclude Include="Gdt.h" />
     <ClInclude Include="GdtWriter.h" />
     <ClInclude Include="MaterialGdt.h" />
+    <ClInclude Include="SurfaceTypes.h" />
     <ClInclude Include="GameInstalls.h" />
     <ClInclude Include="Languages.h" />
     <ClInclude Include="XboxPackages.h" />
@@ -537,7 +539,7 @@
        preview its reference rigs, preview_rigs.json (AssetGrid\AnimRigs.h). -->
   <Target Name="CopyZonekitProfiles" AfterTargets="Build">
     <ItemGroup>
-      <ZonekitProfile Include="$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\profile.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\types.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\pool_map.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\inert_pools.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\tables.*.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\blocks.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\empties.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\shading.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\strings.cipher.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\gdt\**\*.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\gdt\**\*.jsonc;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\target\*.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\preview_rigs.json" />
+      <ZonekitProfile Include="$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\profile.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\types.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\pool_map.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\inert_pools.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\tables.*.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\blocks.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\empties.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\shading.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\flag_names.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\strings.cipher.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\gdt\**\*.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\gdt\**\*.jsonc;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\target\*.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\preview_rigs.json" />
     </ItemGroup>
     <Copy SourceFiles="@(ZonekitProfile)" DestinationFiles="@(ZonekitProfile->'$(OutDir)zonekit\profiles\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>

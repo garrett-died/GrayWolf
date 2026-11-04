@@ -4,6 +4,7 @@
 #include "GameBlackOps4.h"
 
 #include "GameReaders.h"
+#include "SurfaceTypes.h"
 
 #include "CoDAssets.h"
 #include "ExportWriters.h"
@@ -22,6 +23,7 @@
 
 WraithNameIndex GameBlackOps4::AssetNameCache = WraithNameIndex();
 thread_local std::function<bool(uint64_t, GameBlackOps4::MaterialElsewhere&)> GameBlackOps4::ImagesElsewhere;
+thread_local std::function<int64_t(uint64_t)> GameBlackOps4::TechsetFlagsElsewhere;
 
 uint32_t DecryptionTable[4082]
 {
@@ -617,6 +619,13 @@ const XMaterial_t GameBlackOps4::ReadXMaterial(uint64_t MaterialPointer)
     // +0x90, bytes at +0x98), which the adapter reads through shading.txt
     uint64_t Techset = CoDAssets::GameInstance->Read<uint64_t>(MaterialPointer + 0x30);
     if (Techset != 0) Result.TechsetName = std::format("{:x}", CoDAssets::GameInstance->Read<uint64_t>(Techset) & 0xFFFFFFFFFFFFFFF);
+    // the surface flags (+0x28; the surface type is (flags >> 20) & 0x3F) and the techset's renderFlags (+0x20): zonekit/profiles/bo4/flag_names.txt
+    // (-1: not read. A failed read is not a word of 0, and a stub techset's 0 says nothing.)
+    Result.SurfaceFlags = SurfaceTypes::ReadWord(MaterialPointer + 0x28);
+    if (Techset != 0) Result.RenderFlags = SurfaceTypes::ReadWord(Techset + 0x20);
+    if (Result.RenderFlags == 0) Result.RenderFlags = -1;
+    // a name-only header in a disk export (no image slots, another zone defines the material) holds a stub: its words are not the material's
+    if (MaterialData.ImageCount == 0 && ImagesElsewhere) Result.SurfaceFlags = Result.RenderFlags = -1;
     const uint64_t ConstSize = CoDAssets::GameInstance->Read<uint64_t>(MaterialPointer + 0x90 + 0x90);
     const uint64_t ConstPtr = CoDAssets::GameInstance->Read<uint64_t>(MaterialPointer + 0x90 + 0x98);
     if (ConstPtr != 0 && ConstSize > 0 && ConstSize <= 0x4000)
@@ -629,12 +638,17 @@ const XMaterial_t GameBlackOps4::ReadXMaterial(uint64_t MaterialPointer)
     {
         for (const auto& [Hash, Semantic] : Elsewhere.Images) Slots.push_back({ ExportWriters::ImageElsewhere, Semantic, Hash });
         if (Elsewhere.Techset != 0) Result.TechsetName = std::format("{:x}", Elsewhere.Techset);
+        Result.SurfaceFlags = Elsewhere.SurfaceFlags, Result.RenderFlags = Elsewhere.RenderFlags;
         if (!Elsewhere.Constants.empty())
         {
             Result.Constants.clear();
             Result.Constants.push_back(std::move(Elsewhere.Constants));
         }
     }
+    // a techset this zone holds as a stub reads 0: another zone's whole one gives the flags, else they stay unread (-1)
+    if (Result.RenderFlags <= 0 && !Result.TechsetName.empty() && TechsetFlagsElsewhere)
+        if (const int64_t Flags = TechsetFlagsElsewhere(std::stoull(Result.TechsetName, nullptr, 16)); Flags > 0) Result.RenderFlags = Flags;
+    if (Result.RenderFlags <= 0) Result.RenderFlags = -1;
 
     for (const auto& S : Slots)
     {

@@ -43,6 +43,10 @@ namespace Maps
     // Each (type, name) once, in the order the scene names it
     std::vector<MapDependency> CollectMapDependencies(const MapScene& Scene);
 
+    // Whether a scene material is a decal: its techset names one, or (Black Ops 4, whose techset names are hashes) the techset's
+    // renderFlags say so (SurfaceTypes::IsDecal, zonekit/profiles/<game>/flag_names.txt). False for a name the scene does not hold.
+    bool IsDecalMaterial(const MapScene& Scene, const std::string& MaterialName);
+
     // The usage Radiant lists a geometry material under (MaterialUsage), by the area of the render triangles
     // that draw it; Only: just those materials. A material no world surface draws has none.
     std::map<std::string, std::string> GeometryUsage(const MapScene& Scene, const std::set<std::string>* Only = nullptr);

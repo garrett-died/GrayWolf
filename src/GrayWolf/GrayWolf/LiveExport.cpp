@@ -596,6 +596,7 @@ namespace
             Src.Techset = Mat.TechsetName;
             Src.Constants = Mat.Constants;
             Src.SortKey = Mat.SortKey;
+            Src.SurfaceFlags = Mat.SurfaceFlags, Src.RenderFlags = Mat.RenderFlags;
             for (const auto& Image : Mat.Images)
             {
                 Materials::Role Hint = Materials::Role::Unknown;

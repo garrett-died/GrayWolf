@@ -267,6 +267,10 @@ struct XMaterial_t
     // The game's sort key for the material when its reader knows it (the draw order class the
     // adapter reads the alpha mode from), else -1.
     int SortKey = -1;
+
+    // The game's flag words when its reader knows them, else -1: the material's surface flags and its techset's renderFlags
+    // (Materials::Source, SurfaceTypes.h).
+    int64_t SurfaceFlags = -1, RenderFlags = -1;
 };
 
 struct XModelLod_t

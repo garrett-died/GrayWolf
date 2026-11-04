@@ -136,8 +136,12 @@ namespace Bo4DiskExport
         std::vector<std::pair<uint64_t, uint32_t>> Images;
         uint64_t Techset = 0;
         std::vector<uint8_t> Constants;
+        int64_t SurfaceFlags = -1, RenderFlags = -1;   // the material's surface flags (+0x28), its techset's renderFlags (+0x20); -1 when the zone does not hold them
     };
     using MaterialBook = std::unordered_map<uint64_t, BookMaterial>;
+    // A technique set's renderFlags (+0x20), by its name hash with this bit set, kept in the same book: a material header's techset is a
+    // name-only stub in most zones, and the zone that holds the whole techset is another one.
+    inline constexpr uint64_t TechsetKey = 1ull << 63;
     // What a level's name-only material headers stand for: the game loads core_common and the
     // mode's common zone (zm_common...) first, which define them. Their books, read once from
     // each zone (beside Zone, else from Packages into FfCache), kept in BookDir.

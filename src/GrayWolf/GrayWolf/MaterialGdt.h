@@ -32,6 +32,10 @@ namespace MaterialGdt
     // The number in a `_lodNNNN` suffix's digits; INT_MAX when they do not fit an int (never throws).
     int LodNumber(const std::string& Digits);
 
+    // The options of material.awi's surfaceType combo under a Mod Tools root (Bo3Target::Awi, read as data, no copy of the list);
+    // empty when the file or the key is not there.
+    std::vector<std::string> SurfaceChoicesOf(const std::filesystem::path& ModToolsRoot);
+
     class Builder
     {
     public:
@@ -69,6 +73,11 @@ namespace MaterialGdt
         // holds it; Game: the sidecar's game id ("bo4"). Both only matter with TechsetData.
         void Add(const Materials::Description& D, const std::filesystem::path& Dir, const Materials::Source* Source = nullptr,
                  const std::string& Game = std::string());
+
+        // The values material.awi's surfaceType combo holds (Bo3Target::Awi, read from the Mod Tools by the caller). With them a
+        // description's surface type is written only when an option has its name; else <none> and a material.surface_unmapped note.
+        // Without them (the default: no Mod Tools root) the name is written as the game's table spells it, which is unchecked.
+        void SurfaceOptions(std::vector<std::string> Options) { SurfaceChoices = std::move(Options); }
 
         // The usage Radiant lists the materials under (their Source names): every material has
         // "<not in editor>", which hides it, except those named here (a map's geometry materials)
@@ -121,6 +130,7 @@ namespace MaterialGdt
         struct Material
         {
             std::string Source, Category, Type;
+            std::string SurfaceType = "<none>";                 // the game's own, never guessed (Description::SurfaceType)
             std::map<std::string, Image> Slots;                 // colorMap -> image
             std::vector<std::pair<std::string, std::string>> Values;   // other fields set
             bool Targeted = false;
@@ -133,6 +143,7 @@ namespace MaterialGdt
         std::map<std::string, Material> Defined;                // by asset name
         std::map<std::string, std::set<std::string>> Collisions;
         std::map<std::string, std::string> Usage;
+        std::vector<std::string> SurfaceChoices;
         std::map<std::string, size_t> Count;
         bool Convert = false;
         std::filesystem::path RunRoot;

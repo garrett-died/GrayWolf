@@ -35,6 +35,7 @@ std::string AddMaterial(MapScene& Scene, const XMaterial_t& M)
     Out.Techset = M.TechsetName;
     Out.Constants = M.Constants;
     Out.SortKey = M.SortKey;
+    Out.SurfaceFlags = M.SurfaceFlags, Out.RenderFlags = M.RenderFlags;
     for (const XImage_t& I : M.Images)
     {
         if (I.ImageName.empty()) continue;
