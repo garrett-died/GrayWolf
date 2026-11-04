@@ -1,0 +1,1546 @@
+{
+ "game": "t9",
+ "generated_by": "tools/bo3target/gen_pool_map.py",
+ "pools": [
+  {
+   "pool": "aimtable",
+   "kind": null,
+   "bo3_awi": "aimtable",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "aitype",
+   "kind": "aitypes",
+   "bo3_awi": "aitype",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "animmappingtable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "animselectortable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "animstatemachine",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "animtree",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "arenaseasons",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "assetlist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "attachment",
+   "kind": "weapons",
+   "bo3_awi": "attachment",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "attachmenttable",
+   "kind": "weapons",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "attachmentunique",
+   "kind": "weapons",
+   "bo3_awi": "attachmentunique",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "ballisticdesc",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "beam",
+   "kind": null,
+   "bo3_awi": "beam",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "behaviorstatemachine",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "behaviortree",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "bgcache",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "bitfield",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "blackboard",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "bulletpenetration",
+   "kind": null,
+   "bo3_awi": "bullet_penetration",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "cgmediatable",
+   "kind": null,
+   "bo3_awi": "cgmediatable",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "character",
+   "kind": null,
+   "bo3_awi": "character",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "characterbodytype",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "characterbodytypefrontend",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "charmixer",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "cinematic_camera",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "cinematic_sequence",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "cinematicmotion",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "clip_map",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "col_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "com_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "compasstunables",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "computeshaderset",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "cpu_occlusion_data",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "craftbackground",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "craftbackgroundlist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "craftcategory",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "craftcategorylist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "crafticon",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "crafticonlist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "craftmaterial",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "craftmateriallist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "craftweaponicontransform",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "craftweaponicontransformlist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "craftweaponsticker",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "craftweaponstickerlist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "csdef",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "customizationtable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "customizationtablefrontend",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "ddl",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "destructibledef",
+   "kind": null,
+   "bo3_awi": "destructibledef",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "districts",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "dlogevent",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "drawnodes",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "dynmodel",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "entitlement",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "entitlementlist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "entityfximpacts",
+   "kind": null,
+   "bo3_awi": "entityfximpacts",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "entitylist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "entitysoundimpacts",
+   "kind": null,
+   "bo3_awi": "entitysoundimpacts",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "execution",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "feature",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "featuretable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "firstpartyentitlement",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "firstpartyentitlementlist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "flametable",
+   "kind": null,
+   "bo3_awi": "flametable",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "flowgraph",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "fonticon",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "footsteptable",
+   "kind": null,
+   "bo3_awi": "footsteptable",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "fx",
+   "kind": "fx",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "fxlibraryvolume",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "game_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "gametypetable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "gametypetableentry",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "gesture",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "gesturetable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "gfx_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "glasses",
+   "kind": null,
+   "bo3_awi": "glass",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "grouplodmodel",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "hierarchicaltasknetwork",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "highlightreelinfodefines",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "highlightreelprofileweighting",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "highlightreelstarlevels",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "hwplatform",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "image",
+   "kind": "image",
+   "bo3_awi": "image",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "impactsfxtable",
+   "kind": null,
+   "bo3_awi": "impactsfxtable",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "impactsoundstable",
+   "kind": null,
+   "bo3_awi": "impactsoundstable",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "keyvaluepairs",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "klf",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "labelstore",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "labelstorelist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "laser",
+   "kind": null,
+   "bo3_awi": "laser",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "leaderboarddef",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "lighting",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "localizeentry",
+   "kind": "localize",
+   "bo3_awi": null,
+   "neutral_form": "csv",
+   "route": "direct"
+  },
+  {
+   "pool": "locdmgtable",
+   "kind": null,
+   "bo3_awi": "locdmgtable",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "luafile",
+   "kind": "rawfile",
+   "bo3_awi": null,
+   "neutral_form": "raw files (share/raw layout)",
+   "route": "direct"
+  },
+  {
+   "pool": "luafiledebug",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "maptable",
+   "kind": "mapinfo",
+   "bo3_awi": "maptable",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "maptableentry",
+   "kind": "mapinfo",
+   "bo3_awi": "maptableentry",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "maptablelist",
+   "kind": "mapinfo",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "material",
+   "kind": null,
+   "bo3_awi": "material",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "milestone",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "milestonetable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "motionmatchinginput",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "navinput",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "navmesh",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "navvolume",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "objective",
+   "kind": null,
+   "bo3_awi": "objective",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "objectivelist",
+   "kind": null,
+   "bo3_awi": "objectivelist",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "overheadcameratunables",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "physconstraints",
+   "kind": null,
+   "bo3_awi": "physconstraints",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "physpreset",
+   "kind": null,
+   "bo3_awi": "physpreset",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playeranimation",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playerfxtable",
+   "kind": null,
+   "bo3_awi": "playerfxtable",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playerglobaltunables",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playermovementtunables",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playeroutfit",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playerrolecategory",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playerrolecategorytable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playerroletemplate",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playerroletemplatefrontend",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playersettings",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playersoundstable",
+   "kind": null,
+   "bo3_awi": "playersoundstable",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playertalenttemplate",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playlistglobalsettings",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playlists",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "playlistschedule",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "postfxbundle",
+   "kind": null,
+   "bo3_awi": "postfxbundle",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "prestige",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "prestigetable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "ragdoll",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "rank",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "ranktable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "rawfile",
+   "kind": "rawfile",
+   "bo3_awi": null,
+   "neutral_form": "raw files (share/raw layout)",
+   "route": "direct"
+  },
+  {
+   "pool": "rawfilepreproc",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "rawstring",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "rawtextfile",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "raytraceshaderset",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "renderoverridebundle",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "rendertargets",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "rtsdef",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "rumble",
+   "kind": null,
+   "bo3_awi": "rumble",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sanim",
+   "kind": null,
+   "bo3_awi": "sanim",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "scenario",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "script_using",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "script_using_cp",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "script_using_mp",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "script_using_wz",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "script_using_zm",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "scriptbundle",
+   "kind": "bundles",
+   "bo3_awi": "scriptbundle",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "scriptbundlelist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "scriptparsetree",
+   "kind": "script",
+   "bo3_awi": null,
+   "neutral_form": "gsc source (decompiled) or compiled bytes",
+   "route": "direct"
+  },
+  {
+   "pool": "scriptparsetreedbg",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sharedweaponsounds",
+   "kind": null,
+   "bo3_awi": "sharedweaponsounds",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "shellshock",
+   "kind": null,
+   "bo3_awi": "shellshock",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "shoottable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sku",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "snddriverglobals",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sound",
+   "kind": "sound",
+   "bo3_awi": null,
+   "neutral_form": "audio files (wav, flac or opus)",
+   "route": "direct"
+  },
+  {
+   "pool": "sound_acoustics",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sound_alias_modifier",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sound_asset",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sound_bank",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sound_duck",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "spectate_camera",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sprayorgestureitem",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sprayorgesturelist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "staticlevelfxlist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "statuseffect",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "storagefile",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "storagefilelist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "storecategory",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "storecategorylist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "storeproduct",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "streamerhint",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "streamerworld",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "streamkey",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "stringtable",
+   "kind": "data",
+   "bo3_awi": null,
+   "neutral_form": "csv",
+   "route": "direct"
+  },
+  {
+   "pool": "structuredtable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "surfacefxtable",
+   "kind": null,
+   "bo3_awi": "surfacefxtable",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "surfacesounddef",
+   "kind": null,
+   "bo3_awi": "surfacesounddef",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "tacticalquery",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "tagfx",
+   "kind": null,
+   "bo3_awi": "tagfx",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "talent",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "techset",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "terraingfx",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "tracer",
+   "kind": null,
+   "bo3_awi": "tracer",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "triggeractions",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "triggereffectdesc",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "triggerlist",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "ttf",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "typeinfo",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "uimodeldatastruct",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "unlockableitem",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "unlockableitemtable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "vectorfield",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "vehicle",
+   "kind": null,
+   "bo3_awi": "vehicle",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "vehicleassembly",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "vehiclefxdef",
+   "kind": null,
+   "bo3_awi": "vehiclefxdef",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "vehiclesounddef",
+   "kind": null,
+   "bo3_awi": "vehiclesounddef",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "weapon",
+   "kind": "weapons",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "weaponblueprint",
+   "kind": "weapons",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "weaponcamo",
+   "kind": null,
+   "bo3_awi": "weaponcamo",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "weaponcamobinding",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "weaponfrontend",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "weaponfull",
+   "kind": "weapons",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "weaponsecondarymovement",
+   "kind": "weapons",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "weaponstylesettings",
+   "kind": "weapons",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "weapontunables",
+   "kind": "weapons",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "winddef",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "xanim",
+   "kind": "anim",
+   "bo3_awi": "xanim",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "xanimcurve",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "xcam",
+   "kind": null,
+   "bo3_awi": "xcam",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "xcollision",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "xmodel",
+   "kind": "model",
+   "bo3_awi": "xmodel",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "xmodelalias",
+   "kind": null,
+   "bo3_awi": "xmodelalias",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "xmodelmesh",
+   "kind": "model",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "carried:xmodel"
+  },
+  {
+   "pool": "xskeleton",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "zbarrier",
+   "kind": null,
+   "bo3_awi": "zbarrier",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "zone",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  }
+ ]
+}

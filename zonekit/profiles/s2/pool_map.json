@@ -1,0 +1,587 @@
+{
+ "game": "s2",
+ "generated_by": "tools/bo3target/gen_pool_map.py",
+ "pools": [
+  {
+   "pool": "addon_map_ents",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "aipaths",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "aitype",
+   "kind": null,
+   "bo3_awi": "aitype",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "aliascombatcone",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "aliasparametermodifier",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "animclass",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "attachment",
+   "kind": "weapons",
+   "bo3_awi": "attachment",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "beam",
+   "kind": null,
+   "bo3_awi": "beam",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "character",
+   "kind": null,
+   "bo3_awi": "character",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "clut",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "col_map_mp",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "col_map_trzone",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "com_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "computeshader",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "ddl",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "distcurve",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "dlogroutes",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "dlogschema",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "domainshader",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "equipsndtable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "fx",
+   "kind": "fx",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "fx_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "gfx_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "gfx_map_trzone",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "glass_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "hullshader",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "iesprofile",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "image",
+   "kind": "image",
+   "bo3_awi": "image",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "impactfx",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "laser",
+   "kind": null,
+   "bo3_awi": "laser",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "leaderboarddef",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "lightdef",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "loaded_sound",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "localize",
+   "kind": "localize",
+   "bo3_awi": null,
+   "neutral_form": "csv",
+   "route": "direct"
+  },
+  {
+   "pool": "luafile",
+   "kind": "rawfile",
+   "bo3_awi": null,
+   "neutral_form": "raw files (share/raw layout)",
+   "route": "direct"
+  },
+  {
+   "pool": "map_ents",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "material",
+   "kind": "material",
+   "bo3_awi": "material",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "mayhem",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "mptype",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "navmesh",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "netconststrings",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "particlesimanimation",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "phys_collmap",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "phys_worldmap",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "physclothtuning",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "physconstraint",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "physpreset",
+   "kind": null,
+   "bo3_awi": "physpreset",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "physwaterpreset",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "pixelshader",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "rawfile",
+   "kind": "rawfile",
+   "bo3_awi": null,
+   "neutral_form": "raw files (share/raw layout)",
+   "route": "direct"
+  },
+  {
+   "pool": "reverbpreset",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "reverbsendcurve",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "scriptable",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "scriptfile",
+   "kind": "script",
+   "bo3_awi": null,
+   "neutral_form": "gsc source (decompiled) or compiled bytes",
+   "route": "direct"
+  },
+  {
+   "pool": "skeletonscript",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sndcontext",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sndcurve",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "snddriverglobals",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sndmusicset",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sndphyspreset",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sound",
+   "kind": "sound",
+   "bo3_awi": null,
+   "neutral_form": "audio files (wav, flac or opus)",
+   "route": "direct"
+  },
+  {
+   "pool": "soundsubmix",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "splines",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "stringtable",
+   "kind": "data",
+   "bo3_awi": null,
+   "neutral_form": "csv",
+   "route": "direct"
+  },
+  {
+   "pool": "structureddatadef",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "surfacefx",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "techset",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "tracer",
+   "kind": null,
+   "bo3_awi": "tracer",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "ttf",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "ui_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "vectorfield",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "vehicle",
+   "kind": null,
+   "bo3_awi": "vehicle",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "vehicle_track",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "vertexdecl",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "vertexshader",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "virtualleaderboarddef",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "weapon",
+   "kind": "weapons",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "xanim",
+   "kind": "anim",
+   "bo3_awi": "xanim",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "xmodel",
+   "kind": "model",
+   "bo3_awi": "xmodel",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "xmodelalias",
+   "kind": null,
+   "bo3_awi": "xmodelalias",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "xmodelbase",
+   "kind": "model",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "carried:xmodel"
+  },
+  {
+   "pool": "xmodelsurfs",
+   "kind": "model",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "carried:xmodel"
+  },
+  {
+   "pool": "xsurfshared",
+   "kind": "model",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "carried:xmodel"
+  }
+ ]
+}

@@ -1,0 +1,2163 @@
+#include "stdafx.h"
+
+// See Bo3Target.Verify.h.
+
+#include "Bo3Target.Verify.h"
+
+#include "Bo3Target.Awi.h"
+#include "Bo3Target.Output.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <format>
+#include <fstream>
+#include <memory>
+#include <set>
+#include <sstream>
+
+namespace fs = std::filesystem;
+namespace Tc = Bo3Target::Techsets;
+
+namespace Bo3Target::Verify
+{
+    namespace
+    {
+        // ---- thresholds. Each is a judgement stated in docs/hydrax-port/p1-bo3-verify.md, not a measured BO3 limit.
+        constexpr uint32_t kThumb = 128;                  // the sample grid
+        constexpr size_t kNameLimit = 63;                 // hypothesis (plan-materials.md conflict 17): a warning only
+        constexpr double kNormalFail = 4.0;               // mean |blue - blue implied by red and green|, on 0..255: above this is a failure
+        constexpr double kNormalWarn = 2.0;               // ... above this a warning (8-bit rounding of the rebuild is about 1)
+        constexpr double kDiffuseOutShare = 0.05;         // more than this share of pixels outside 40..238 is flagged (a warning, never a clamp)
+        constexpr int kDiffuseLow = 40, kDiffuseHigh = 238;
+        constexpr int kSpecDielectric = 56, kSpecTolerance = 2, kSpecDielectricMax = 90;
+        constexpr double kSpecMinNonZero = 0.10;          // below this share of non-zero pixels the map carries no level to judge
+        constexpr int kMetalSpecMin = 150, kBareMetalBlack = 24;
+        constexpr double kMetalWarnShare = 0.10, kMetalFailShare = 0.50;
+        constexpr double kScrollMax = 10.0, kRotationMax = 3600.0;   // the awi ranges, restated so a stale awi cannot widen the rule
+
+        const char* const kStatic = "static gate: read from the files against the Mod Tools' deffiles and the techset catalog; "
+                                    "not proof that APE, the linker or the game accepts the asset";
+
+        std::string Lower(std::string S)
+        {
+            for (char& C : S) C = static_cast<char>(std::tolower(static_cast<unsigned char>(C)));
+            return S;
+        }
+
+        bool KeyLess(const std::string& A, const std::string& B)
+        {
+            return std::lexicographical_compare(A.begin(), A.end(), B.begin(), B.end(), [](char X, char Y) {
+                return std::tolower(static_cast<unsigned char>(X)) < std::tolower(static_cast<unsigned char>(Y));
+            });
+        }
+
+        std::string Unescape(const std::string& V)
+        {
+            std::string Out;
+            for (size_t I = 0; I < V.size(); I++)
+            {
+                if (V[I] == '\\' && I + 1 < V.size() && V[I + 1] == '\\') I++;
+                Out += V[I];
+            }
+            return Out;
+        }
+
+        bool ParseDouble(const std::string& S, double& Out)
+        {
+            if (S.empty()) return false;
+            char* End = nullptr;
+            Out = std::strtod(S.c_str(), &End);
+            return End != S.c_str() && *End == '\0' && std::isfinite(Out);
+        }
+
+        bool ParseFloats(const std::string& S, std::vector<double>& Out)
+        {
+            Out.clear();
+            std::istringstream In(S);
+            std::string Tok;
+            while (In >> Tok)
+            {
+                double V;
+                if (!ParseDouble(Tok, V)) return false;
+                Out.push_back(V);
+            }
+            return !Out.empty();
+        }
+
+        struct Entry
+        {
+            std::string Gdf, Name, File, Parent;
+            size_t Root = 0, Line = 0;
+            std::vector<std::pair<std::string, std::string>> Fields;
+            const std::string* Get(const char* Key) const
+            {
+                for (const auto& F : Fields)
+                    if (F.first == Key) return &F.second;
+                return nullptr;
+            }
+            std::string Value(const char* Key) const
+            {
+                const std::string* V = Get(Key);
+                return V ? *V : std::string();
+            }
+            std::string Id() const { return (Gdf.empty() ? std::string("unresolved") : Gdf) + ":" + Name; }
+        };
+
+        // ---- the context a run keeps
+
+        struct Context
+        {
+            const Inputs& In;
+            Result R;
+            std::vector<Entry> Entries;
+            std::map<std::pair<std::string, std::string>, std::vector<size_t>> ByGdfName;   // (lower gdf, lower name)
+            std::map<std::string, std::vector<size_t>> ByName;                              // lower name
+            std::map<std::string, std::unique_ptr<Awi::Schema>> Schemas;                    // by gdf; null: not available
+            std::set<std::string> SchemaWhy;
+            std::set<std::string> FailedEntries;
+            std::map<std::string, std::shared_ptr<Thumb>> Thumbs;
+            std::set<std::string> Unjudged;     // counters for the notes
+            size_t UnresolvedNoDb = 0, SlotImageNotInOutput = 0, UnjudgedRange = 0;
+            bool HaveAwi = false;
+
+            explicit Context(const Inputs& I) : In(I) {}
+
+            void Judged(const char* Check) { R.Checks[Check].Judged++; }
+            void Incomplete(const std::string& Check, const std::string& Why)
+            {
+                for (const auto& I : R.Incomplete)
+                    if (I.first == Check) return;
+                R.Incomplete.emplace_back(Check, Why);
+            }
+            void Add(const char* Check, const std::string& Asset, Severity S, const std::string& Detail)
+            {
+                R.Findings.push_back({ Check, Asset, S, Detail });
+                CheckStat& C = R.Checks[Check];
+                if (S == Severity::Failure)
+                {
+                    C.Failures++;
+                    R.Failures++;
+                    FailedEntries.insert(Asset);
+                }
+                else if (S == Severity::Warning)
+                {
+                    C.Warnings++;
+                    R.Warnings++;
+                }
+            }
+            void Fail(const char* Check, const Entry& E, const std::string& Detail) { Add(Check, E.Id(), Severity::Failure, Detail); }
+            void Warn(const char* Check, const Entry& E, const std::string& Detail) { Add(Check, E.Id(), Severity::Warning, Detail); }
+
+            const Awi::Schema* SchemaFor(const std::string& Gdf)
+            {
+                const auto It = Schemas.find(Gdf);
+                if (It != Schemas.end()) return It->second.get();
+                std::unique_ptr<Awi::Schema> S;
+                if (!In.ModToolsRoot.empty())
+                {
+                    auto Fresh = std::make_unique<Awi::Schema>();
+                    std::string Why;
+                    if (Awi::Load(In.ModToolsRoot, Gdf, *Fresh, Why)) S = std::move(Fresh);
+                    else SchemaWhy.insert(Gdf + ": " + Why);
+                }
+                const Awi::Schema* Raw = S.get();
+                Schemas[Gdf] = std::move(S);
+                if (Raw != nullptr) HaveAwi = true;
+                return Raw;
+            }
+
+            const Entry* Find(const std::string& Gdf, const std::string& Name) const
+            {
+                const auto It = ByGdfName.find({ Lower(Gdf), Lower(Name) });
+                return It == ByGdfName.end() || It->second.empty() ? nullptr : &Entries[It->second.front()];
+            }
+        };
+
+        // ---- check 1: the GDT text
+
+        void ReadGdt(Context& C, size_t RootIndex, const fs::path& File, const std::string& Rel)
+        {
+            const std::string Asset = "file:" + Rel;
+            std::ifstream In(File, std::ios::binary);
+            if (!In)
+            {
+                C.Add("gdt.syntax", Asset, Severity::Failure, "cannot read the file");
+                return;
+            }
+            std::ostringstream Os;
+            Os << In.rdbuf();
+            std::string Text = Os.str();
+            C.Judged("gdt.syntax");
+            C.Judged("gdt.bom");
+            if (Text.size() >= 3 && static_cast<unsigned char>(Text[0]) == 0xEF && static_cast<unsigned char>(Text[1]) == 0xBB && static_cast<unsigned char>(Text[2]) == 0xBF)
+            {
+                C.Add("gdt.bom", Asset, Severity::Failure, "starts with a UTF-8 BOM (the format is UTF-8 without one)");
+                Text.erase(0, 3);
+            }
+            C.Judged("gdt.empty");
+            if (Text.empty())
+            {
+                C.Add("gdt.empty", Asset, Severity::Failure, "the file holds nothing (0 bytes): there is nothing to judge, and a file that gives nothing is not a pass");
+                return;
+            }
+            const size_t EntriesBefore = C.Entries.size();
+
+            std::vector<std::string> Lines;
+            size_t BareLf = 0;
+            {
+                size_t From = 0;
+                while (From < Text.size())
+                {
+                    size_t To = Text.find('\n', From);
+                    const bool Last = To == std::string::npos;
+                    if (Last) To = Text.size();
+                    std::string Line = Text.substr(From, To - From);
+                    if (!Last)
+                    {
+                        if (!Line.empty() && Line.back() == '\r') Line.pop_back();
+                        else BareLf++;
+                    }
+                    Lines.push_back(std::move(Line));
+                    From = To + 1;
+                }
+            }
+            if (BareLf > 0) C.Add("gdt.syntax", Asset, Severity::Failure, std::format("{} line(s) end in LF alone (the format is CRLF)", BareLf));
+            if (!Text.empty() && Text.back() != '\n') C.Add("gdt.syntax", Asset, Severity::Warning, "the file does not end with a line break");
+
+            enum class St { Top, Header, Open, Body } State = St::Top;
+            bool Opened = false, Closed = false;
+            Entry Cur;
+            size_t Errors = 0;
+            std::string PrevName, PrevKey;
+            bool OrderWarnedEntries = false;
+            std::set<std::string> NamesInFile;
+            const auto SyntaxError = [&](size_t N, const std::string& What) {
+                if (++Errors <= 5) C.Add("gdt.syntax", Asset, Severity::Failure, std::format("line {}: {}", N, What));
+            };
+            for (size_t I = 0; I < Lines.size(); I++)
+            {
+                const std::string& L = Lines[I];
+                const size_t N = I + 1;
+                if (L.empty() && I + 1 == Lines.size()) continue;      // the text after the last line break
+                if (State == St::Top)
+                {
+                    if (!Opened)
+                    {
+                        if (L != "{") SyntaxError(N, "the file must open with a line holding only {");
+                        Opened = true;
+                        continue;
+                    }
+                    if (L == "}")
+                    {
+                        Closed = true;
+                        continue;
+                    }
+                    if (Closed)
+                    {
+                        SyntaxError(N, "text after the closing }");
+                        continue;
+                    }
+                    // \t"name" ( "gdf.gdf" )   or   \t"name" [ "parent" ]
+                    bool Good = false;
+                    if (L.size() > 3 && L[0] == '\t' && L[1] == '"')
+                    {
+                        const size_t Q = L.find('"', 2);
+                        if (Q != std::string::npos && Q > 2)
+                        {
+                            const std::string Rest = L.substr(Q + 1);
+                            const size_t Open = Rest.compare(0, 4, " ( \"") == 0 ? 4 : Rest.compare(0, 4, " [ \"") == 0 ? 4 : 0;
+                            if (Open != 0)
+                            {
+                                const bool Paren = Rest[1] == '(';
+                                const std::string Tail = Paren ? "\" )" : "\" ]";
+                                if (Rest.size() > Open + Tail.size() && Rest.compare(Rest.size() - Tail.size(), Tail.size(), Tail) == 0)
+                                {
+                                    const std::string Inner = Rest.substr(Open, Rest.size() - Open - Tail.size());
+                                    if (Inner.find('"') == std::string::npos && !Inner.empty())
+                                    {
+                                        Cur = Entry();
+                                        Cur.Name = L.substr(2, Q - 2);
+                                        Cur.File = Rel;
+                                        Cur.Root = RootIndex;
+                                        Cur.Line = N;
+                                        if (Paren)
+                                        {
+                                            Cur.Gdf = Inner;
+                                            if (Cur.Gdf.size() > 4 && Cur.Gdf.compare(Cur.Gdf.size() - 4, 4, ".gdf") == 0) Cur.Gdf.resize(Cur.Gdf.size() - 4);
+                                            else SyntaxError(N, "the type must end in .gdf: " + Inner);
+                                        }
+                                        else Cur.Parent = Inner;
+                                        Good = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (!Good)
+                    {
+                        SyntaxError(N, "expected a tab, the quoted name, then ( \"x.gdf\" ) or [ \"parent\" ]");
+                        continue;
+                    }
+                    State = St::Open;
+                    PrevKey.clear();
+                    continue;
+                }
+                if (State == St::Open)
+                {
+                    if (L != "\t{") SyntaxError(N, "expected a tab and { after the entry header");
+                    State = St::Body;
+                    continue;
+                }
+                // body
+                if (L == "\t}")
+                {
+                    // entry done
+                    if (!Cur.Gdf.empty() || !Cur.Parent.empty())
+                    {
+                        if (!PrevName.empty() && Cur.Name < PrevName && !OrderWarnedEntries)
+                        {
+                            OrderWarnedEntries = true;
+                            C.Add("gdt.order", Asset, Severity::Warning, std::format("entry \"{}\" (line {}) comes after \"{}\": entries are written in ordinal name order", Cur.Name, Cur.Line, PrevName));
+                        }
+                        C.Judged("gdt.order");
+                        PrevName = Cur.Name;
+                        const std::string Key = Lower(Cur.Name);
+                        if (!NamesInFile.insert(Key).second)
+                            C.Add("gdt.duplicate_name", Asset, Severity::Failure, std::format("name \"{}\" is defined twice in this file (names are unique case-insensitively, G3)", Cur.Name));
+                        C.Judged("gdt.duplicate_name");
+                        C.Entries.push_back(Cur);
+                    }
+                    State = St::Top;
+                    continue;
+                }
+                // \t\t"key" "value"
+                bool Good = false;
+                if (L.size() > 6 && L[0] == '\t' && L[1] == '\t' && L[2] == '"')
+                {
+                    const size_t KEnd = L.find('"', 3);
+                    if (KEnd != std::string::npos && L.compare(KEnd + 1, 2, " \"") == 0 && L.back() == '"' && L.size() >= KEnd + 4)
+                    {
+                        const std::string Key = L.substr(3, KEnd - 3);
+                        const std::string Value = L.substr(KEnd + 3, L.size() - KEnd - 4);
+                        if (Value.find('"') != std::string::npos)
+                            C.Add("gdt.unsafe_value", Cur.Id(), Severity::Failure, std::format("line {}: the value of {} holds a double quote (nothing is escaped, G2)", N, Key));
+                        C.Judged("gdt.unsafe_value");
+                        if (!PrevKey.empty() && KeyLess(Key, PrevKey))
+                            C.Add("gdt.order", Cur.Id(), Severity::Warning, std::format("line {}: key {} comes after {} (keys are written sorted, case aside)", N, Key, PrevKey));
+                        PrevKey = Key;
+                        Cur.Fields.emplace_back(Key, Value);
+                        Good = true;
+                    }
+                }
+                if (!Good) SyntaxError(N, "expected two tabs, a quoted key and a quoted value (a value with a line break breaks the file)");
+            }
+            if (State != St::Top) SyntaxError(Lines.size(), "the file ends inside an entry");
+            if (Opened && !Closed) SyntaxError(Lines.size(), "the file does not end with a line holding only }");
+            if (Errors > 5) C.Add("gdt.syntax", Asset, Severity::Failure, std::format("{} further syntax errors not listed", Errors - 5));
+            if (C.Entries.size() == EntriesBefore) C.Add("gdt.empty", Asset, Severity::Failure, "the file holds no entries: there is nothing to judge, and a file that gives nothing is not a pass");
+        }
+
+        // ---- image headers
+
+        uint32_t U16(const uint8_t* P, bool Big) { return Big ? (uint32_t(P[0]) << 8 | P[1]) : (uint32_t(P[1]) << 8 | P[0]); }
+        uint32_t U32(const uint8_t* P, bool Big)
+        {
+            return Big ? (uint32_t(P[0]) << 24 | uint32_t(P[1]) << 16 | uint32_t(P[2]) << 8 | P[3]) : (uint32_t(P[3]) << 24 | uint32_t(P[2]) << 16 | uint32_t(P[1]) << 8 | P[0]);
+        }
+    }
+
+    const char* SeverityName(Severity S)
+    {
+        return S == Severity::Failure ? "failure" : S == Severity::Warning ? "warning" : "info";
+    }
+
+    ImageInfo ReadImageHeader(const std::function<bool(uint64_t, void*, size_t)>& Read)
+    {
+        ImageInfo Out;
+        uint8_t Head[32] = {};
+        if (!Read(0, Head, 8))
+        {
+            Out.Why = "the file is shorter than a header";
+            return Out;
+        }
+        if (std::memcmp(Head, "\x89PNG\r\n\x1a\n", 8) == 0)
+        {
+            Out.Container = "png";
+            if (!Read(8, Head, 8) || std::memcmp(Head + 4, "IHDR", 4) != 0)
+            {
+                Out.Why = "PNG without an IHDR chunk";
+                return Out;
+            }
+            if (U32(Head, true) != 13)
+            {
+                Out.Why = std::format("PNG IHDR chunk length is {}, not 13", U32(Head, true));
+                return Out;
+            }
+            uint8_t Ihdr[13] = {};
+            if (!Read(16, Ihdr, 13))
+            {
+                Out.Why = "PNG IHDR is cut short";
+                return Out;
+            }
+            Out.Width = U32(Ihdr, true);
+            Out.Height = U32(Ihdr + 4, true);
+            if (Out.Width == 0 || Out.Height == 0)
+            {
+                Out.Why = "PNG with a zero width or height";
+                return Out;
+            }
+            Out.BitsPerChannel = Ihdr[8];
+            switch (Ihdr[9])
+            {
+            case 0: Out.Channels = 1; break;
+            case 2: Out.Channels = 3; break;
+            case 4: Out.Channels = 2; break;
+            case 6: Out.Channels = 4; break;
+            default: Out.Why = "an indexed PNG (colour type 3) has no channel count of its own"; return Out;
+            }
+            Out.Ok = true;
+            return Out;
+        }
+        const bool Little = Head[0] == 'I' && Head[1] == 'I', Big = Head[0] == 'M' && Head[1] == 'M';
+        if (!Little && !Big)
+        {
+            Out.Why = "neither a TIFF nor a PNG";
+            return Out;
+        }
+        Out.Container = "tiff";
+        const uint32_t Magic = U16(Head + 2, Big);
+        if (Magic != 42)
+        {
+            Out.Why = Magic == 43 ? "BigTIFF is not read" : "bad TIFF magic";
+            return Out;
+        }
+        const uint64_t Ifd = U32(Head + 4, Big);
+        uint8_t Count[2];
+        if (!Read(Ifd, Count, 2))
+        {
+            Out.Why = "the TIFF directory is past the end of the file";
+            return Out;
+        }
+        const uint32_t N = U16(Count, Big);
+        std::vector<uint8_t> Tags(static_cast<size_t>(N) * 12);
+        if (N == 0 || !Read(Ifd + 2, Tags.data(), Tags.size()))     // 64-bit: Ifd + 2 cannot wrap
+        {
+            Out.Why = "the TIFF directory is cut short";
+            return Out;
+        }
+        uint32_t Samples = 1;
+        bool HaveW = false, HaveH = false;
+        // BitsPerSample and SampleFormat hold one value per sample: inline in the entry when they fit in 4 bytes, else through a pointer
+        struct Array { bool Present = false; uint32_t Count = 0; const uint8_t* Cell = nullptr; };
+        Array BitsTag, FormatTag;
+        for (uint32_t I = 0; I < N; I++)
+        {
+            const uint8_t* T = &Tags[static_cast<size_t>(I) * 12];
+            const uint32_t Tag = U16(T, Big), Type = U16(T + 2, Big), Cnt = U32(T + 4, Big);
+            const auto Scalar = [&]() { return Type == 3 ? U16(T + 8, Big) : U32(T + 8, Big); };
+            switch (Tag)
+            {
+            case 256: Out.Width = Scalar(); HaveW = true; break;
+            case 257: Out.Height = Scalar(); HaveH = true; break;
+            case 258: BitsTag = { true, Cnt, T }; break;
+            case 277: Samples = Scalar(); break;
+            case 339: FormatTag = { true, Cnt, T }; break;
+            default: break;
+            }
+        }
+        if (!HaveW || !HaveH)
+        {
+            Out.Why = "the TIFF has no width or height tag";
+            return Out;
+        }
+        if (Out.Width == 0 || Out.Height == 0)
+        {
+            Out.Why = "TIFF with a zero width or height";
+            return Out;
+        }
+        if (Samples == 0 || Samples > 16)
+        {
+            Out.Why = std::format("TIFF with {} samples per pixel", Samples);
+            return Out;
+        }
+        const auto Values = [&](const Array& A, uint32_t Default, std::vector<uint32_t>& Into) {
+            Into.clear();
+            if (!A.Present)
+            {
+                Into.assign(Samples, Default);
+                return true;
+            }
+            if (A.Count == 0 || A.Count > 64) return false;
+            if (A.Count * 2 <= 4)
+                for (uint32_t K = 0; K < A.Count; K++) Into.push_back(U16(A.Cell + 8 + 2 * K, Big));
+            else
+            {
+                std::vector<uint8_t> Raw(static_cast<size_t>(A.Count) * 2);
+                if (!Read(U32(A.Cell + 8, Big), Raw.data(), Raw.size())) return false;
+                for (uint32_t K = 0; K < A.Count; K++) Into.push_back(U16(Raw.data() + 2 * K, Big));
+            }
+            if (Into.size() == 1) Into.assign(Samples, Into[0]);
+            return Into.size() == Samples;
+        };
+        std::vector<uint32_t> Bits, Format;
+        if (!Values(BitsTag, 1, Bits))
+        {
+            Out.Why = "BitsPerSample could not be read for every sample";
+            return Out;
+        }
+        if (!Values(FormatTag, 1, Format))
+        {
+            Out.Why = "SampleFormat could not be read for every sample";
+            return Out;
+        }
+        for (uint32_t B : Bits)
+            if (B != Bits[0])
+            {
+                Out.Why = "the samples have different bit depths";
+                return Out;
+            }
+        for (uint32_t F : Format)
+        {
+            if (F != Format[0])
+            {
+                Out.Why = "the samples have different sample formats";
+                return Out;
+            }
+            if (F != 1 && F != 3)
+            {
+                Out.Why = std::format("sample format {} (signed or undefined data); the sources are unsigned integer or float", F);
+                return Out;
+            }
+        }
+        Out.BitsPerChannel = Bits[0];
+        Out.Channels = Samples;
+        Out.Float = Format[0] == 3;
+        Out.Ok = true;
+        return Out;
+    }
+
+    ImageInfo ReadImageHeaderFile(const fs::path& File)
+    {
+        std::ifstream In(File, std::ios::binary);
+        if (!In)
+        {
+            ImageInfo Out;
+            Out.Why = "cannot open the file";
+            return Out;
+        }
+        return ReadImageHeader([&](uint64_t At, void* Into, size_t Size) {
+            In.clear();
+            In.seekg(static_cast<std::streamoff>(At));
+            In.read(static_cast<char*>(Into), static_cast<std::streamsize>(Size));
+            return static_cast<size_t>(In.gcount()) == Size;
+        });
+    }
+
+    // ---- pixel statistics
+
+    Thumb MakeThumb(const Rgba8Image& Image)
+    {
+        Thumb T;
+        if (!Image.IsValid()) return T;
+        T.Width = T.Height = kThumb;
+        T.Rgba.resize(static_cast<size_t>(kThumb) * kThumb * 4);
+        for (uint32_t Y = 0; Y < kThumb; Y++)
+            for (uint32_t X = 0; X < kThumb; X++)
+            {
+                const size_t SX = std::min<size_t>(Image.Width - 1, (static_cast<uint64_t>(X) * 2 + 1) * Image.Width / (2 * kThumb));
+                const size_t SY = std::min<size_t>(Image.Height - 1, (static_cast<uint64_t>(Y) * 2 + 1) * Image.Height / (2 * kThumb));
+                std::memcpy(&T.Rgba[(static_cast<size_t>(Y) * kThumb + X) * 4], &Image.Pixels[(SY * Image.Width + SX) * 4], 4);
+            }
+        return T;
+    }
+
+    NormalStat NormalBlue(const Thumb& T)
+    {
+        NormalStat S;
+        double Sum = 0;
+        for (size_t I = 0; I + 3 < T.Rgba.size(); I += 4)
+        {
+            const double X = T.Rgba[I] / 255.0 * 2 - 1, Y = T.Rgba[I + 1] / 255.0 * 2 - 1;
+            const double Z = std::sqrt(std::max(0.0, 1 - X * X - Y * Y));
+            const double Expect = (Z + 1) / 2 * 255;
+            const double Diff = std::fabs(T.Rgba[I + 2] - Expect);
+            Sum += Diff;
+            S.Max = std::max(S.Max, Diff);
+            S.Pixels++;
+        }
+        S.MeanAbs = S.Pixels ? Sum / static_cast<double>(S.Pixels) : 0;
+        return S;
+    }
+
+    RangeStat DiffuseRange(const Thumb& T)
+    {
+        RangeStat S;
+        for (size_t I = 0; I + 3 < T.Rgba.size(); I += 4)
+        {
+            const int Mean = (T.Rgba[I] + T.Rgba[I + 1] + T.Rgba[I + 2] + 1) / 3;
+            S.Pixels++;
+            if (Mean < kDiffuseLow) S.Below++;
+            else if (Mean > kDiffuseHigh) S.Above++;
+        }
+        return S;
+    }
+
+    SpecStat SpecularMode(const Thumb& T)
+    {
+        SpecStat S;
+        size_t Hist[256] = {};
+        for (size_t I = 0; I + 3 < T.Rgba.size(); I += 4)
+        {
+            const int Mean = (T.Rgba[I] + T.Rgba[I + 1] + T.Rgba[I + 2] + 1) / 3;
+            S.Pixels++;
+            if (Mean > 0)
+            {
+                Hist[Mean]++;
+                S.NonZero++;
+            }
+        }
+        size_t Best = 0;
+        for (int V = 1; V < 256; V++)
+            if (Hist[V] > Best)
+            {
+                Best = Hist[V];
+                S.Mode = V;
+            }
+        S.Share = S.NonZero ? static_cast<double>(Best) / static_cast<double>(S.NonZero) : 0;
+        return S;
+    }
+
+    MetalStat BareMetal(const Thumb& Diffuse, const Thumb& Specular)
+    {
+        MetalStat S;
+        if (Diffuse.Rgba.size() != Specular.Rgba.size()) return S;
+        for (size_t I = 0; I + 3 < Specular.Rgba.size(); I += 4)
+        {
+            const int Spec = (Specular.Rgba[I] + Specular.Rgba[I + 1] + Specular.Rgba[I + 2] + 1) / 3;
+            if (Spec < kMetalSpecMin) continue;
+            S.MetalPixels++;
+            const int Diff = (Diffuse.Rgba[I] + Diffuse.Rgba[I + 1] + Diffuse.Rgba[I + 2] + 1) / 3;
+            if (Diff > kBareMetalBlack) S.NotBlack++;
+        }
+        return S;
+    }
+
+    namespace
+    {
+        // ---- check 2: the .awi schema
+
+        bool IsNumberText(const std::string& V, double& Out) { return ParseDouble(V, Out); }
+
+        // Root / Dir / Value, only when Value is a relative path that stays under Root: an absolute path, a drive, or enough ".." to
+        // leave the layout does not "resolve under the layout".
+        bool UnderRoot(const fs::path& Root, const std::string& Dir, const std::string& Value, fs::path& Out)
+        {
+            const fs::path V(Value);
+            if (Value.empty() || V.has_root_name() || V.has_root_directory() || V.is_absolute()) return false;
+            Out = Root / fs::path(Dir) / V;
+            return Output::IsUnder(Root, Out);
+        }
+
+        void CheckSchema(Context& C, const Entry& E, const std::string& RootText)
+        {
+            if (E.Name.size() > kNameLimit)
+                C.Warn("awi.name_length", E, std::format("the name is {} characters; 63 is a hypothesis (one proven case), not a measured limit", E.Name.size()));
+            C.Judged("awi.name_length");
+
+            C.Judged("awi.schema");
+            const Awi::Schema* S = C.SchemaFor(E.Gdf);
+            if (S == nullptr)
+            {
+                // with no Mod Tools root at all the run is incomplete (Run says so); with one, an entry whose GDF has no readable awi
+                // could not be judged, which is a failure
+                if (!C.In.ModToolsRoot.empty())
+                    C.Fail("awi.schema", E, std::format("no readable deffiles\\{}.awi under the Mod Tools root: this entry's keys cannot be judged", E.Gdf));
+                return;
+            }
+            for (const auto& [Key, Value] : E.Fields)
+            {
+                const Awi::Entry* D = S->Find(Key);
+                C.Judged("awi.unknown_key");
+                if (D == nullptr)
+                {
+                    C.Fail("awi.unknown_key", E, std::format("{}.awi does not declare the key \"{}\"", E.Gdf, Key));
+                    continue;
+                }
+                double V = 0;
+                switch (D->K)
+                {
+                case Awi::Kind::Float:
+                case Awi::Kind::Int:
+                {
+                    if (D->RangeUnknown) C.UnjudgedRange++;
+                    else C.Judged("awi.range");
+                    if (!IsNumberText(Value, V) || (D->K == Awi::Kind::Int && V != std::floor(V)))
+                    {
+                        C.Fail("awi.type", E, std::format("{} = \"{}\" is not {}", Key, Value, D->K == Awi::Kind::Int ? "an integer" : "a number"));
+                        break;
+                    }
+                    if ((D->HasMin && V < D->Min) || (D->HasMax && V > D->Max))
+                        C.Fail("awi.range", E, std::format("{} = {} is outside {}..{}", Key, Value, D->HasMin ? std::format("{}", D->Min) : "-", D->HasMax ? std::format("{}", D->Max) : "-"));
+                    break;
+                }
+                case Awi::Kind::CheckBox:
+                    if (Value != "0" && Value != "1") C.Fail("awi.type", E, std::format("{} = \"{}\" is a checkbox: 0 or 1", Key, Value));
+                    break;
+                case Awi::Kind::Color:
+                {
+                    std::vector<double> Parts;
+                    if (!ParseFloats(Value, Parts) || (Parts.size() != 3 && Parts.size() != 4))
+                        C.Fail("awi.type", E, std::format("{} = \"{}\" is a colour: three or four numbers", Key, Value));
+                    break;
+                }
+                case Awi::Kind::Combo:
+                    if (D->OptionsKnown) C.Judged("awi.combo");
+                    if (D->OptionsKnown && !Awi::Schema::HasOption(*D, Value))
+                        C.Fail("awi.combo", E, std::format("{} = \"{}\" is not one of the {} options {}.awi gives", Key, Value, D->Options.size(), E.Gdf));
+                    break;
+                case Awi::Kind::AssetCombo:
+                {
+                    if (Value.empty() || Value[0] == '$' || D->Target.empty()) break;
+                    C.Judged("awi.reference");
+                    if (const Entry* T = C.Find(D->Target, Value); T != nullptr) break;
+                    // defined in the output with another type?
+                    const auto Other = C.ByName.find(Lower(Value));
+                    if (Other != C.ByName.end() && !Other->second.empty())
+                    {
+                        bool Right = false;
+                        for (size_t I : Other->second) Right = Right || Lower(C.Entries[I].Gdf) == Lower(D->Target);
+                        if (!Right)
+                        {
+                            C.Fail("awi.reference_type", E, std::format("{} names \"{}\", which is a {} in this output; {}.awi wants a {}", Key, Value, C.Entries[Other->second.front()].Gdf, E.Gdf, D->Target));
+                            break;
+                        }
+                    }
+                    if (C.In.Held == nullptr) { C.UnresolvedNoDb++; break; }
+                    if (C.In.Held->Contains(D->Target, Value)) break;
+                    const std::vector<std::string> Types = C.In.Held->TypesOf(Value);
+                    if (!Types.empty() && C.In.Held->HasTypes())
+                        C.Fail("awi.reference_type", E, std::format("{} names \"{}\", which the gdt.db holds as {}; {}.awi wants a {}", Key, Value, Types.front(), E.Gdf, D->Target));
+                    else
+                        C.Warn("awi.reference_unresolved", E, std::format("{} names {} \"{}\", which is in no GDT of this output and not in the gdt.db", Key, D->Target, Value));
+                    break;
+                }
+                case Awi::Kind::XModel:
+                case Awi::Kind::Path:
+                {
+                    if (Value.empty()) break;
+                    C.Judged("awi.file");
+                    std::string Rel = D->RelativePath;
+                    std::replace(Rel.begin(), Rel.end(), '/', '\\');
+                    fs::path File;
+                    std::error_code Ec;
+                    if (!UnderRoot(fs::path(RootText), Rel, Unescape(Value), File) || !fs::is_regular_file(File, Ec))
+                        C.Fail("awi.file", E, std::format("{} = \"{}\" does not resolve to a file under the layout root ({}{}); an absolute path or a .. that leaves the root does not count", Key, Value, Rel, Unescape(Value)));
+                    break;
+                }
+                default: break;
+                }
+            }
+            // required: the keys the later checks and the Mod Tools cannot do without. APE's .awi has no required marker.
+            const auto Required = [&](const char* Key) {
+                C.Judged("awi.required");
+                const std::string* V = E.Get(Key);
+                if (V == nullptr || V->empty()) C.Fail("awi.required", E, std::format("{} has no \"{}\"", E.Gdf, Key));
+            };
+            if (Lower(E.Gdf) == "image")
+            {
+                Required("semantic");
+                if (E.Value("type") != "composite") Required("baseImage");
+            }
+            else if (Lower(E.Gdf) == "xmodel") Required("filename");
+            else if (Lower(E.Gdf) == "material") Required("materialType");
+        }
+
+        // ---- images
+
+        std::shared_ptr<Thumb> ThumbOf(Context& C, const fs::path& File, const Entry& E)
+        {
+            const std::string Key = Lower(File.generic_string());
+            if (const auto It = C.Thumbs.find(Key); It != C.Thumbs.end()) return It->second;
+            Rgba8Image Image;
+            std::string Why;
+            std::shared_ptr<Thumb> T;
+            if (LoadRgba8(File, Image, Why))
+            {
+                T = std::make_shared<Thumb>(MakeThumb(Image));
+                C.R.ImagesDecoded++;
+            }
+            else C.Fail("image.decode", E, std::format("the pixels of {} could not be read ({}); the pixel rules cannot be judged", File.filename().string(), Why));
+            C.Thumbs[Key] = T;
+            return T;
+        }
+
+        std::vector<int> ChannelsFor(const std::string& Semantic)
+        {
+            if (Semantic == "glossMap" || Semantic == "occlusionMap" || Semantic == "revealMap" || Semantic == "thicknessMap" || Semantic == "specularMask" || Semantic == "One Channel") return { 1 };
+            if (Semantic == "diffuseMap" || Semantic == "effectMap" || Semantic == "specularMap" || Semantic == "normalMap") return { 3, 4 };
+            if (Semantic == "Two Channel") return { 2 };
+            if (Semantic == "camoMap") return { 3 };
+            if (Semantic == "multipleMask" || Semantic == "2d") return { 3, 4 };
+            return {};
+        }
+
+        bool IsCompressed(const std::string& Method)
+        {
+            return !Method.empty() && Method != "uncompressed" && Method.rfind("R", 0) != 0;   // "compressed...", "BC7", "shared exponent"; the R8/R16 formats are not block compressed
+        }
+
+        void CheckImage(Context& C, const Entry& E)
+        {
+            C.R.Images++;
+            const std::string Semantic = E.Value("semantic");
+            const std::string Core = E.Value("coreSemantic"), Method = E.Value("compressionMethod");
+            const bool Composite = E.Value("type") == "composite";
+
+            // semantic table (I3): coreSemantic and compression
+            if (!Semantic.empty())
+            {
+                static const std::set<std::string> Known = { "diffuseMap", "effectMap", "specularMap", "normalMap", "glossMap", "occlusionMap", "revealMap", "thicknessMap", "specularMask", "One Channel" };
+                if (Known.count(Semantic))
+                {
+                    C.Judged("image.semantic_table");
+                    const Tc::Form F = Tc::FormOf(Semantic);
+                    if (Core != F.Core) C.Fail("image.semantic_table", E, std::format("coreSemantic \"{}\" for semantic {}; the stock table has {}", Core, Semantic, F.Core));
+                    const bool Colour = Semantic == "diffuseMap" || Semantic == "effectMap";
+                    const bool Ok = Method == F.Compression || Method == "uncompressed" || (Colour && Method.rfind("compressed ", 0) == 0);
+                    if (!Ok) C.Fail("image.semantic_table", E, std::format("compressionMethod \"{}\" for semantic {}; the stock table has \"{}\" (or uncompressed)", Method, Semantic, F.Compression));
+                }
+            }
+            if (const std::string* Srgb = E.Get("colorSRGB"); Srgb != nullptr && *Srgb != "0")
+                C.Fail("image.srgb", E, "colorSRGB is " + *Srgb + "; stock images are 0 (the file holds the display-encoded value)");
+            C.Judged("image.srgb");
+
+            if (Composite) return;
+            const std::string Base = Unescape(E.Value("baseImage"));
+            if (Base.empty()) return;     // awi.required said so
+
+            if (Lower(fs::path(Base).extension().string()) == ".dds") C.Fail("image.dds", E, "baseImage is a .dds; stock has no .dds sources (TIFF or PNG)");
+            C.Judged("image.dds");
+
+            const fs::path Root = C.In.Roots[E.Root];
+            fs::path File;
+            std::error_code Ec;
+            C.Judged("image.source");
+            if (!UnderRoot(Root, "", Base, File) || !fs::is_regular_file(File, Ec))
+            {
+                C.Fail("image.source", E, "baseImage does not resolve under the layout root (an absolute path or a .. that leaves it does not count): " + Base);
+                return;
+            }
+            const ImageInfo Info = ReadImageHeaderFile(File);
+            C.Judged("image.format");
+            if (!Info.Ok)
+            {
+                C.Fail("image.format", E, "header not read: " + Info.Why);
+                return;
+            }
+            if (Info.Float || (Info.BitsPerChannel != 8 && Info.BitsPerChannel != 16))
+                C.Fail("image.bit_depth", E, std::format("{}-bit {} {}; the sources are 8 or 16 bit integer", Info.BitsPerChannel, Info.Float ? "float" : "integer", Info.Container));
+            C.Judged("image.bit_depth");
+            const std::vector<int> Want = ChannelsFor(Semantic);
+            if (!Want.empty())
+            {
+                C.Judged("image.channels");
+                if (std::find(Want.begin(), Want.end(), static_cast<int>(Info.Channels)) == Want.end())
+                {
+                    std::string List;
+                    for (int W : Want) List += (List.empty() ? "" : " or ") + std::to_string(W);
+                    // a one-channel map stored in more channels is acceptable to read only when it is grey (R = G = B)
+                    bool Grey = false, Judged = false;
+                    if (Want.size() == 1 && Want[0] == 1 && Info.Channels > 1)
+                    {
+                        if (const auto T = ThumbOf(C, File, E); T && !T->Rgba.empty())
+                        {
+                            Judged = true;
+                            size_t Off = 0;
+                            for (size_t I = 0; I + 3 < T->Rgba.size(); I += 4)
+                                if (T->Rgba[I] != T->Rgba[I + 1] || T->Rgba[I] != T->Rgba[I + 2]) Off++;
+                            Grey = Off * 1000 <= T->Rgba.size() / 4;
+                        }
+                    }
+                    if (Grey)
+                        C.Warn("image.channels", E, std::format("{} channels for the one-channel semantic {} (expected {}); the pixels are grey (R = G = B), so a reader that takes one channel gets the same data", Info.Channels, Semantic, List));
+                    else
+                        C.Fail("image.channels", E, std::format("{} channel(s) for semantic {}; expected {}{}", Info.Channels, Semantic, List, Judged ? " (and the pixels are not grey)" : ""));
+                }
+            }
+            if ((Info.Width % 4 != 0 || Info.Height % 4 != 0) && IsCompressed(Method))
+                C.Fail("image.block_size", E, std::format("{}x{} with compressionMethod \"{}\": compressed images need width and height that are multiples of 4 (or mark it uncompressed)", Info.Width, Info.Height, Method));
+            C.Judged("image.block_size");
+
+            // pixel rules
+            if (Semantic == "normalMap" || Semantic == "diffuseMap" || Semantic == "specularMap")
+            {
+                const auto T = ThumbOf(C, File, E);
+                if (!T || T->Rgba.empty()) return;
+                if (Semantic == "normalMap")
+                {
+                    const NormalStat N = NormalBlue(*T);
+                    C.Judged("image.normal_z");
+                    if (N.MeanAbs > kNormalFail)
+                        C.Fail("image.normal_z", E, std::format("blue differs from the Z implied by red and green by {:.1f} on average (max {:.0f}); a normal map carries Z in blue (tolerance {:.0f})", N.MeanAbs, N.Max, kNormalFail));
+                    else if (N.MeanAbs > kNormalWarn)
+                        C.Warn("image.normal_z", E, std::format("blue is {:.1f} from the implied Z on average (max {:.0f}); above the {:.0f} of an 8-bit rebuild", N.MeanAbs, N.Max, kNormalWarn));
+                }
+                else if (Semantic == "diffuseMap")
+                {
+                    const RangeStat R = DiffuseRange(*T);
+                    C.Judged("rules.diffuse_range");
+                    const double Out = R.Pixels ? static_cast<double>(R.Below + R.Above) / static_cast<double>(R.Pixels) : 0;
+                    if (Out > kDiffuseOutShare)
+                        C.Warn("rules.diffuse_range", E, std::format("{:.1f}% of the pixels are below {} and {:.1f}% above {} (8-bit encoded mean); nothing was clamped. Pure metal is exempt by the rule and cannot be told apart here",
+                                                                     100.0 * static_cast<double>(R.Below) / static_cast<double>(R.Pixels), kDiffuseLow, 100.0 * static_cast<double>(R.Above) / static_cast<double>(R.Pixels), kDiffuseHigh));
+                }
+                else
+                {
+                    const SpecStat S = SpecularMode(*T);
+                    C.Judged("rules.specular_level");
+                    if (S.Pixels && static_cast<double>(S.NonZero) / static_cast<double>(S.Pixels) >= kSpecMinNonZero && S.Mode > 0 && S.Mode <= kSpecDielectricMax && std::abs(S.Mode - kSpecDielectric) > kSpecTolerance)
+                        C.Fail("rules.specular_level", E, std::format("the most common non-zero level is {} ({:.0f}% of them); a non-metal's specular is {}/255 (gold, copper and brass are exceptions this check cannot tell apart)", S.Mode, 100 * S.Share, kSpecDielectric));
+                }
+            }
+        }
+
+        // ---- check 3 and the rest of 4: a material
+
+        void CheckMaterial(Context& C, const Entry& E)
+        {
+            const std::string Type = E.Value("materialType");
+            const Tc::Techset* T = nullptr;
+            const bool HaveCatalog = C.In.Catalog != nullptr && C.In.Catalog->HasCatalog();
+            if (HaveCatalog)
+            {
+                C.Judged("material.type");
+                T = C.In.Catalog->Find(Type);
+                if (T == nullptr) C.Fail("material.type", E, std::format("materialType \"{}\" is not in the techset catalog", Type));
+                else
+                {
+                    C.Judged("material.camo");
+                    if (Type == "lit_weapon_camo" || T->HasTrait(Tc::Trait::Camo) || Lower(Type).find("camo") != std::string::npos)
+                        C.Fail("material.camo", E, std::format("materialType \"{}\" is a camo techset; the Mod Tools cannot register it (T-rule: never emit lit_weapon_camo or camoMap)", Type));
+                    if (Type == "effect_cloud_emissive_add") C.Fail("rules.forbidden_techset", E, "effect_cloud_emissive_add is not allowed");
+                    C.Judged("rules.forbidden_techset");
+                    if (Type.find("nocull") != std::string::npos || Type.find("transparent") != std::string::npos)
+                        C.Add("rules.costly_techset", E.Id(), Severity::Info, std::format("materialType \"{}\" is nocull or transparent: costly to draw", Type));
+                }
+            }
+
+            // image keys against the techset's slots
+            if (T != nullptr)
+            {
+                std::set<std::string> SlotKeys;
+                for (const Tc::Slot& S : T->Slots)
+                    if (!S.Key.empty()) SlotKeys.insert(S.Key);
+                // every key the catalog calls an image slot anywhere, and every awi asset-combo of type image
+                std::set<std::string> ImageKeys;
+                for (const Tc::Techset& O : C.In.Catalog->All())
+                    for (const Tc::Slot& S : O.Slots)
+                        if (!S.Key.empty()) ImageKeys.insert(S.Key);
+                const Awi::Schema* Schema = C.SchemaFor("material");
+                for (const auto& [Key, Value] : E.Fields)
+                {
+                    bool IsImageKey = ImageKeys.count(Key) != 0;
+                    if (!IsImageKey && Schema != nullptr)
+                        if (const Awi::Entry* D = Schema->Find(Key); D != nullptr && D->K == Awi::Kind::AssetCombo && Lower(D->Target) == "image") IsImageKey = true;
+                    // a slot's name used where the key differs (the M8 renames)
+                    if (!IsImageKey)
+                        for (const Tc::Slot& S : T->Slots)
+                            if (S.Name == Key && S.Key != Key && !S.Key.empty() && !Value.empty())
+                                C.Fail("material.slot_key", E, std::format("\"{}\" is the slot's name; the GDT key of that slot is \"{}\"", Key, S.Key));
+                    if (!IsImageKey || Value.empty()) continue;
+                    C.Judged("material.slot_key");
+                    const Tc::Slot* Slot = T->ByKey(Key);
+                    if (Slot == nullptr)
+                    {
+                        C.Fail("material.slot_key", E, std::format("{} = \"{}\" fills a key that is not a slot of {} (its slots: {})", Key, Value, Type,
+                                                                   [&] { std::string L; for (const std::string& K : SlotKeys) L += (L.empty() ? "" : ", ") + K; return L; }()));
+                        continue;
+                    }
+                    if (Slot->Default == Value) continue;
+                    const Entry* Img = C.Find("image", Value);
+                    if (Img == nullptr) { C.SlotImageNotInOutput++; continue; }
+                    C.Judged("material.slot_semantic");
+                    const std::string Semantic = Img->Value("semantic");
+                    if (!Tc::Accepts(*Slot, Semantic))
+                        C.Fail("material.slot_semantic", E, std::format("{} takes {} but image \"{}\" has semantic {}", Key, Slot->Semantic, Value, Semantic));
+                }
+            }
+
+            // surface type
+            {
+                const Awi::Schema* Schema = C.SchemaFor("material");
+                const std::string* Surface = E.Get("surfaceType");
+                if (Surface != nullptr)
+                {
+                    if (*Surface == "<none>")
+                    {
+                        C.Judged("material.surface_type");
+                        C.Fail("material.surface_type", E, "surfaceType is <none>. KNOWN FAILURE until Phase 2: the BO4/CW source carries surface flags (BO4: (flags>>20)&0x3F at +0x28) and this gate cannot read the source, so it assumes one was there");
+                    }
+                    else if (Schema != nullptr)
+                        if (const Awi::Entry* D = Schema->Find("surfaceType"); D != nullptr && D->OptionsKnown)
+                        {
+                            C.Judged("material.surface_type");
+                            if (!Awi::Schema::HasOption(*D, *Surface)) C.Fail("material.surface_type", E, std::format("surfaceType \"{}\" is not a combo value of material.awi", *Surface));
+                        }
+                }
+            }
+
+            // usage
+            if (const std::string* Usage = E.Get("usage"); Usage != nullptr)
+            {
+                C.Judged("material.usage");
+                if (*Usage != "<not in editor>")
+                {
+                    if (C.In.MapSources) C.Add("material.usage", E.Id(), Severity::Info, "usage \"" + *Usage + "\" with map sources in the output: the gate cannot tell whether a map draws this material");
+                    else C.Fail("material.usage", E, "usage \"" + *Usage + "\" on a material no map draws (usage is for map geometry only)");
+                }
+            }
+
+            // tint k/255
+            for (const auto& [Key, Value] : E.Fields)
+            {
+                if (Key.rfind("colorTint", 0) != 0 && Key != "transColorTint") continue;
+                std::vector<double> V;
+                if (!ParseFloats(Value, V) || V.size() < 3) continue;
+                C.Judged("material.tint");
+                for (size_t I = 0; I < 3; I++)
+                {
+                    const double K = std::round(V[I] * 255.0);
+                    const double Exact = K / 255.0;
+                    const double Scale = Exact > 0 ? std::pow(10.0, 5 - std::floor(std::log10(Exact))) : 1.0;
+                    const double Up = Exact > 0 ? std::ceil(Exact * Scale - 1e-9) / Scale : 0.0;
+                    if (std::fabs(V[I] * 255.0 - K) > 0.01 || std::fabs(V[I] - Up) > 1.01 / Scale)
+                    {
+                        C.Warn("material.tint", E, std::format("{} component {} = {} is not a k/255 step rounded up to 6 digits (nearest k = {:.0f}, {})", Key, I, V[I], K, Up));
+                        break;
+                    }
+                }
+            }
+
+            // levels and desaturation away from the default cost extra
+            if (const Awi::Schema* Schema = C.SchemaFor("material"); Schema != nullptr)
+                for (const auto& [Key, Value] : E.Fields)
+                {
+                    if (Key.rfind("levels", 0) != 0 && Key != "desaturationAmount") continue;
+                    const Awi::Entry* D = Schema->Find(Key);
+                    double V;
+                    if (D == nullptr || !D->HasDefault || !ParseDouble(Value, V)) continue;
+                    C.Judged("rules.costly_levels");
+                    if (V != D->Default) C.Warn("rules.costly_levels", E, std::format("{} = {} differs from the default {}: non-default levels or desaturation cost about 10% extra", Key, Value, D->Default));
+                }
+
+            // scroll and rotation rates (the u/v scroll amounts and rates and the rotation rate; other keys that hold the word
+            // are scales or speeds of one effect and are covered by the awi range check)
+            for (const auto& [Key, Value] : E.Fields)
+            {
+                const std::string K = Lower(Key);
+                const bool Scroll = K.rfind("uscroll", 0) == 0 || K.rfind("vscroll", 0) == 0 || K.rfind("uvscrollrate", 0) == 0;
+                const bool Rotation = K.rfind("uvrotationrate", 0) == 0;
+                if (!Scroll && !Rotation) continue;
+                double V;
+                if (!ParseDouble(Value, V)) continue;
+                C.Judged("rules.scroll_range");
+                const double Limit = Rotation ? kRotationMax : kScrollMax;
+                if (std::fabs(V) > Limit) C.Fail("rules.scroll_range", E, std::format("{} = {} is outside -{}..{}", Key, Value, Limit, Limit));
+            }
+        }
+
+        // diffuse and specular of one material: bare metal is black
+        void CheckBareMetal(Context& C, const Entry& E)
+        {
+            const std::string DiffName = E.Value("colorMap"), SpecName = E.Value("specColorMap");
+            if (DiffName.empty() || SpecName.empty()) return;
+            const Entry* D = C.Find("image", DiffName);
+            const Entry* S = C.Find("image", SpecName);
+            if (D == nullptr || S == nullptr || D->Value("semantic") != "diffuseMap" || S->Value("semantic") != "specularMap") return;
+            fs::path FD, FS;
+            std::error_code Ec;
+            if (!UnderRoot(C.In.Roots[D->Root], "", Unescape(D->Value("baseImage")), FD) || !UnderRoot(C.In.Roots[S->Root], "", Unescape(S->Value("baseImage")), FS) ||
+                !fs::is_regular_file(FD, Ec) || !fs::is_regular_file(FS, Ec))
+                return;     // image.source says so
+            const auto TD = ThumbOf(C, FD, *D), TS = ThumbOf(C, FS, *S);
+            if (!TD || !TS || TD->Rgba.empty() || TS->Rgba.empty()) return;
+            const MetalStat M = BareMetal(*TD, *TS);
+            C.Judged("rules.bare_metal");
+            if (M.MetalPixels < 64) return;
+            const double Share = static_cast<double>(M.NotBlack) / static_cast<double>(M.MetalPixels);
+            if (Share > kMetalFailShare)
+                C.Fail("rules.bare_metal", E, std::format("{:.0f}% of the {} metal-bright specular pixels (mean >= {}) have a diffuse above {}; bare metal's diffuse is black", 100 * Share, M.MetalPixels, kMetalSpecMin, kBareMetalBlack));
+            else if (Share > kMetalWarnShare)
+                C.Warn("rules.bare_metal", E, std::format("{:.0f}% of the {} metal-bright specular pixels (mean >= {}) have a diffuse above {}; bare metal's diffuse is black", 100 * Share, M.MetalPixels, kMetalSpecMin, kBareMetalBlack));
+        }
+    }
+
+    namespace
+    {
+        // [ "parent" ] entries: follow the chain (the same file first, then any file of the layout, then the gdt.db), merge the fields
+        // (a child overrides its parent) and give the entry the root ancestor's GDF, so it is validated like any other. A parent that is
+        // nowhere, a cycle or a chain deeper than 256 is a failure on every entry of the chain.
+        void ResolveParents(Context& C)
+        {
+            std::map<std::string, std::vector<size_t>> Names;
+            for (size_t I = 0; I < C.Entries.size(); I++) Names[Lower(C.Entries[I].Name)].push_back(I);
+            enum : int { Open = 0, Done = 2, Broken = 3 };
+            std::vector<int> State(C.Entries.size(), Open);
+            const auto Parent = [&](size_t I) -> size_t {
+                const Entry& E = C.Entries[I];
+                const auto It = Names.find(Lower(E.Parent));
+                if (It == Names.end()) return SIZE_MAX;
+                size_t Best = SIZE_MAX;
+                for (size_t P : It->second)
+                {
+                    if (P == I && It->second.size() > 1) continue;
+                    if (Best == SIZE_MAX) Best = P;
+                    if (C.Entries[P].File == E.File && C.Entries[P].Root == E.Root) { Best = P; break; }
+                }
+                return Best;
+            };
+            for (size_t I = 0; I < C.Entries.size(); I++)
+            {
+                if (C.Entries[I].Parent.empty() || State[I] != Open) continue;
+                C.Judged("gdt.parent");
+                std::vector<size_t> Chain{ I };
+                std::set<size_t> Seen{ I };
+                std::string Problem;
+                size_t Base = SIZE_MAX;        // an entry with its fields and GDF settled
+                std::string ExternalGdf;       // the last chain entry's parent exists only in the gdt.db
+                for (size_t Cur = I;;)
+                {
+                    const size_t P = Parent(Cur);
+                    if (P == SIZE_MAX)
+                    {
+                        const std::string& Name = C.Entries[Cur].Parent;
+                        std::vector<std::string> Types;
+                        if (C.In.Held != nullptr) Types = C.In.Held->TypesOf(Name);
+                        if (Types.size() == 1)
+                        {
+                            ExternalGdf = Types[0];
+                            if (ExternalGdf.size() > 4 && ExternalGdf.compare(ExternalGdf.size() - 4, 4, ".gdf") == 0) ExternalGdf.resize(ExternalGdf.size() - 4);
+                        }
+                        else
+                            Problem = Types.size() > 1 ? std::format("parent \"{}\" is in the gdt.db under several types", Name)
+                                                       : std::format("parent \"{}\" is in no GDT of this layout{}", Name, C.In.Held == nullptr ? " (the gdt.db was not read, so a stock parent cannot be looked up)" : " and not in the gdt.db");
+                        break;
+                    }
+                    if (Seen.count(P)) { Problem = std::format("the parent chain loops back to \"{}\"", C.Entries[P].Name); break; }
+                    if (State[P] == Broken) { Problem = std::format("parent \"{}\" is itself unresolvable", C.Entries[P].Name); break; }
+                    if (C.Entries[P].Parent.empty() || State[P] == Done) { Base = P; break; }
+                    if (Chain.size() >= 256) { Problem = "the parent chain is deeper than 256"; break; }
+                    Chain.push_back(P);
+                    Seen.insert(P);
+                    Cur = P;
+                }
+                if (!Problem.empty())
+                {
+                    for (size_t K : Chain)
+                    {
+                        State[K] = Broken;
+                        C.Fail("gdt.parent", C.Entries[K], Problem + "; the entry cannot be validated");
+                    }
+                    continue;
+                }
+                std::vector<std::pair<std::string, std::string>> Fields;
+                std::string Gdf;
+                if (Base != SIZE_MAX) { Fields = C.Entries[Base].Fields; Gdf = C.Entries[Base].Gdf; }
+                else
+                {
+                    Gdf = ExternalGdf;
+                    C.Incomplete("gdt.parent", std::format("a parent exists only in the gdt.db (as {}): its fields are not readable here, so the entries derived from it are validated without them", Gdf));
+                }
+                for (size_t K = Chain.size(); K-- > 0;)
+                {
+                    Entry& E = C.Entries[Chain[K]];
+                    for (const auto& F : E.Fields)
+                    {
+                        const auto At = std::find_if(Fields.begin(), Fields.end(), [&](const auto& X) { return X.first == F.first; });
+                        if (At != Fields.end()) At->second = F.second;
+                        else Fields.push_back(F);
+                    }
+                    E.Fields = Fields;
+                    E.Gdf = Gdf;
+                    State[Chain[K]] = Done;
+                }
+            }
+        }
+
+        struct Scan
+        {
+            std::vector<std::pair<size_t, fs::path>> Files;
+            std::vector<std::pair<std::string, std::string>> Errors;    // path, reason
+        };
+
+        // Every .gdt under a root. A folder that cannot be listed is recorded with its path and the walk goes on with the others.
+        void ScanRoot(size_t RootIndex, const fs::path& Root, Scan& Out)
+        {
+            std::vector<fs::path> Pending{ Root };
+            while (!Pending.empty())
+            {
+                const fs::path Dir = Pending.back();
+                Pending.pop_back();
+                std::error_code Ec;
+                fs::directory_iterator It(Dir, Ec), End;
+                if (Ec)
+                {
+                    Out.Errors.emplace_back(Dir.generic_string(), Ec.message());
+                    continue;
+                }
+                for (; It != End; It.increment(Ec))
+                {
+                    if (Ec) break;
+                    std::error_code Ec2;
+                    if (It->is_directory(Ec2)) Pending.push_back(It->path());
+                    else if (It->is_regular_file(Ec2) && Lower(It->path().extension().string()) == ".gdt") Out.Files.emplace_back(RootIndex, It->path());
+                    if (Ec2) Out.Errors.emplace_back(It->path().generic_string(), Ec2.message());
+                }
+                if (Ec) Out.Errors.emplace_back(Dir.generic_string(), "the listing stopped: " + Ec.message());
+            }
+        }
+
+        // The identity of a set of GDT files: SHA-256 over "<root index>/<relative path>", a NUL, the file's SHA-256 and a newline, in
+        // (root index, path) order, so the same files give the same value whichever way they were found.
+        bool HashRel(const std::vector<fs::path>& Roots, std::vector<std::pair<size_t, std::string>> Rels, std::string& Hash, std::string& Error)
+        {
+            std::sort(Rels.begin(), Rels.end());
+            std::string All;
+            for (const auto& [R, Rel] : Rels)
+            {
+                std::string Sha;
+                if (R >= Roots.size() || !Output::Sha256File(Roots[R] / fs::path(Rel), Sha))
+                {
+                    Error = "cannot read " + Rel;
+                    return false;
+                }
+                All += std::format("{}/{}", R, Rel) + '\0' + Sha + '\n';
+            }
+            Hash = Output::Sha256Hex(All);
+            return !Hash.empty();
+        }
+
+        bool HashFiles(const std::vector<fs::path>& Roots, const std::vector<std::pair<size_t, fs::path>>& Files, std::string& Hash, std::string& Error)
+        {
+            std::vector<std::pair<size_t, std::string>> Rels;
+            for (const auto& [R, F] : Files)
+            {
+                std::error_code Ec;
+                Rels.emplace_back(R, fs::relative(F, Roots[R], Ec).generic_string());
+            }
+            return HashRel(Roots, std::move(Rels), Hash, Error);
+        }
+    }
+
+    std::vector<fs::path> ResolveRoots(const fs::path& Out)
+    {
+        std::error_code Ec;
+        if (!fs::is_directory(Out, Ec)) return {};     // a typo'd folder is not a layout and is not silently read as one
+        if (fs::is_directory(Out / "bo3", Ec)) return { Out / "bo3" };
+        std::vector<fs::path> Found;
+        for (const auto& D : fs::directory_iterator(Out, Ec))
+            if (D.is_directory(Ec) && fs::is_directory(D.path() / "bo3", Ec)) Found.push_back(D.path() / "bo3");
+        std::sort(Found.begin(), Found.end());
+        if (!Found.empty()) return Found;
+        return { Out };
+    }
+
+    bool LayoutIdentity(const std::vector<fs::path>& Roots, std::string& Hash, size_t& Files, std::string& Error)
+    {
+        Scan S;
+        for (size_t R = 0; R < Roots.size(); R++) ScanRoot(R, Roots[R], S);
+        if (!S.Errors.empty())
+        {
+            Error = S.Errors.front().first + ": " + S.Errors.front().second;
+            return false;
+        }
+        std::sort(S.Files.begin(), S.Files.end());
+        Files = S.Files.size();
+        return HashFiles(Roots, S.Files, Hash, Error);
+    }
+
+    bool GateStillHolds(const std::string& Mode, const std::vector<std::string>& RootTexts, const std::vector<std::pair<size_t, std::string>>& Files,
+                        const std::string& Sha256, size_t Count, std::string& Why)
+    {
+        if (RootTexts.empty())
+        {
+            Why = "the gate names no layout root";
+            return false;
+        }
+        std::vector<fs::path> Roots;
+        for (const std::string& R : RootTexts)
+        {
+            std::error_code Ec;
+            if (!fs::is_directory(R, Ec))
+            {
+                Why = "the layout folder " + R + " cannot be re-read (it is not a folder now): the gate cannot be shown to describe the GDTs";
+                return false;
+            }
+            Roots.emplace_back(R);
+        }
+        std::vector<std::pair<size_t, std::string>> Rels;
+        if (Mode == "scan")
+        {
+            Scan S;
+            for (size_t R = 0; R < Roots.size(); R++) ScanRoot(R, Roots[R], S);
+            if (!S.Errors.empty())
+            {
+                Why = "the layout cannot be re-read: " + S.Errors.front().first + ": " + S.Errors.front().second;
+                return false;
+            }
+            for (const auto& [R, F] : S.Files)
+            {
+                std::error_code Ec;
+                Rels.emplace_back(R, fs::relative(F, Roots[R], Ec).generic_string());
+            }
+        }
+        else if (Mode == "listed")
+        {
+            if (Files.empty())
+            {
+                Why = "the gate names no GDT files (no gate.file rows), so its content cannot be re-verified";
+                return false;
+            }
+            Rels = Files;
+        }
+        else
+        {
+            Why = "the gate's mode \"" + Mode + "\" is not scan or listed";
+            return false;
+        }
+        std::string Hash, Error;
+        if (!HashRel(Roots, Rels, Hash, Error))
+        {
+            Why = "the layout cannot be re-read: " + Error;
+            return false;
+        }
+        if (Hash != Sha256 || Rels.size() != Count)
+        {
+            Why = std::format("the GDT files are not the ones the gate read ({} files now, {} then; the layout changed after the gate ran)", Rels.size(), Count);
+            return false;
+        }
+        return true;
+    }
+
+    bool ModToolsGdtFiles(const Output::Manifest& Listed, bool Loaded, const fs::path& Root, std::vector<fs::path>& Out, std::string& Why)
+    {
+        Out.clear();
+        if (!Loaded)
+        {
+            Why = "GrayWolf's manifest in the Mod Tools root did not load, so which GDTs this run wrote is unknown";
+            return false;
+        }
+        for (const auto& [Key, Entry] : Listed.All())
+        {
+            std::string Ext = fs::path(Entry.Path).extension().string();
+            for (char& Ch : Ext) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
+            if (Ext == ".gdt") Out.push_back(Root / Entry.Path);
+        }
+        if (Out.empty())
+        {
+            Why = "GrayWolf's manifest lists no .gdt file; the Mod Tools root is never scanned for them";
+            return false;
+        }
+        return true;
+    }
+
+    Result Run(const Inputs& In)
+    {
+        Context C(In);
+        try
+        {
+            std::string RootsText;
+            for (const fs::path& R : In.Roots) RootsText += (RootsText.empty() ? "" : "|") + fs::absolute(R).lexically_normal().generic_string();
+            C.R.RunRoots = RootsText;
+            C.R.Mode = (In.ListedOnly || !In.OnlyFiles.empty()) ? "listed" : "scan";
+
+            // the GDT files; any input that gives nothing is a failure
+            if (In.Roots.empty()) C.Add("gate.input", "gate", Severity::Failure, "no layout root: the input folder does not exist or none was given");
+            for (const fs::path& R : In.Roots)
+            {
+                std::error_code Ec;
+                if (!fs::is_directory(R, Ec)) C.Add("gate.input", "root:" + R.generic_string(), Severity::Failure, "the layout root is not a folder");
+            }
+            Scan S;
+            if (In.ListedOnly || !In.OnlyFiles.empty())
+            {
+                if (In.OnlyFiles.empty()) C.Add("gate.no_input", "gate", Severity::Failure, "the list of GDT files to check is empty");
+                for (const fs::path& F : In.OnlyFiles)
+                {
+                    bool Placed = false;
+                    for (size_t R = 0; R < In.Roots.size() && !Placed; R++)
+                        if (Output::IsUnder(In.Roots[R], F)) { S.Files.emplace_back(R, F); Placed = true; }
+                    if (!Placed) C.Add("gate.input", "file:" + F.generic_string(), Severity::Failure, "a listed GDT lies outside the layout roots and was not read");
+                }
+            }
+            else
+                for (size_t R = 0; R < In.Roots.size(); R++)
+                {
+                    std::error_code Ec;
+                    if (fs::is_directory(In.Roots[R], Ec)) ScanRoot(R, In.Roots[R], S);
+                }
+            for (const auto& [Path, Why] : S.Errors) C.Add("gate.input", "path:" + Path, Severity::Failure, "a folder could not be read, so GDTs under it may be missing: " + Why);
+            std::sort(S.Files.begin(), S.Files.end());
+            if (S.Files.empty() && !(In.ListedOnly || !In.OnlyFiles.empty()))
+                C.Add("gate.no_input", "gate", Severity::Failure, "no .gdt file was found under the layout root(s): nothing was judged");
+            C.R.Files = S.Files.size();
+            for (const auto& [R, F] : S.Files)
+            {
+                std::error_code Ec;
+                ReadGdt(C, R, F, fs::relative(F, In.Roots[R], Ec).generic_string());
+            }
+            {
+                std::string Hash, Why;
+                if (HashFiles(In.Roots, S.Files, Hash, Why))
+                {
+                    C.R.Identity = Hash;
+                    C.R.IdentityFiles = S.Files.size();
+                    for (const auto& [R, F] : S.Files)
+                    {
+                        std::error_code Ec;
+                        C.R.GdtFiles.emplace_back(R, fs::relative(F, In.Roots[R], Ec).generic_string());
+                    }
+                }
+            }
+            C.R.Entries = C.Entries.size();
+            if (C.Entries.empty()) C.Add("gate.no_entries", "gate", Severity::Failure, "zero entries were read: nothing was judged, so this is not a pass");
+
+            ResolveParents(C);
+            for (size_t I = 0; I < C.Entries.size(); I++)
+            {
+                const Entry& E = C.Entries[I];
+                if (!E.Gdf.empty()) C.ByGdfName[{ Lower(E.Gdf), Lower(E.Name) }].push_back(I);
+                C.ByName[Lower(E.Name)].push_back(I);
+            }
+
+            // G3: each (name, GDF) in exactly one file; a name has one GDF per file is covered above
+            for (const auto& [Key, Idx] : C.ByGdfName)
+            {
+                C.Judged("gdt.single_file");
+                std::set<std::string> FilesOf;
+                for (size_t I : Idx) FilesOf.insert(C.Entries[I].File);
+                if (FilesOf.size() > 1)
+                {
+                    std::string L;
+                    for (const std::string& F : FilesOf) L += (L.empty() ? "" : "; ") + F;
+                    C.Fail("gdt.single_file", C.Entries[Idx.front()], "defined in " + std::to_string(FilesOf.size()) + " files (each name and GDF belongs in exactly one, G3): " + L);
+                }
+            }
+            if (In.Held != nullptr)
+            {
+                for (const auto& [Key, Idx] : C.ByGdfName)
+                {
+                    C.Judged("gdt.stock_pair");
+                    const Entry& E = C.Entries[Idx.front()];
+                    if (In.Held->Contains(E.Gdf + ".gdf", E.Name) || In.Held->Contains(E.Gdf, E.Name))
+                        C.Fail("gdt.stock_pair", E, "the Mod Tools gdt.db already holds this name as " + E.Gdf + " (a stock pair is never written)");
+                }
+            }
+
+            // 2, 3, 5 and the file-reading part of 4
+            for (const Entry& E : C.Entries)
+            {
+                if (E.Gdf.empty()) continue;     // gdt.parent said why
+                CheckSchema(C, E, In.Roots[E.Root].string());
+                if (Lower(E.Gdf) == "material") CheckMaterial(C, E);
+                else if (Lower(E.Gdf) == "image") CheckImage(C, E);
+            }
+            for (const Entry& E : C.Entries)
+                if (Lower(E.Gdf) == "material") CheckBareMetal(C, E);
+        }
+        catch (const std::exception& Ex)
+        {
+            C.Add("gate.internal", "gate", Severity::Failure, std::string("the gate stopped on an exception: ") + Ex.what());
+        }
+
+        Result& R = C.R;
+        for (const Entry& E : C.Entries)
+        {
+            if (E.Gdf.empty()) continue;
+            auto& G = R.Gdfs[E.Gdf];
+            G.first++;
+            if (C.FailedEntries.count(E.Id())) G.second++;
+        }
+        for (const std::string& W : C.SchemaWhy) R.Findings.push_back({ "awi.schema", "gdf", Severity::Info, "no readable awi: " + W });
+        const bool Judgeable = !C.Entries.empty();
+        if (Judgeable && In.ModToolsRoot.empty()) C.Incomplete("awi.*", "no Mod Tools root given: deffiles\\*.awi not read, so no key, type, range or combo was checked");
+        if (Judgeable && (In.Catalog == nullptr || !In.Catalog->HasCatalog()))
+            C.Incomplete("material.type, material.camo, material.slot_key, material.slot_semantic", "the techset catalog (zonekit/profiles/t7/target/techsets.json) is not loaded");
+        if (Judgeable && In.Held == nullptr)
+            C.Incomplete("gdt.stock_pair, awi.reference_unresolved", std::format("no gdt.db was read (no Mod Tools root, or the database is unreadable): stock pairs and references to assets outside this output cannot be judged ({} reference(s) seen)", C.UnresolvedNoDb));
+        if (C.SlotImageNotInOutput > 0) C.Incomplete("material.slot_semantic (part)", std::format("{} filled slot(s) name an image outside this output: its semantic is unknown here", C.SlotImageNotInOutput));
+        if (C.UnjudgedRange > 0) C.Incomplete("awi.range (part)", std::format("{} value(s) of keys whose min or max the awi gives as an expression this reader cannot resolve were not range-checked", C.UnjudgedRange));
+        R.NotRun.emplace_back("sound (check 6)", "not built this round");
+        R.NotRun.emplace_back("weapon and anim (check 7)", "not built this round");
+        R.NotRun.emplace_back("stock oracle comparison (check 8)", "not built this round");
+        R.NotRun.emplace_back("rules: clean glass 40, effect maps never uncompressed, decal category, sky EXR and skinOverride, emissive intensity 0..12000",
+                              "need the material's intent, the sky/decal classification or a key material.awi does not declare; nothing here judges them");
+        return std::move(C.R);
+    }
+
+    bool WriteReports(const Result& R, const fs::path& Dir, std::string& Error)
+    {
+        std::error_code Ec;
+        fs::create_directories(Dir, Ec);
+        const std::string Tsv = R.Tsv(), One = R.Summary() + '\n';
+        return Output::WriteAtomic(Dir / "graywolf_gate.tsv", Tsv.data(), Tsv.size(), Error) &&
+               Output::WriteAtomic(Dir / "graywolf_gate_summary.txt", One.data(), One.size(), Error);
+    }
+
+    std::string Result::Tsv() const
+    {
+        const auto Cell = [](std::string S) {
+            for (char& Ch : S)
+                if (Ch == '\t' || Ch == '\r' || Ch == '\n') Ch = ' ';
+            return S;
+        };
+        std::string Out = std::string("# ") + kStatic + "\n";
+        Out += "check\tasset\tseverity\tdetail\n";
+        for (const Finding& F : Findings) Out += std::format("{}\t{}\t{}\t{}\n", Cell(F.Check), Cell(F.Asset), SeverityName(F.Level), Cell(F.Detail));
+        for (const auto& [Gdf, N] : Gdfs)
+        {
+            size_t Warned = 0;
+            for (const Finding& F : Findings)
+                if (F.Level == Severity::Warning && F.Asset.rfind(Gdf + ":", 0) == 0) Warned++;
+            Out += std::format("gate.entries\t{}\tinfo\tentries={} failed={} warned={}\n", Cell(Gdf), N.first, N.second, Warned);
+        }
+        for (const auto& [Check, S] : Checks) Out += std::format("gate.check\t{}\tinfo\tjudged={} failures={} warnings={}\n", Cell(Check), S.Judged, S.Failures, S.Warnings);
+        Out += std::format("gate.run\t{}\tinfo\tmode={} gdts={} sha256={} roots={}\n", Cell(Mode), Cell(Mode), IdentityFiles, Identity, Cell(RunRoots));
+        for (const auto& [Root, Rel] : GdtFiles) Out += std::format("gate.file\t{}\tinfo\troot={}\n", Cell(Rel), Root);
+        for (const auto& [Check, Why] : Incomplete) Out += std::format("{}\t-\tincomplete\t{}\n", Cell(Check), Cell(Why));
+        for (const auto& [Check, Why] : NotRun) Out += std::format("{}\t-\tnot_run\t{}\n", Cell(Check), Cell(Why));
+        return Out;
+    }
+
+    std::string Result::Summary() const
+    {
+        std::string Out = std::format("bo3-verify STATIC (not proof BO3 accepts the assets): files={} entries={} images={} decoded={} failures={} warnings={} exit={} result={}", Files, Entries, Images, ImagesDecoded, Failures, Warnings, ExitCode(), Word());
+        std::string Per;
+        for (const auto& [Check, S] : Checks)
+            if (S.Failures || S.Warnings) Per += std::format(" {}[fail={} warn={} of {}]", Check, S.Failures, S.Warnings, S.Judged);
+        if (!Per.empty()) Out += " |" + Per;
+        if (!Incomplete.empty())
+        {
+            std::string Inc;
+            for (const auto& [Check, Why] : Incomplete) Inc += (Inc.empty() ? "" : "; ") + Check;
+            Out += " | incomplete (not judged): " + Inc;
+        }
+        std::string Not;
+        for (const auto& [Check, Why] : NotRun) Not += (Not.empty() ? "" : "; ") + Check;
+        Out += " | not run by design: " + Not;
+        return Out;
+    }
+
+    // ---- self-test: synthetic GDT text, a synthetic .awi, tiny images
+
+    namespace
+    {
+        void Put(const fs::path& File, const std::string& Text)
+        {
+            std::error_code Ec;
+            fs::create_directories(File.parent_path(), Ec);
+            std::ofstream(File, std::ios::binary) << Text;
+        }
+
+        // An uncompressed little-endian TIFF, W x H, Samples 8-bit channels, every pixel the same.
+        std::string Tiff(uint32_t W, uint32_t H, uint32_t Samples, const std::vector<uint8_t>& Pixel)
+        {
+            std::string B;
+            const auto P16 = [&](uint32_t V) { B += static_cast<char>(V & 255); B += static_cast<char>((V >> 8) & 255); };
+            const auto P32 = [&](uint32_t V) { P16(V & 0xFFFF); P16(V >> 16); };
+            const uint32_t Entries = 9, Ifd = 8, BitsAt = Ifd + 2 + Entries * 12 + 4, DataAt = BitsAt + 8;
+            B += "II";
+            P16(42);
+            P32(Ifd);
+            P16(Entries);
+            const auto Tag = [&](uint32_t T, uint32_t Type, uint32_t Count, uint32_t Value) {
+                P16(T);
+                P16(Type);
+                P32(Count);
+                if (Type == 3 && Count == 1) { P16(Value); P16(0); }
+                else P32(Value);
+            };
+            Tag(256, 3, 1, W);
+            Tag(257, 3, 1, H);
+            Tag(258, 3, Samples, Samples == 1 ? 8 : BitsAt);
+            Tag(259, 3, 1, 1);
+            Tag(262, 3, 1, Samples == 1 ? 1 : 2);
+            Tag(273, 4, 1, DataAt);
+            Tag(277, 3, 1, Samples);
+            Tag(278, 3, 1, H);
+            Tag(279, 4, 1, W * H * Samples);
+            P32(0);
+            for (int I = 0; I < 4; I++) P16(8);
+            for (uint32_t I = 0; I < W * H; I++)
+                for (uint32_t S = 0; S < Samples; S++) B += static_cast<char>(Pixel[S % Pixel.size()]);
+            return B;
+        }
+
+        std::string Gdt(const std::vector<std::string>& Entries, const char* Eol = "\r\n")
+        {
+            std::string Out = std::string("{") + Eol;
+            for (const std::string& E : Entries) Out += E;
+            return Out + "}" + Eol;
+        }
+        std::string Ent(const std::string& Name, const std::string& Gdf, const std::vector<std::pair<std::string, std::string>>& F, const char* Eol = "\r\n")
+        {
+            std::string Out = "\t\"" + Name + "\" ( \"" + Gdf + ".gdf\" )" + Eol + "\t{" + Eol;
+            for (const auto& [K, V] : F) Out += "\t\t\"" + K + "\" \"" + V + "\"" + Eol;
+            return Out + "\t}" + Eol;
+        }
+        using Fields = std::vector<std::pair<std::string, std::string>>;
+        Fields Img(const char* File, const char* Sem, const char* Core, const char* Comp)
+        {
+            return { { "baseImage", std::string("texture_assets\\\\t\\\\") + File }, { "compressionMethod", Comp }, { "coreSemantic", Core }, { "semantic", Sem }, { "type", "image" } };
+        }
+    }
+
+    // ---- self-test: the review findings (each expectation failed before its fix)
+
+    namespace
+    {
+        std::string Esc(const std::string& Path)
+        {
+            std::string Out;
+            for (char C : Path) Out += C == '\\' ? std::string("\\\\") : std::string(1, C);
+            return Out;
+        }
+
+        // A TIFF with per-sample bit depths and sample formats written as arrays (count > 2 goes through a pointer).
+        std::string TiffRaw(uint32_t W, uint32_t H, const std::vector<uint16_t>& Bits, const std::vector<uint16_t>& Format)
+        {
+            std::string B;
+            const auto P16 = [&](uint32_t V) { B += static_cast<char>(V & 255); B += static_cast<char>((V >> 8) & 255); };
+            const auto P32 = [&](uint32_t V) { P16(V & 0xFFFF); P16(V >> 16); };
+            const uint32_t Samples = static_cast<uint32_t>(Bits.size()), Entries = 10, Ifd = 8;
+            const uint32_t BitsAt = Ifd + 2 + Entries * 12 + 4, FormatAt = BitsAt + 2 * Samples, DataAt = FormatAt + 2 * Samples;
+            B += "II";
+            P16(42);
+            P32(Ifd);
+            P16(Entries);
+            const auto Tag = [&](uint32_t T, uint32_t Type, uint32_t Count, uint32_t Value) {
+                P16(T);
+                P16(Type);
+                P32(Count);
+                if (Type == 3 && Count == 1) { P16(Value); P16(0); }
+                else P32(Value);
+            };
+            Tag(256, 3, 1, W);
+            Tag(257, 3, 1, H);
+            Tag(258, 3, Samples, BitsAt);
+            Tag(259, 3, 1, 1);
+            Tag(262, 3, 1, 2);
+            Tag(273, 4, 1, DataAt);
+            Tag(277, 3, 1, Samples);
+            Tag(278, 3, 1, H);
+            Tag(279, 4, 1, W * H * Samples);
+            Tag(339, 3, Samples, FormatAt);
+            P32(0);
+            for (uint16_t V : Bits) P16(V);
+            for (uint16_t V : Format) P16(V);
+            B.append(static_cast<size_t>(W) * H * Samples, '\x40');
+            return B;
+        }
+
+        std::string PngHeader(uint32_t Length, uint32_t W, uint32_t H)
+        {
+            std::string B = "\x89PNG\r\n\x1a\n";
+            const auto P32 = [&](uint32_t V) { for (int S = 24; S >= 0; S -= 8) B += static_cast<char>((V >> S) & 255); };
+            P32(Length);
+            B += "IHDR";
+            P32(W);
+            P32(H);
+            B += std::string("\x08\x02\0\0\0", 5);
+            return B;
+        }
+    }
+
+    int ReviewTests(std::string& Failures)
+    {
+        int Failed = 0;
+        const auto Check = [&](bool Condition, const char* Name, const std::string& Got = std::string()) {
+            if (Condition) return;
+            ++Failed;
+            Failures += std::format("FAIL Verify(review) {} (got '{}')\n", Name, Got);
+        };
+        const auto Reader = [](const std::string& Bytes) {
+            return [&Bytes](uint64_t At, void* To, size_t N) {
+                if (At + N > Bytes.size()) return false;
+                std::memcpy(To, Bytes.data() + At, N);
+                return true;
+            };
+        };
+        const auto Has = [](const Result& R, const char* Check1, Severity S = Severity::Failure, const char* Asset = nullptr) {
+            size_t N = 0;
+            for (const Finding& F : R.Findings)
+                if (F.Check == Check1 && F.Level == S && (Asset == nullptr || F.Asset == Asset)) N++;
+            return N;
+        };
+        const auto Describe = [](const Result& R) {
+            std::string L;
+            for (const Finding& F : R.Findings) L += F.Check + "@" + F.Asset + "; ";
+            return L + R.Summary();
+        };
+
+        std::error_code Ec;
+        const fs::path Base = fs::temp_directory_path(Ec) / std::format("gw_verify_review_{}", static_cast<unsigned long>(::GetCurrentProcessId()));
+        fs::remove_all(Base, Ec);
+        const fs::path Mod = Base / "modtools";
+        Put(Mod / "deffiles" / "image.awi", R"AWI(
+void GenerateUI( asset Asset )
+{
+    Asset.AddEntry_Combo( "semantic", "diffuseMap | normalMap | glossMap | specularMap" );
+    Asset.AddEntry_Combo( "compressionMethod", "compressed | uncompressed | compressed high color{compressed high color}" );
+    Asset.AddEntry_Texture( "baseImage", "" );
+    Asset.AddEntry_String( "coreSemantic", "" );
+    Asset.AddEntry_Combo( "type", "image | composite" );
+}
+)AWI");
+        Put(Mod / "deffiles" / "material.awi", R"AWI(
+void GenerateUI( asset Asset )
+{
+    Asset.AddEntry_Combo( "materialType", Asset.GetTechsetdefTypes( "" ) );
+    Asset.AddEntry_Combo( "surfaceType", "<error> | <none> | concrete | metal" );
+    Asset.AddEntry_Combo( "usage", "<not in editor> | floor" );
+    Asset.AddEntry_AssetCombo( "colorMap", "image" );
+}
+)AWI");
+        Put(Mod / "deffiles" / "xmodel.awi", R"AWI(
+void GenerateUI( asset Asset )
+{
+    Asset.AddEntry_XModel( "filename", "" ).SetRelativePath( "model_export/" );
+    Asset.AddEntry_Combo( "type", "rigid | animated" );
+}
+)AWI");
+        Tc::Data Catalog;
+        Catalog.LoadCatalogText(R"({"techsets":[{"n":"lit","c":"Geometry","f":"none","b":"Opaque","t":0,"s":[["colorMap","colorMap","diffuseMap",null]]}]})");
+        GdtDb::Catalog Held;     // a gdt.db that holds nothing
+        const auto Full = [&](const fs::path& Root) {
+            Inputs In;
+            In.Roots = { Root };
+            In.ModToolsRoot = Mod;
+            In.Catalog = &Catalog;
+            In.Held = &Held;
+            return In;
+        };
+
+        // 1. zero work is a failure, never a pass
+        {
+            Check(ResolveRoots(Base / "typo").empty(), "a typo'd folder gives no root (no silent fallback to itself)", std::to_string(ResolveRoots(Base / "typo").size()));
+            Inputs In = Full(Base / "typo");
+            In.Roots = ResolveRoots(Base / "typo");
+            const Result R = Run(In);
+            Check(R.ExitCode() == 2 && Has(R, "gate.input") >= 1, "a nonexistent input is exit 2 with gate.input", Describe(R));
+
+            fs::create_directories(Base / "emptydir" / "bo3", Ec);
+            const Result E = Run(Full(Base / "emptydir" / "bo3"));
+            Check(E.ExitCode() == 2 && Has(E, "gate.no_input") == 1 && Has(E, "gate.no_entries") == 1, "a folder with no GDT is exit 2 (gate.no_input, gate.no_entries)", Describe(E));
+
+            Put(Base / "zero" / "bo3" / "a.gdt", "");
+            Put(Base / "zero" / "bo3" / "b.gdt", "{\r\n}\r\n");
+            const Result Z = Run(Full(Base / "zero" / "bo3"));
+            Check(Z.ExitCode() == 2 && Has(Z, "gdt.empty", Severity::Failure, "file:a.gdt") == 1 && Has(Z, "gdt.empty", Severity::Failure, "file:b.gdt") == 1 && Has(Z, "gate.no_entries") == 1, "a 0-byte GDT and an empty { } are failures", Describe(Z));
+
+            Put(Base / "outside" / "x.gdt", Gdt({ Ent("zz", "image", { { "type", "image" } }) }));
+            Inputs L = Full(Base / "emptydir" / "bo3");
+            L.OnlyFiles = { Base / "outside" / "x.gdt" };
+            const Result O = Run(L);
+            Check(Has(O, "gate.input") >= 1 && O.ExitCode() == 2, "a listed GDT outside the root is a failure, not dropped", Describe(O));
+        }
+
+        // 2. exit codes count what was not judged
+        {
+            const fs::path Clean = Base / "clean" / "bo3";
+            Put(Clean / "texture_assets" / "t" / "c.tif", Tiff(8, 8, 3, { 100, 100, 100 }));
+            Put(Clean / "texture_assets" / "t.gdt", Gdt({
+                Ent("i_c", "image", Img("c.tif", "diffuseMap", "sRGB3chAlpha", "compressed high color")),
+                Ent("mtl_ok", "material", { { "colorMap", "i_c" }, { "materialType", "lit" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+            }));
+            const Result Pass = Run(Full(Clean));
+            Check(Pass.Failures == 0 && Pass.Warnings == 0 && Pass.ExitCode() == 0, "everything judged and clean: exit 0", Describe(Pass));
+            Inputs NoRoot = Full(Clean);
+            NoRoot.ModToolsRoot.clear();
+            const Result A = Run(NoRoot);
+            Check(A.ExitCode() == 1 && A.Failures == 0 && A.Summary().find("incomplete") != std::string::npos, "no Mod Tools root: exit 1, stated incomplete", Describe(A));
+            Inputs NoCat = Full(Clean);
+            NoCat.Catalog = nullptr;
+            const Result B = Run(NoCat);
+            Check(B.ExitCode() == 1 && B.Summary().find("incomplete") != std::string::npos, "no catalog: exit 1, stated incomplete", Describe(B));
+            Inputs NoDb = Full(Clean);
+            NoDb.Held = nullptr;
+            Check(Run(NoDb).ExitCode() == 1, "no gdt.db: exit 1");
+            // by-design not_run rows (checks 6 to 8) are still listed but do not make a run incomplete
+            Check(!Pass.NotRun.empty() && Pass.ExitCode() == 0, "checks 6 to 8 stay visible as not_run without failing the run");
+
+            const fs::path NoAwi = Base / "noawi" / "bo3";
+            Put(NoAwi / "a.gdt", Gdt({ Ent("zone_thing", "unknownkind", { { "k", "v" } }) }));
+            const Result N = Run(Full(NoAwi));
+            Check(N.ExitCode() == 2 && Has(N, "awi.schema", Severity::Failure, "unknownkind:zone_thing") == 1, "an entry whose GDF has no awi cannot be judged: exit 2", Describe(N));
+        }
+
+        // 3. parent entries are resolved and validated
+        {
+            const fs::path P = Base / "parent" / "bo3";
+            Put(P / "m.gdt", "{\r\n"
+                + Ent("mtl_base", "material", { { "materialType", "lit" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } })
+                + "\t\"mtl_child\" [ \"mtl_base\" ]\r\n\t{\r\n\t\t\"surfaceType\" \"bogus\"\r\n\t}\r\n"
+                + "\t\"mtl_grandchild\" [ \"mtl_child\" ]\r\n\t{\r\n\t\t\"surfaceType\" \"metal\"\r\n\t}\r\n"
+                + "\t\"mtl_orphan\" [ \"nope\" ]\r\n\t{\r\n\t\t\"surfaceType\" \"metal\"\r\n\t}\r\n"
+                + "\t\"c1\" [ \"c2\" ]\r\n\t{\r\n\t}\r\n\t\"c2\" [ \"c1\" ]\r\n\t{\r\n\t}\r\n"
+                + "}\r\n");
+            const Result R = Run(Full(P));
+            Check(Has(R, "awi.combo", Severity::Failure, "material:mtl_child") == 1, "a derived entry is validated after the merge (bad surfaceType)", Describe(R));
+            Check(Has(R, "awi.required", Severity::Failure, "material:mtl_child") == 0 && Has(R, "awi.required", Severity::Failure, "material:mtl_grandchild") == 0, "materialType comes from the parent chain", Describe(R));
+            Check(Has(R, "awi.combo", Severity::Failure, "material:mtl_grandchild") == 0, "the grandchild overrides the bad value", Describe(R));
+            Check(Has(R, "gdt.parent") >= 3 && R.ExitCode() == 2, "an unresolvable parent and a cycle are failures", Describe(R));
+        }
+
+        // 4. a path that leaves the layout does not resolve
+        {
+            const fs::path Root = Base / "esc" / "bo3";
+            Put(Base / "outside" / "o.tif", Tiff(8, 8, 3, { 100, 100, 100 }));
+            Put(Base / "outside" / "m.xmodel_bin", "x");
+            Put(Root / "t.gdt", Gdt({
+                Ent("i_abs", "image", { { "baseImage", Esc((Base / "outside" / "o.tif").string()) }, { "compressionMethod", "compressed" }, { "coreSemantic", "sRGB3chAlpha" }, { "semantic", "diffuseMap" }, { "type", "image" } }),
+                Ent("i_dotdot", "image", { { "baseImage", "..\\\\..\\\\outside\\\\o.tif" }, { "compressionMethod", "compressed" }, { "coreSemantic", "sRGB3chAlpha" }, { "semantic", "diffuseMap" }, { "type", "image" } }),
+                Ent("x_dotdot", "xmodel", { { "filename", "..\\\\..\\\\..\\\\outside\\\\m.xmodel_bin" }, { "type", "rigid" } }),
+            }));
+            const Result R = Run(Full(Root));
+            Check(Has(R, "image.source", Severity::Failure, "image:i_abs") == 1 && Has(R, "image.source", Severity::Failure, "image:i_dotdot") == 1, "an absolute path and a .. escape do not resolve (image.source)", Describe(R));
+            Check(Has(R, "awi.file", Severity::Failure, "xmodel:x_dotdot") == 1, "a .. escape does not resolve (awi.file)", Describe(R));
+        }
+
+        // 5. image headers and decoding
+        {
+            const std::string Bad12 = PngHeader(12, 8, 8), Zero = PngHeader(13, 0, 8), Good = PngHeader(13, 8, 8);
+            Check(!ReadImageHeader(Reader(Bad12)).Ok, "a PNG IHDR length other than 13 is refused");
+            Check(!ReadImageHeader(Reader(Zero)).Ok, "a PNG with a zero dimension is refused");
+            Check(ReadImageHeader(Reader(Good)).Ok, "a good PNG header is read");
+            const std::string T0 = TiffRaw(0, 8, { 8, 8, 8 }, { 1, 1, 1 });
+            Check(!ReadImageHeader(Reader(T0)).Ok, "a TIFF with a zero dimension is refused");
+            const std::string Fl = TiffRaw(4, 4, { 32, 32, 32 }, { 3, 3, 3 });
+            const ImageInfo F = ReadImageHeader(Reader(Fl));
+            Check(F.Ok && F.Float, "SampleFormat with count 3 is read from the pointed-to data", F.Why);
+            const std::string MixF = TiffRaw(4, 4, { 8, 8, 8 }, { 1, 1, 3 });
+            Check(!ReadImageHeader(Reader(MixF)).Ok, "samples of different sample formats are refused");
+            const std::string Mix = TiffRaw(4, 4, { 8, 8, 16 }, { 1, 1, 1 });
+            Check(!ReadImageHeader(Reader(Mix)).Ok, "samples of different bit depth are refused");
+            const std::string Ok = TiffRaw(4, 4, { 16, 16, 16 }, { 1, 1, 1 });
+            const ImageInfo K = ReadImageHeader(Reader(Ok));
+            Check(K.Ok && K.BitsPerChannel == 16 && !K.Float, "three 16-bit unsigned samples", K.Why);
+            // the IFD offset is near 2^32: Ifd + 2 must not wrap to 0
+            const std::string Head = std::string("II") + std::string("\x2A\x00\xFE\xFF\xFF\xFF", 6);
+            const std::string Wrapped = TiffRaw(8, 8, { 8, 8, 8 }, { 1, 1, 1 });
+            const ImageInfo W = ReadImageHeader([&](uint64_t At, void* To, size_t N) {
+                if (At + N <= Head.size()) { std::memcpy(To, Head.data() + At, N); return true; }
+                if (At == 0xFFFFFFFEull && N == 2) { const char C[2] = { 10, 0 }; std::memcpy(To, C, 2); return true; }
+                if (At == 0 && N == 120) { std::memcpy(To, Wrapped.data() + 10, 120); return true; }     // what a wrapped Ifd + 2 would read
+                return false;
+            });
+            Check(!W.Ok, "an IFD offset near 2^32 does not wrap", std::to_string(W.Width));
+
+            // a required image that cannot be decoded is a failure, and a grey mask that cannot be judged is not skipped
+            const fs::path Root = Base / "dec" / "bo3";
+            Put(Root / "n.png", Good);
+            Put(Root / "g.png", Good);
+            Put(Root / "t.gdt", Gdt({
+                Ent("i_g", "image", { { "baseImage", "g.png" }, { "compressionMethod", "compressed" }, { "coreSemantic", "Linear1ch" }, { "semantic", "glossMap" }, { "type", "image" } }),
+                Ent("i_n", "image", { { "baseImage", "n.png" }, { "compressionMethod", "compressed" }, { "coreSemantic", "Normal" }, { "semantic", "normalMap" }, { "type", "image" } }),
+            }));
+            const Result R = Run(Full(Root));
+            Check(Has(R, "image.decode", Severity::Failure, "image:i_n") == 1, "an undecodable normal map is a failure", Describe(R));
+            Check(Has(R, "image.decode", Severity::Failure, "image:i_g") == 1 || Has(R, "image.channels", Severity::Failure, "image:i_g") == 1, "an undecodable multi-channel mask is not skipped", Describe(R));
+            Check(R.ExitCode() == 2, "so the run fails");
+        }
+
+        // 6. the BOM has its own named failure
+        {
+            const fs::path Root = Base / "bom" / "bo3";
+            Put(Root / "bom.gdt", std::string("\xEF\xBB\xBF") + Gdt({ Ent("b", "image", { { "type", "image" } }) }));
+            const Result R = Run(Full(Root));
+            Check(Has(R, "gdt.bom", Severity::Failure, "file:bom.gdt") == 1 && Has(R, "gdt.syntax") == 0, "a BOM is the named failure gdt.bom, not a syntax error", Describe(R));
+        }
+
+        // run identity: the TSV names the layout and the files it read; the identity changes with the files
+        {
+            const fs::path Root = Base / "ident" / "bo3";
+            Put(Root / "a.gdt", Gdt({ Ent("zz", "image", { { "type", "image" } }) }));
+            const Result R = Run(Full(Root));
+            const std::string Tsv = R.Tsv();
+            Check(Tsv.find("\ngate.run\tscan\tinfo\tmode=scan gdts=1 sha256=") != std::string::npos && !R.Identity.empty() && R.Mode == "scan", "the TSV carries a gate.run row", Tsv.substr(0, 200));
+            std::string H1, H2, Why;
+            size_t N = 0;
+            Check(LayoutIdentity({ Root }, H1, N, Why) && N == 1 && H1 == R.Identity, "LayoutIdentity equals the gate's identity", Why);
+            Put(Root / "a.gdt", Gdt({ Ent("zy", "image", { { "type", "image" } }) }));
+            Check(LayoutIdentity({ Root }, H2, N, Why) && H2 != H1, "a changed GDT changes the identity");
+            Check(Tsv.find("incomplete") != std::string::npos || R.Incomplete.empty(), "incomplete rows are written");
+        }
+
+        // the gate still holds only while the GDT content is the same (scan and listed alike)
+        {
+            const fs::path Root = Base / "hold" / "bo3";
+            Put(Root / "a.gdt", Gdt({ Ent("zz", "image", { { "type", "image" } }) }));
+            Put(Root / "sub" / "b.gdt", Gdt({ Ent("yy", "image", { { "type", "image" } }) }));
+            const Result S = Run(Full(Root));
+            Check(S.Tsv().find("\ngate.file\ta.gdt\tinfo\troot=0\n") != std::string::npos && S.GdtFiles.size() == 2, "the TSV lists every GDT read (gate.file rows)", S.Tsv().substr(0, 300));
+            const std::vector<std::string> Roots = { Root.string() };
+            std::string Why;
+            Check(GateStillHolds("scan", Roots, S.GdtFiles, S.Identity, S.IdentityFiles, Why), "a scanned gate holds while the files are unchanged", Why);
+            Put(Root / "sub" / "b.gdt", Gdt({ Ent("yx", "image", { { "type", "image" } }) }));
+            Check(!GateStillHolds("scan", Roots, S.GdtFiles, S.Identity, S.IdentityFiles, Why) && Why.find("changed after the gate ran") != std::string::npos, "a scanned gate does not hold after a GDT changed", Why);
+            Put(Root / "sub" / "b.gdt", Gdt({ Ent("yy", "image", { { "type", "image" } }) }));
+            Put(Root / "c.gdt", Gdt({ Ent("new", "image", { { "type", "image" } }) }));
+            Check(!GateStillHolds("scan", Roots, S.GdtFiles, S.Identity, S.IdentityFiles, Why), "a scanned gate does not hold when a GDT was added", Why);
+            fs::remove(Root / "c.gdt", Ec);
+            Check(GateStillHolds("scan", Roots, S.GdtFiles, S.Identity, S.IdentityFiles, Why), "... and holds again when it is the same set", Why);
+            Check(!GateStillHolds("scan", { (Base / "hold" / "gone").string() }, S.GdtFiles, S.Identity, S.IdentityFiles, Why) && Why.find("cannot be re-read") != std::string::npos, "a layout that cannot be re-read: not accepted", Why);
+
+            // listed mode (what --target modtools writes)
+            Inputs L = Full(Root);
+            L.ListedOnly = true;
+            L.OnlyFiles = { Root / "a.gdt" };
+            const Result Lr = Run(L);
+            Check(Lr.Mode == "listed" && Lr.GdtFiles.size() == 1, "a listed run records the files it read", Lr.Mode);
+            Check(GateStillHolds("listed", Roots, Lr.GdtFiles, Lr.Identity, Lr.IdentityFiles, Why), "a listed gate holds while the listed files are unchanged", Why);
+            Put(Root / "a.gdt", Gdt({ Ent("zz", "image", { { "type", "image" }, { "mips", "3" } }) }));
+            Check(!GateStillHolds("listed", Roots, Lr.GdtFiles, Lr.Identity, Lr.IdentityFiles, Why) && Why.find("changed after the gate ran") != std::string::npos, "an old listed gate does not hold after the GDT changed (path alone no longer counts)", Why);
+            Check(!GateStillHolds("listed", Roots, {}, Lr.Identity, Lr.IdentityFiles, Why) && Why.find("gate.file") != std::string::npos, "a listed gate naming no files cannot be re-verified", Why);
+            Check(!GateStillHolds("other", Roots, Lr.GdtFiles, Lr.Identity, Lr.IdentityFiles, Why), "an unknown mode is not accepted");
+        }
+
+        // --target modtools: the decision to scan nothing but the manifest's GDTs
+        {
+            Output::Manifest Listed;
+            std::vector<fs::path> Files;
+            std::string Why;
+            Check(!ModToolsGdtFiles(Listed, false, Base / "mt", Files, Why) && Files.empty() && Why.find("did not load") != std::string::npos, "a manifest that did not load: the gate is not run", Why);
+            Check(!ModToolsGdtFiles(Listed, true, Base / "mt", Files, Why) && Why.find("lists no .gdt") != std::string::npos, "an empty manifest: the gate is not run", Why);
+            Output::ManifestEntry Cfg;
+            Cfg.Path = "share\\raw\\x.cfg";
+            Cfg.AssetName = "x";
+            Listed.Record(Cfg);
+            Check(!ModToolsGdtFiles(Listed, true, Base / "mt", Files, Why), "a manifest listing no GDT file: the gate is not run");
+            Output::ManifestEntry G;
+            G.Path = "source_data\\graywolf_x.GDT";
+            G.AssetName = "x";
+            Listed.Record(G);
+            Check(ModToolsGdtFiles(Listed, true, Base / "mt", Files, Why) && Files.size() == 1 && Files[0] == Base / "mt" / "source_data\\graywolf_x.GDT", "only the listed GDT is read", std::to_string(Files.size()));
+            // a listed-only run with an empty list never scans the root
+            Put(Base / "mt" / "stock" / "stock.gdt", Gdt({ Ent("stock_a", "image", { { "type", "image" } }) }));
+            Inputs In = Full(Base / "mt");
+            In.ListedOnly = true;
+            const Result R = Run(In);
+            Check(R.Entries == 0 && R.ExitCode() == 2 && Has(R, "gate.no_input") == 1, "ListedOnly with no files fails and does not scan the root", Describe(R));
+        }
+
+        fs::remove_all(Base, Ec);
+        return Failed;
+    }
+
+    int SelfTest(std::string& Failures)
+    {
+        int Failed = 0;
+        const auto Check = [&](bool Condition, const char* Name, const std::string& Got = std::string()) {
+            if (Condition) return;
+            ++Failed;
+            Failures += std::format("FAIL Verify {} (got '{}')\n", Name, Got);
+        };
+        const auto Reader = [](const std::string& Bytes) {
+            return [&Bytes](uint64_t At, void* To, size_t N) {
+                if (At + N > Bytes.size()) return false;
+                std::memcpy(To, Bytes.data() + At, N);
+                return true;
+            };
+        };
+
+        // header readers
+        {
+            const std::string T = Tiff(8, 4, 3, { 10, 20, 30 });
+            const ImageInfo I = ReadImageHeader(Reader(T));
+            Check(I.Ok && I.Width == 8 && I.Height == 4 && I.Channels == 3 && I.BitsPerChannel == 8 && I.Container == "tiff", "tiff header", I.Why);
+            const std::string G = Tiff(4, 4, 1, { 7 });
+            const ImageInfo J = ReadImageHeader(Reader(G));
+            Check(J.Ok && J.Channels == 1 && J.BitsPerChannel == 8, "tiff header, one channel", J.Why);
+            std::string Png = "\x89PNG\r\n\x1a\n";
+            Png += std::string("\0\0\0\x0D", 4) + "IHDR" + std::string("\0\0\0\x10\0\0\0\x08\x10\x06\0\0\0", 13);
+            const ImageInfo K = ReadImageHeader(Reader(Png));
+            Check(K.Ok && K.Width == 16 && K.Height == 8 && K.BitsPerChannel == 16 && K.Channels == 4 && K.Container == "png", "png header", K.Why);
+            const ImageInfo L = ReadImageHeader([](uint64_t, void* To, size_t N) { std::memset(To, 0, N); return true; });
+            Check(!L.Ok, "garbage is not an image");
+        }
+
+        // pixel rules
+        {
+            Rgba8Image Flat;
+            Flat.Width = Flat.Height = 8;
+            const auto Fill = [&](uint8_t R, uint8_t G, uint8_t B) {
+                Flat.Pixels.assign(8 * 8 * 4, 255);
+                for (size_t I = 0; I < Flat.Pixels.size(); I += 4)
+                {
+                    Flat.Pixels[I] = R;
+                    Flat.Pixels[I + 1] = G;
+                    Flat.Pixels[I + 2] = B;
+                }
+                return MakeThumb(Flat);
+            };
+            Check(NormalBlue(Fill(128, 128, 255)).MeanAbs < 1.0, "a flat normal with blue 255 is on the implied Z", std::to_string(NormalBlue(Fill(128, 128, 255)).MeanAbs));
+            Check(NormalBlue(Fill(128, 128, 0)).MeanAbs > 100, "a normal with blue 0 is far from Z");
+            Check(DiffuseRange(Fill(10, 10, 10)).Below == static_cast<size_t>(kThumb) * kThumb && DiffuseRange(Fill(100, 100, 100)).Below == 0 && DiffuseRange(Fill(250, 250, 250)).Above > 0, "diffuse range counts");
+            const SpecStat S = SpecularMode(Fill(56, 56, 56));
+            Check(S.Mode == 56 && S.Share > 0.99, "specular mode", std::to_string(S.Mode));
+            Check(SpecularMode(Fill(0, 0, 0)).Mode == -1, "an all-black specular has no mode");
+            const MetalStat M = BareMetal(Fill(200, 200, 200), Fill(220, 220, 220));
+            Check(M.MetalPixels > 0 && M.NotBlack == M.MetalPixels, "a bright diffuse on a metal specular is not black");
+            Check(BareMetal(Fill(0, 0, 0), Fill(220, 220, 220)).NotBlack == 0, "a black diffuse on a metal specular is bare metal");
+        }
+
+        // end to end on a temporary layout
+        std::error_code Ec;
+        const fs::path Base = fs::temp_directory_path(Ec) / std::format("gw_verify_selftest_{}", static_cast<unsigned long>(::GetCurrentProcessId()));
+        fs::remove_all(Base, Ec);
+        const fs::path Mod = Base / "modtools", Out = Base / "out" / "bo3";
+        Put(Mod / "deffiles" / "image.awi", R"AWI(
+void GenerateUI( asset Asset )
+{
+    string sem = "diffuseMap | normalMap | glossMap | specularMap";
+    string comp = "compressed | uncompressed | compressed high color{compressed high color}";
+    Asset.AddEntry_Combo( "semantic", sem );
+    Asset.AddEntry_Combo( "compressionMethod", comp );
+    Asset.AddEntry_Texture( "baseImage", "" );
+    Asset.AddEntry_String( "coreSemantic", "" );
+    Asset.AddEntry_Combo( "type", "image | composite" );
+    Asset.AddEntry_CheckBox( "colorSRGB", false );
+    Asset.AddEntry_Int( "mips", 1, 1, 8 );
+}
+)AWI");
+        Put(Mod / "deffiles" / "material.awi", R"AWI(
+void GenerateUI( asset Asset )
+{
+    Asset.AddEntry_Combo( "materialType", Asset.GetTechsetdefTypes( "" ) );
+    Asset.AddEntry_Combo( "surfaceType", "<error> | <none> | concrete | metal" );
+    Asset.AddEntry_Combo( "usage", "<not in editor> | floor | decal" );
+    Asset.AddEntry_AssetCombo( "colorMap", "image" );
+    Asset.AddEntry_AssetCombo( "normalMap", "image" );
+    Asset.AddEntry_AssetCombo( "specColorMap", "image" );
+    Asset.AddEntry_Color( "colorTint", 1, 1, 1, 1 );
+    Asset.AddEntry_Vector2( "uScroll", "vScroll", 0.0, 0.0, -10.0, 10.0 );
+    Asset.AddEntry_Float( "desaturationAmount", 0.0, 0.0, 1.0 );
+    Asset.AddEntry_Float( "glossRangeMax", 17, 0, 17 );
+}
+)AWI");
+        Tc::Data Catalog;
+        Check(Catalog.LoadCatalogText(R"({"techsets":[
+            {"n":"lit","c":"Geometry","f":"none","b":"Opaque","t":0,"s":[["colorMap","colorMap","diffuseMap",null],["normalMap","normalMap","normalMap",null]]},
+            {"n":"lit_weapon_camo","c":"Weapon","f":"none","b":"Opaque","t":32768,"s":[["colorMap","colorMap","diffuseMap",null]]}]})"), "the synthetic catalog loads");
+
+        const std::string Tif3 = Tiff(8, 8, 3, { 100, 100, 100 });
+        Put(Out / "texture_assets" / "t" / "c.tif", Tif3);
+        Put(Out / "texture_assets" / "t" / "n.tif", Tiff(8, 8, 3, { 128, 128, 255 }));
+        Put(Out / "texture_assets" / "t" / "n_bad.tif", Tiff(8, 8, 3, { 128, 128, 0 }));
+        Put(Out / "texture_assets" / "t" / "g3.tif", Tiff(8, 8, 3, { 90, 90, 90 }));
+        Put(Out / "texture_assets" / "t" / "g3c.tif", Tiff(8, 8, 3, { 90, 10, 200 }));
+        Put(Out / "texture_assets" / "t" / "odd.tif", Tiff(10, 6, 3, { 100, 100, 100 }));
+        Fields NBad = Img("n_bad.tif", "normalMap", "Normal", "bogus");
+        NBad.insert(NBad.begin() + 1, std::pair<std::string, std::string>{ "colorSRGB", "1" });
+        NBad.push_back({ "mips", "2.5" });
+        Put(Out / "texture_assets" / "t.gdt", Gdt({
+            Ent("i_c", "image", Img("c.tif", "diffuseMap", "sRGB3chAlpha", "compressed high color")),
+            Ent("i_dds", "image", Img("c.dds", "normalMap", "Normal", "compressed")),
+            Ent("i_g3", "image", Img("g3.tif", "glossMap", "Linear1ch", "compressed")),
+            Ent("i_g3c", "image", Img("g3c.tif", "glossMap", "Linear1ch", "compressed")),
+            Ent("i_n", "image", Img("n.tif", "normalMap", "Normal", "compressed")),
+            Ent("i_n_bad", "image", NBad),
+            Ent("i_odd", "image", Img("odd.tif", "diffuseMap", "sRGB3chAlpha", "compressed")),
+            Ent("i_x_missing", "image", Img("nope.tif", "normalMap", "Normal", "compressed")),
+            Ent("mtl_bad", "material", { { "colorMap", "i_n" }, { "colorTint", "0.5 1 1 1" }, { "invented", "1" }, { "materialType", "lit_weapon_camo" }, { "normalMap", "i_c" },
+                                         { "specColorMap", "i_nowhere" }, { "surfaceType", "<none>" }, { "uScroll", "11" }, { "usage", "floor" } }),
+            Ent("mtl_ok", "material", { { "colorMap", "i_c" }, { "colorTint", "1 1 1 1" }, { "materialType", "lit" }, { "normalMap", "i_n" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+            Ent("mtl_slotname", "material", { { "colorMap", "i_c" }, { "glossRangeMax", "18" }, { "materialType", "lit" }, { "surfaceType", "metal" }, { "usage", "<not in editor>" } }),
+        }));
+        // a second file: a duplicate pair, an LF file, a BOM, a quote in a value
+        Put(Out / "source_data" / "dup.gdt", Gdt({ Ent("mtl_ok", "material", { { "materialType", "lit" } }) }));
+        Put(Out / "source_data" / "lf.gdt", Gdt({ Ent("z", "image", { { "type", "image" } }, "\n") }, "\n"));
+        Put(Out / "source_data" / "bom.gdt", std::string("\xEF\xBB\xBF") + Gdt({ Ent("b", "image", { { "type", "image" }, { "mips", "1" } }) }));
+        Put(Out / "source_data" / "bad.gdt", "{\r\n\t\"q\" ( \"image.gdf\" )\r\n\t{\r\n\t\t\"a\" \"b\"c\"\r\n\t}\r\n}\r\n");
+
+        Inputs In;
+        In.Roots = { Out };
+        In.ModToolsRoot = Mod;
+        In.Catalog = &Catalog;
+        const Result R = Run(In);
+        const auto Count = [&](const char* Check1, const char* Asset = nullptr, Severity S = Severity::Failure) {
+            size_t N = 0;
+            for (const Finding& F : R.Findings)
+                if (F.Check == Check1 && F.Level == S && (Asset == nullptr || F.Asset == Asset)) N++;
+            return N;
+        };
+        Check(Count("image.source", "image:i_x_missing") == 1, "a baseImage that does not resolve fails");
+        Check(Count("image.dds", "image:i_dds") == 1, "a .dds source fails");
+        Check(Count("image.channels", "image:i_g3", Severity::Warning) == 1 && Count("image.channels", "image:i_g3") == 0, "a grey three-channel gloss map warns");
+        Check(Count("image.channels", "image:i_g3c") == 1, "a coloured three-channel gloss map fails the channel rule", [&] { std::string L; for (const Finding& F : R.Findings) if (F.Asset == "image:i_g3c") L += F.Check + ":" + F.Detail + "; "; return L; }());
+        Check(Count("image.block_size", "image:i_odd") == 1, "10x6 compressed fails the multiple-of-4 rule");
+        Check(Count("image.srgb", "image:i_n_bad") == 1 && Count("image.semantic_table", "image:i_n_bad") == 1, "colorSRGB 1 and an off-table compression fail");
+        Check(Count("image.normal_z", "image:i_n_bad") == 1 && Count("image.normal_z", "image:i_n") == 0, "a normal with blue 0 fails, one with Z passes", std::to_string(Count("image.normal_z")));
+        Check(Count("awi.type", "image:i_n_bad") == 1, "2.5 in an int key fails the awi type rule");
+        Check(Count("awi.unknown_key", "material:mtl_bad") == 1, "a key the awi does not declare fails");
+        Check(Count("awi.range", "material:mtl_bad") == 1 && Count("awi.range", "material:mtl_slotname") == 1, "a value outside min/max fails (scroll 11, gloss 18)");
+        Check(Count("material.camo", "material:mtl_bad") == 1, "lit_weapon_camo fails");
+        Check(Count("material.surface_type", "material:mtl_bad") == 1 && Count("material.surface_type", "material:mtl_ok") == 0, "surfaceType <none> is the known failure, a real value is not");
+        Check(Count("material.usage", "material:mtl_bad") == 1 && Count("material.usage", "material:mtl_ok") == 0, "usage on a non-map material fails");
+        Check(Count("material.slot_semantic", "material:mtl_bad") == 1, "an image of the wrong semantic in a slot fails", std::to_string(Count("material.slot_semantic", "material:mtl_bad")));
+        Check(Count("material.slot_key", "material:mtl_bad") == 2, "image keys that are not slots of the techset fail", std::to_string(Count("material.slot_key", "material:mtl_bad")));
+        Check(Count("material.tint", "material:mtl_bad", Severity::Warning) == 1 && Count("material.tint", "material:mtl_ok", Severity::Warning) == 0, "a tint off the k/255 steps warns");
+        Check(Count("awi.reference_unresolved", "material:mtl_bad", Severity::Warning) == 0, "no gdt.db: an outside reference is not judged, not a failure");
+        Check(Count("gdt.single_file", "material:mtl_ok") == 1, "one (name, GDF) in two files fails");
+        Check(Count("gdt.syntax", "file:source_data/lf.gdt") == 1 && Count("gdt.bom", "file:source_data/bom.gdt") == 1 && Count("gdt.unsafe_value", "image:q") == 1, "LF is a syntax failure, a BOM is gdt.bom, a quote in a value is an unsafe value");
+        Check(Count("image.source", "image:i_c") == 0 && Count("image.format", "image:i_c") == 0 && Count("image.bit_depth", "image:i_c") == 0, "a clean image has no format failure");
+        Check(R.ExitCode() == 2 && R.Failures > 0, "failures give exit 2");
+        const std::string Tsv = R.Tsv();
+        Check(Tsv.rfind("# static gate", 0) == 0 && Tsv.find("\ncheck\tasset\tseverity\tdetail\n") != std::string::npos && Tsv.find("gate.entries\timage\tinfo\tentries=") != std::string::npos,
+              "the TSV is labelled static and carries per-GDF counts", Tsv.substr(0, 80));
+        Check(!R.NotRun.empty() && R.Summary().find("not run by design:") != std::string::npos && R.Summary().find("STATIC") != std::string::npos, "the summary is labelled static and lists what was not run");
+        bool SoundNotRun = false;
+        for (const auto& [Name, Why] : R.NotRun) SoundNotRun = SoundNotRun || Name.find("sound") != std::string::npos;
+        Check(SoundNotRun, "sound is listed as not run, never as passed");
+
+        // a clean layout: only the pass cases
+        const fs::path Out2 = Base / "clean" / "bo3";
+        Put(Out2 / "texture_assets" / "t" / "c.tif", Tif3);
+        Put(Out2 / "texture_assets" / "t" / "n.tif", Tiff(8, 8, 3, { 128, 128, 255 }));
+        Put(Out2 / "texture_assets" / "t.gdt", Gdt({
+            Ent("i_c", "image", Img("c.tif", "diffuseMap", "sRGB3chAlpha", "compressed high color")),
+            Ent("i_n", "image", Img("n.tif", "normalMap", "Normal", "compressed")),
+            Ent("mtl_ok", "material", { { "colorMap", "i_c" }, { "colorTint", "1 1 1 1" }, { "materialType", "lit" }, { "normalMap", "i_n" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+        }));
+        Inputs In2 = In;
+        In2.Roots = { Out2 };
+        const Result Clean = Run(In2);
+        Check(Clean.Failures == 0 && Clean.ExitCode() != 2 && Clean.Entries == 3 && Clean.Gdfs.at("image").second == 0, "a clean layout has no failure",
+              Clean.Summary() + (Clean.Findings.empty() ? "" : " first: " + Clean.Findings.front().Check + " " + Clean.Findings.front().Detail));
+        Check(Clean.ImagesDecoded == 2, "the pixel rules ran on both images", std::to_string(Clean.ImagesDecoded));
+
+        // the report writer and the layout roots
+        std::string Error;
+        Check(WriteReports(Clean, Base / "reports", Error) && fs::is_regular_file(Base / "reports" / "graywolf_gate.tsv") && fs::is_regular_file(Base / "reports" / "graywolf_gate_summary.txt"), "the reports are written", Error);
+        Check(ResolveRoots(Base / "out").size() == 1 && ResolveRoots(Base / "out")[0] == Base / "out" / "bo3", "the layout root is found", std::to_string(ResolveRoots(Base / "out").size()));
+
+        // no Mod Tools root and no catalog: those checks are listed as not run
+        Inputs None = In2;
+        None.ModToolsRoot.clear();
+        None.Catalog = nullptr;
+        const Result Blind = Run(None);
+        bool AwiNotRun = false, CatalogNotRun = false;
+        for (const auto& [Name, Why] : Blind.Incomplete)
+        {
+            AwiNotRun = AwiNotRun || Name == "awi.*";
+            CatalogNotRun = CatalogNotRun || Name.find("material.type") != std::string::npos;
+        }
+        Check(AwiNotRun && CatalogNotRun && Blind.Checks.count("awi.unknown_key") == 0, "without the Mod Tools or the catalog those checks are listed as incomplete");
+
+        Failed += ReviewTests(Failures);
+        fs::remove_all(Base, Ec);
+        return Failed;
+    }
+}

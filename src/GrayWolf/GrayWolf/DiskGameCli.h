@@ -11,4 +11,6 @@ namespace DiskGame
 {
     // The exit code.
     int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Input);
+    // The command line's --install, --cache, --languages... as ExportOptions, as Run reads them. False with Error.
+    bool ReadExportOptions(const IDiskGame& Game, const CliOptions& Cli, ExportOptions& Out, std::string& Error);
 }

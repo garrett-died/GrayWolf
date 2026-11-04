@@ -295,9 +295,14 @@
     <ClCompile Include="Bo3Target.GdtDb.cpp" />
     <ClCompile Include="Bo3Target.ImageUnpack.cpp" />
     <ClCompile Include="Bo3Target.Placement.cpp" />
+    <ClCompile Include="PoolCoverage.cpp" />
+    <ClCompile Include="PoolCoverageCli.cpp" />
     <ClCompile Include="Bo3Target.Output.cpp" />
     <ClCompile Include="Bo3Target.Techsets.cpp" />
     <ClCompile Include="Bo3Target.Publish.cpp" />
+    <ClCompile Include="Bo3Target.Awi.cpp" />
+    <ClCompile Include="Bo3Target.Verify.cpp" />
+    <ClCompile Include="Bo3VerifyCli.cpp" />
     <ClCompile Include="Bo3Target.MaterialImages.cpp" />
     <ClCompile Include="ImageRoles.cpp" />
     <ClCompile Include="CliCommands.AssetExport.cpp" />
@@ -331,9 +336,12 @@
     <ClInclude Include="Bo3Target.GdtDb.h" />
     <ClInclude Include="Bo3Target.ImageUnpack.h" />
     <ClInclude Include="Bo3Target.Placement.h" />
+    <ClInclude Include="PoolCoverage.h" />
     <ClInclude Include="Bo3Target.Output.h" />
     <ClInclude Include="Bo3Target.Techsets.h" />
     <ClInclude Include="Bo3Target.Publish.h" />
+    <ClInclude Include="Bo3Target.Awi.h" />
+    <ClInclude Include="Bo3Target.Verify.h" />
     <ClInclude Include="Bo3Target.MaterialImages.h" />
     <ClInclude Include="ImageRoles.h" />
     <ClInclude Include="McpServer.h" />
@@ -529,7 +537,7 @@
        preview its reference rigs, preview_rigs.json (AssetGrid\AnimRigs.h). -->
   <Target Name="CopyZonekitProfiles" AfterTargets="Build">
     <ItemGroup>
-      <ZonekitProfile Include="$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\profile.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\types.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\tables.*.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\blocks.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\empties.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\shading.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\strings.cipher.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\gdt\**\*.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\gdt\**\*.jsonc;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\target\*.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\preview_rigs.json" />
+      <ZonekitProfile Include="$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\profile.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\types.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\pool_map.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\inert_pools.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\tables.*.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\blocks.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\empties.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\shading.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\strings.cipher.txt;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\gdt\**\*.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\gdt\**\*.jsonc;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\**\target\*.json;$(MSBuildProjectDirectory)\..\..\..\zonekit\profiles\preview_rigs.json" />
     </ItemGroup>
     <Copy SourceFiles="@(ZonekitProfile)" DestinationFiles="@(ZonekitProfile->'$(OutDir)zonekit\profiles\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>

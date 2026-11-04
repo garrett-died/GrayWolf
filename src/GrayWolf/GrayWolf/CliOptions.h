@@ -189,8 +189,15 @@ struct CliOptions
     std::string DiskGameId;   // disk-export --game (DiskGame.h); detected when empty
     bool EstimateKept = false;  // disk-estimate --kept: the samples kept from the last run, not measured again
     bool KeepOutput = false;    // disk-weigh --keep: what its export wrote is kept
+    // pool-coverage (PoolCoverage.h): the zones walked (comma-separated, or @file with one per line), the export run's report and
+    // graywolf_approximations.tsv it is read against, and --min (exit non-zero while any pool is not terminal)
+    std::string PoolZones, PoolExportReport, PoolApprox;
+    bool PoolMin = false;
+    std::string PoolGate;       // pool-coverage --gate: a bo3-verify graywolf_gate.tsv, for converted and gate_pass
+    bool PoolAllZones = false;  // pool-coverage --all-zones: walk every zone the install lists (INERT needs it, or inert_pools.txt)
     std::string EstimateZones; // disk-estimate --picked: the zones picked, comma-separated (as the panel lists them)
     std::string WhereNames;    // disk-where, bo3-gdtdb-info --names: asset names, comma-separated, matched whole (no case)
+    std::string ReportOut;     // bo3-verify --report-out: the folder graywolf_gate.tsv and its summary line are written to
     std::string ModToolsRoot;  // --mod-tools-root: the BO3 Mod Tools folder (else the BO3 install found, else TA_TOOLS_PATH)
     // disk-export's BO3 publish step (Bo3Target.Publish.h). The target is never read from graywolf.json.
     std::string PublishTarget; // --target none|folder|modtools (none: the export is what it always was)

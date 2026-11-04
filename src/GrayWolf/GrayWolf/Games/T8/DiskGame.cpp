@@ -19,6 +19,7 @@
 #include "Games/Treyarch/TreyarchScriptBundles.h"
 #include "Games/Treyarch/TreyarchWeaponStats.h"
 #include "XPAKCache.h"
+#include "ZoneDiag.h"
 #include "MapLive.h"
 #include "MapRadiantRules.h"
 #include "WraithX.h"
@@ -710,6 +711,28 @@ namespace
 
         // ---- the clip map's brushes, brush models and collision triangles (Maps::ClipLayout)
         AddCollision(Scene, { "clipmap" }, ClipLayout());
+        if (FILE* Dbg = Maps::DebugFile())
+        {
+            // diagnostics only (GH_MAPDEBUG): the clip map's counts, and the terrain's pointers
+            Bo4ZoneDiag::ZoneAccess Access;
+            Access.Image = Img;
+            Access.Root = [this](const char* Type) { return Root(Type); };
+            Access.Count = [this](const char* Type) { return AllOf(Type).size(); };
+            Access.Off = [this](uint64_t A) { return Off(A); };
+            Access.Describe = [this](uint64_t V) {
+                if (V == 0) return std::string("null");
+                if (V == Rules().Marker) return std::string("marker_inline");
+                if (V == Rules().Resident) return std::string("marker_resident");
+                if (const int64_t Pos = Off(V); Pos >= 0) return std::format("zone+0x{:x}", (long long)Pos);
+                int Block = 0;
+                int64_t Offset = 0;
+                if (Rules().DecodeRef(V, Block, Offset)) return std::format("ref(block {}, +0x{:x})", Block, (long long)Offset);
+                return std::format("other(0x{:x})", (unsigned long long)V);
+            };
+            Access.NameAt = [this](uint64_t Pos) { return HashedName(At<uint64_t>(Image(), (int64_t)Pos) & HashMask, "hash"); };
+            Bo4ZoneDiag::Collision(Dbg, Access, Scene);
+            Bo4ZoneDiag::Terrain(Dbg, Access);
+        }
 
         // ---- the sky: the first lighting state's first sky model but the black default
         if (const int64_t Lit = Root("lighting"); Lit >= 0 && At<uint32_t>(Img, Lit + LightingStateCount) > 0)

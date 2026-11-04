@@ -31,7 +31,7 @@ void AddGameCommands(CliCommandBuilders& B)
         for (const GameCommand* Command : GameCommands())
         {
             auto* Sub = App.add_subcommand(Command->Name, Command->Help);
-            Sub->add_option("zones", Options.DiskExportIn[Command->Name], Command->InputHelp)->required();
+            Sub->add_option(Command->InputName, Options.DiskExportIn[Command->Name], Command->InputHelp)->required();
             if (Command->AddOptions) Command->AddOptions(*Sub, Options);
         }
     };

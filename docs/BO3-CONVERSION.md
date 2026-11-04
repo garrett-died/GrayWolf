@@ -110,6 +110,20 @@ Radiant, the game; games other than Black Ops 4; the lut material is not read by
 the games name only by a hash stay unresolved. Games whose map reader is not a zone reader (`IW1IW2`) get the list and the
 geometry materials but export no model for it.
 
+## Checking output
+
+`bo3-verify` runs at the end of `--target` and by hand; `Bo3Target.Awi` reads `deffiles\*.awi` and `Bo3Target.Verify`
+holds the checks. It writes `graywolf_gate.tsv` (`check, asset, severity, detail`) and a summary. Exit 0 pass, 1 warnings or
+incomplete, 2 failure, 3 reports not written. Zero files or zero entries is a failure. Rows are labelled static: a pass is
+not proof Black Ops III accepts the asset. `pool-coverage` puts each pool in one state: `CONVERTED`, `EXTRACTED_NEUTRAL`,
+`INERT`, `FAILED`, or the non-final `NOT_SEEN`, `WALKED_ONLY`, `STATIC_ONLY`, `UNMAPPED`. An export report is accepted only if
+its zones are the zones walked, and a gate only if its GDT hash still holds. `converted` counts are per GDF in that run, not
+per asset of a zone.
+
+Checked on the Black Ops 4 zone `mp_frenetic` (25 models): 29 GDTs, 145 entries, 54 failures, all `surfaceType <none>`, and 31
+warnings. Compared with t7kb `gdt_check` on the same files. Not built: sound, weapon, animation and stock comparison checks. A
+slot bound to a stock image is not judged yet, so that output cannot reach exit 0. `--target modtools` has not been run.
+
 ## Known limits
 
 - Not loaded in the Asset Property Editor, not linked, not seen in game.

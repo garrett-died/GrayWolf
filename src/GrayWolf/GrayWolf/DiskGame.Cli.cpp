@@ -7,6 +7,7 @@
 #include "Bo3Target.Output.h"
 #include "MaterialDescription.h"
 #include "Bo3Target.Publish.h"
+#include "Bo3Target.Verify.h"
 #include "CliCommands.h"
 #include "CliOptions.h"
 #include "CliSupport.h"
@@ -196,6 +197,11 @@ namespace
     }
 }
 
+bool ReadExportOptions(const IDiskGame& Game, const CliOptions& Cli, ExportOptions& Out, std::string& Error)
+{
+    return ReadOptions(Game, Cli, Out, Error);
+}
+
 int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Input)
 {
     const auto Fail = [&](const std::string& Why) {
@@ -236,6 +242,48 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
                        Publish.ModToolsRoot.string() + "\n";
         for (const auto& W : Warnings) PublishLines += "publish_warning " + W + "\n";
         Refused = Done.Error;
+
+        // the static gate (bo3-verify) over what was just written: read-only, and its report goes beside the run's other reports
+        // (graywolf_gate.tsv in the run folder). It changes no exported file. A plan wrote nothing to the target, so it has nothing to check.
+        if (Refused.empty() && !Publish.Plan)
+        {
+            namespace Vf = Bo3Target::Verify;
+            Vf::Inputs In;
+            In.Roots = { Publish.OutputRoot };
+            In.ModToolsRoot = Publish.ModToolsRoot;
+            In.Catalog = &Bo3Target::Techsets::Shared();
+            In.Held = Mod.View().Held;
+            std::error_code GateEc;
+            In.MapSources = fs::is_directory(Publish.OutputRoot / "map_source", GateEc) || Publish.FullMap;
+            bool RunGate = true;
+            std::string NotRunWhy;
+            if (Publish.Which == Pb::Target::ModTools)
+            {
+                // the Mod Tools root holds far more than this run wrote: only the GDTs GrayWolf's manifest lists. A manifest that does not
+                // load, or lists none, means the gate is not run: the root is never scanned instead.
+                Bo3Target::Output::Manifest Listed;
+                const bool Loaded = Listed.Load(Publish.OutputRoot / "graywolf" / "manifest.json").Ok;
+                RunGate = Vf::ModToolsGdtFiles(Listed, Loaded, Publish.OutputRoot, In.OnlyFiles, NotRunWhy);
+                In.ListedOnly = true;
+            }
+            if (!RunGate)
+            {
+                PublishLines += "gate_mode=not run (" + NotRunWhy + ")\n";
+                Into.Counters["gate_not_run"] += 1;
+            }
+            else
+            {
+                const Vf::Result Gate = Vf::Run(In);
+                std::string GateError;
+                if (Vf::WriteReports(Gate, C.OutRoot, GateError))
+                    PublishLines += "gate_report=" + (fs::path(C.OutRoot) / "graywolf_gate.tsv").string() + "\n";
+                else
+                    PublishLines += "gate_warning cannot write the gate report: " + GateError + "\n";
+                PublishLines += "gate_mode=static (not proof BO3 accepts the assets)\ngate_result=" + std::string(Gate.Word()) + "\ngate_exit=" + std::to_string(Gate.ExitCode()) + "\ngate_summary=" + Gate.Summary() + "\n";
+                Into.Counters["gate_failures"] += Gate.Failures;
+                Into.Counters["gate_warnings"] += Gate.Warnings;
+            }
+        }
     };
     if (Publish.Plan)
     {
@@ -311,7 +359,9 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
         }
     }
     const bool Ignored = !C.NameFilter.empty() && !Game.FiltersByName();
-    const std::string LanguageLines = "languages=" + Spoken.Text() + "\n" +
+    std::string ZoneNames;
+    for (const std::string& Z : Zones) ZoneNames += (ZoneNames.empty() ? "" : "|") + Z;
+    const std::string LanguageLines = "languages=" + Spoken.Text() + "\n" + "zone_names=" + ZoneNames + "\n" +
                                   (Zones.size() < Named ? "zones_other_languages=" + std::to_string(Named - Zones.size()) + "\n" : "");
     CliReport(Options, std::string("result=ok\ngame=") + Game.Id() + "\n" + (Ignored ? "name_filter=ignored\n" : "") + LanguageLines + PublishLines + Report(T));
     return 0;

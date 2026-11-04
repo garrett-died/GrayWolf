@@ -1,0 +1,307 @@
+{
+ "game": "t5",
+ "generated_by": "tools/bo3target/gen_pool_map.py",
+ "pools": [
+  {
+   "pool": "aitype",
+   "kind": null,
+   "bo3_awi": "aitype",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "character",
+   "kind": null,
+   "bo3_awi": "character",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "col_map_mp",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "col_map_sp",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "com_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "ddl",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "destructibledef",
+   "kind": null,
+   "bo3_awi": "destructibledef",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "emblemset",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "font",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "fx",
+   "kind": "fx",
+   "bo3_awi": null,
+   "neutral_form": "json",
+   "route": "direct"
+  },
+  {
+   "pool": "game_map_mp",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "game_map_sp",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "gfx_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "glasses",
+   "kind": null,
+   "bo3_awi": "glass",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "image",
+   "kind": "image",
+   "bo3_awi": "image",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "impactfx",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "lightdef",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "localize",
+   "kind": "localize",
+   "bo3_awi": null,
+   "neutral_form": "csv",
+   "route": "direct"
+  },
+  {
+   "pool": "map_ents",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "material",
+   "kind": "material",
+   "bo3_awi": "material",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "menu",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "menufile",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "mpbody",
+   "kind": null,
+   "bo3_awi": "mpbody",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "mphead",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "mptype",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "packindex",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "physconstraints",
+   "kind": null,
+   "bo3_awi": "physconstraints",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "physpreset",
+   "kind": null,
+   "bo3_awi": "physpreset",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "rawfile",
+   "kind": "rawfile",
+   "bo3_awi": null,
+   "neutral_form": "raw files (share/raw layout)",
+   "route": "direct"
+  },
+  {
+   "pool": "snddriverglobals",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "sound",
+   "kind": "sound",
+   "bo3_awi": null,
+   "neutral_form": "audio files (wav, flac or opus)",
+   "route": "direct"
+  },
+  {
+   "pool": "sound_patch",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "stringtable",
+   "kind": "data",
+   "bo3_awi": null,
+   "neutral_form": "csv",
+   "route": "direct"
+  },
+  {
+   "pool": "techset",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "ui_map",
+   "kind": "map",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "map"
+  },
+  {
+   "pool": "weapon",
+   "kind": "weapons",
+   "bo3_awi": null,
+   "neutral_form": "weapon files (OpenAssetTools text)",
+   "route": "direct"
+  },
+  {
+   "pool": "weapondef",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "weaponvariant",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "xGlobals",
+   "kind": null,
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "xanim",
+   "kind": "anim",
+   "bo3_awi": "xanim",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "xmodel",
+   "kind": "model",
+   "bo3_awi": "xmodel",
+   "neutral_form": null,
+   "route": "direct"
+  },
+  {
+   "pool": "xmodelalias",
+   "kind": null,
+   "bo3_awi": "xmodelalias",
+   "neutral_form": null,
+   "route": "none"
+  },
+  {
+   "pool": "xmodelpieces",
+   "kind": "model",
+   "bo3_awi": null,
+   "neutral_form": null,
+   "route": "carried:xmodel"
+  }
+ ]
+}

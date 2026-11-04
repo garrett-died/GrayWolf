@@ -22,6 +22,8 @@ struct GameCommand
     int (*Run)(const CliOptions& Options, const std::string& Input);
     // options of its own beyond the shared ones (--out, --type, --name-filter...), or nullptr
     void (*AddOptions)(CLI::App& Sub, CliOptions& Options) = nullptr;
+    // the positional's name, when AddOptions has an option of the name "zones"
+    const char* InputName = "zones";
 };
 
 const std::vector<const GameCommand*>& GameCommands();

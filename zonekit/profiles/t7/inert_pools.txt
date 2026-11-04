@@ -1,0 +1,3 @@
+# Pools proven empty for this game, one pool name per line (pool-coverage reads this; a "#" starts a comment).
+# A pool seen 0 in the zones tested is NOT_SEEN until it is named here with its proof or --all-zones walked every zone of the game.
+# Nothing is proven inert yet.

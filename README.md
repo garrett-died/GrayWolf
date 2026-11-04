@@ -312,6 +312,19 @@ data was not installed; `.dds` output keeps the game's two-channel normals; 5 Co
 with no material role stay unconverted. Radiant maps have no Black Ops 4 terrain yet, patches are
 2x2, and collision triangles are thin brushes. See [docs/BO3-CONVERSION.md](docs/BO3-CONVERSION.md).
 
+**Checking the output.** Every `--target` run ends with `bo3-verify`, which can also be run by hand:
+
+```
+GrayWolf.exe bo3-verify <out>/<game>/bo3 --mod-tools-root <BO3> --report-out <dir>
+GrayWolf.exe pool-coverage <game> --zones <zones> --export-report <report> --gate <gate.tsv> --out <dir>
+```
+
+`bo3-verify` reads the Mod Tools' own `.awi` schemas and techset catalog and checks GDT syntax, every key, material slots,
+image headers and pixels, and the Black Ops III art rules. It writes `graywolf_gate.tsv`; exit 0 is a pass, 1 warnings or an
+incomplete run, 2 a failure. Checking nothing is a failure, and a check it cannot run is listed, never passed. Its results are
+static: they do not prove Black Ops III accepts an asset. Sound, weapon, animation and stock comparison checks are not built
+yet. `pool-coverage` gives every pool of a game one state per zones walked, from a real export report and gate.
+
 ## Other tools in the command line
 
 `GrayWolf.exe <command> --help` for each one.

@@ -39,7 +39,10 @@
 #include "Bo3Target.Placement.h"
 #include "Bo3Target.Output.h"
 #include "Bo3Target.Techsets.h"
+#include "PoolCoverage.h"
 #include "Bo3Target.Publish.h"
+#include "Bo3Target.Awi.h"
+#include "Bo3Target.Verify.h"
 #include "MapFullExport.h"
 #include "Bo3Target.ImageUnpack.h"
 #include "Bo3Target.MaterialImages.h"
@@ -997,6 +1000,11 @@ static int SelfTest(std::string& Failures)
     Failed += MaterialGdt::SelfTest(Failures);
     Failed += ImageRoles::SelfTest(Failures);
     Failed += Bo3Target::Publish::SelfTest(Failures);
+    Failed += Bo3Target::Awi::SelfTest(Failures);
+    Failed += Bo3Target::Verify::SelfTest(Failures);
+
+    // pool-coverage: the state of a pool on synthetic rows, the pool map file, the run report parsers
+    Failed += PoolCoverage::SelfTest(Failures);
     Failed += Maps::FullMapSelfTest(Failures);
 
     // The Radiant source export's stand-alone rules (hulls, limits, tiny faces, contents, lights, angles, usage)
