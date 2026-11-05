@@ -407,6 +407,10 @@ void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Ma
                                 "the techset's renderFlags were not read (a stub techset or a failed read): the material is not classed as a decal, by flags or by anything else" });
         }
 
+    // a decal by the source (its techset name, or its renderFlags where the name is a hash): only used when no catalog chose the BO3 techset
+    if (Source != nullptr)
+        M.SourceDecal = ExportNaming::Lower(Source->Techset).find("decal") != std::string::npos || SurfaceTypes::IsDecal(ExportNaming::Lower(Game), Source->RenderFlags);
+
     // the technique: emission, then light through the surface, then the alpha, then a colour specular
     const bool Emissive = !D.Emissive.Empty(), Backlit = !D.Transmission.Empty() && D.Transmission.Image.Invert;
     if (!D.Transmission.Empty() && !D.Transmission.Image.Invert) Counter("transmission_not_thickness")++;
@@ -1035,14 +1039,33 @@ Builder::Resolved Builder::Resolve() const
     Out.Skipped = SkippedMaterials;
     for (const auto& [Name, M] : Work)
     {
-        const auto Used = Usage.find(M.Source);
+        // the usage: only a material the map's own geometry draws has one; it is chosen from the BO3 techset (Category, Type) and the measure
+        std::string UsageValue = "<not in editor>";
+        Note UsageNote;
+        if (const auto Used = Usage.find(M.Source); Used != Usage.end())
+        {
+            Bo3Target::Techsets::UsageQuery Q;
+            // the BO3 techset decides; with no catalog behind it (the fixed rules write only lit techsets) the source's own decal class stands in
+            Q.Category = !M.Targeted && M.SourceDecal ? "Decal" : M.Category;
+            Q.Type = M.Type;
+            Q.Name = Name;
+            Q.Use = Used->second;
+            // the rules do not depend on the catalog: the data in use, else the shipped table (without it the facing alone decides)
+            const Bo3Target::Techsets::UsageRules& Rules = Targets != nullptr && Targets->Usage().Loaded() ? Targets->Usage() : Bo3Target::Techsets::Shared().Usage();
+            const Bo3Target::Techsets::UsageChoice C = Rules.Choose(Q);
+            UsageValue = C.Usage;
+            if (C.Fallback)
+                UsageNote = { "material.usage_fallback", "usage=" + C.Usage + ", techset=" + M.Type + ", category=" + M.Category + ", via=" + Used->second.Via,
+                              C.Why + ": the usage is the fallback value, an assumption (interior or exterior is not in the data)" };
+        }
         Gdt::Fields F = { { "materialCategory", M.Category }, { "materialType", M.Type }, { "surfaceType", M.SurfaceType },
-                          { "template", "material.template" }, { "usage", Used != Usage.end() ? Used->second : "<not in editor>" } };
+                          { "template", "material.template" }, { "usage", UsageValue } };
         ResolvedMaterial R;
         R.Name = Name;
         R.Source = M.Source;
         R.Targeted = M.Targeted;
         R.Notes = M.Notes;
+        if (!UsageNote.Code.empty()) R.Notes.push_back(UsageNote);
         if (const auto L = Late.find(Name); L != Late.end()) R.Notes.insert(R.Notes.end(), L->second.begin(), L->second.end());
         for (const auto& [Key, I] : M.Slots)
         {
@@ -1310,8 +1333,9 @@ int SelfTest(std::string& Failures)
         return Out.Materials.size() == 1;
     };
 
-    // usage: <not in editor> unless the builder was told one for the material (a map's geometry), and then only that one
+    // usage: <not in editor> unless the builder was told the map draws the material; then chosen from the BO3 techset it got and the measure
     {
+        Check(Data.Usage().Loaded(), "the shipped usage rules are there", Data.Problems().empty() ? "" : Data.Problems().front());
         Builder B(Base, "t_");
         B.TechsetData(&Data);
         Materials::Source Src;
@@ -1322,10 +1346,60 @@ int SelfTest(std::string& Failures)
         B.Add(C, Dir, &Src, "bo4");
         std::string Before, UsedA, UsedC;
         for (const auto& M : B.Resolve().Materials) Before += Value(M, "usage") + ";";
-        B.SetUsage({ { "mtl_floor", "floor" } });
+        Tc::MapUse Floor;
+        Floor.Floor = 90, Floor.Wall = 10, Floor.Via = "world#0";
+        B.SetMapUse({ { "mtl_floor", Floor } });
         for (const auto& M : B.Resolve().Materials) (M.Name == "mtl_floor" ? UsedA : UsedC) = Value(M, "usage");
         Check(Before == "<not in editor>;<not in editor>;", "usage defaults to <not in editor>", Before);
-        Check(UsedA == "floor" && UsedC == "<not in editor>", "a named material gets its usage, the others keep <not in editor>", UsedA + " / " + UsedC);
+        Check(UsedA == "floor" && UsedC == "<not in editor>", "a material the map draws gets its usage, the others keep <not in editor>", UsedA + " / " + UsedC);
+    }
+    {
+        // the decision follows the BO3 techset the material got, not the source name: the same measure (a wall) gives decal for a decal techset
+        // and a window for glass, a terrain mesh gives terrain over the decal category, and an unmeasured material falls back with a note
+        const auto UsageOf = [&](const Materials::Description& D, const char* Techset, const Tc::MapUse& Use, std::string& Type, std::string& Category, bool& Noted) {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            Materials::Source Src;
+            Src.Name = D.Name;
+            Src.Techset = Techset;
+            B.Add(D, Dir, &Src, "bo3");
+            B.SetMapUse({ { D.Name, Use } });
+            const Builder::Resolved R = B.Resolve();
+            if (R.Materials.size() != 1) return std::string("(none)");
+            Type = Value(R.Materials[0], "materialType");
+            Category = Value(R.Materials[0], "materialCategory");
+            Noted = false;
+            for (const auto& N : R.Materials[0].Notes) Noted |= N.Code == "material.usage_fallback";
+            return Value(R.Materials[0], "usage");
+        };
+        std::string Type, Category;
+        bool Noted = false;
+        Tc::MapUse Wall;
+        Wall.Wall = 100, Wall.Via = "world#1";
+        const std::string Decal = UsageOf(Make("mtl_marking", 0), "lit_decal", Wall, Type, Category, Noted);
+        Check(Category == "Decal" && Decal == "decal" && !Noted, "usage: a material whose BO3 techset is a decal is a decal", Category + "/" + Type + "/" + Decal);
+        Tc::MapUse Layer = Wall;
+        Layer.Terrain = true;
+        const std::string Ter = UsageOf(Make("mtl_layer", 0), "lit_decal_reveal", Layer, Type, Category, Noted);
+        Check(Ter == "terrain", "usage: a terrain mesh's layer is terrain over the decal category", Category + "/" + Type + "/" + Ter);
+        const std::string Glass = UsageOf(Make("mtl_pane", 0), "glass", Wall, Type, Category, Noted);
+        Check(Type.rfind("glass", 0) == 0 && Glass == "window", "usage: a glass techset is a window", Type + "/" + Glass);
+        Tc::MapUse None;
+        None.Via = "world#2";
+        const std::string Fb = UsageOf(Make("mtl_unseen", 0), "lit", None, Type, Category, Noted);
+        Check(Fb == "interior wall" && Noted, "usage: a material with no measured triangle gets interior wall and a material.usage_fallback note", Fb);
+        Check(Fb != "<not in editor>", "usage: a material the map draws is never <not in editor>", Fb);
+        // no catalog behind the builder (the fixed rules write only lit techsets): the source's own decal class stands in
+        {
+            Builder Old(Base, "t_");
+            Materials::Source Src;
+            Src.Name = "mtl_old_decal";
+            Src.Techset = "lit_decal";
+            Old.Add(Make("mtl_old_decal", 0), Dir, &Src, "bo3");
+            Old.SetMapUse({ { "mtl_old_decal", Wall } });
+            const Builder::Resolved R = Old.Resolve();
+            Check(R.Materials.size() == 1 && Value(R.Materials[0], "usage") == "decal", "usage: with no catalog a source decal is still a decal", R.Materials.empty() ? "(none)" : Value(R.Materials[0], "usage"));
+        }
     }
     // surfaceType: the description's own, never a guess; <none> with a note when the game gave none or the awi has no such option
     {

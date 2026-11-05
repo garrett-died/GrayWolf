@@ -95,11 +95,14 @@ namespace Bo3Target::GdtDb
         // The gdt file (as the database stores it) of the image entity of this name; false when the database has no such image
         // or gave no file. Only image rows are kept for it.
         bool ImageGdtFile(std::string_view Name, std::string& File) const;
+        // The same for the material entity of this name (the first row keeps it)
+        bool MaterialGdtFile(std::string_view Name, std::string& File) const;
         // Image names the database holds in two different gdt files (ImageGdtFile keeps the first row): how often the choice is ambiguous
         size_t ImageFileConflicts() const { return Conflicts; }
 
     private:
         std::unordered_map<std::string, std::string> ImageFiles;   // normalised image name -> gdt file as stored
+        std::unordered_map<std::string, std::string> MaterialFiles;   // normalised material name -> gdt file as stored
         size_t Conflicts = 0;
         std::set<std::pair<std::string, std::string>> Pairs;   // (lower gdf, name)
         std::unordered_map<std::string, std::set<std::string>> TypesByName;
@@ -224,6 +227,11 @@ namespace Bo3Target::GdtDb
     // name has no hydrax_ or graywolf_ prefix. The gdt's age no longer decides (a stock gdt saved again
     // later, such as texture_assets\t7_metal.gdt, is still stock); rows whose gdt was saved more than
     // WindowSeconds after the reference are only counted, in SavedLater.
+    // The gdt file holding the material of this name in the Mod Tools, and the "usage" that entry carries, read from the file (never written).
+    // False with Why when the database names no file, the file cannot be read, holds no such entry, or the entry has no usage key.
+    // File is set whenever the database named one.
+    bool HeldMaterialUsage(const Catalog& Held, const std::filesystem::path& ModToolsRoot, std::string_view Name, std::string& File, std::string& Usage, std::string& Why);
+
     class StockIndex
     {
     public:

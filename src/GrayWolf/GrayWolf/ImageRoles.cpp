@@ -185,6 +185,11 @@ namespace ImageRoles
         return std::abs(MeanR - 0.5) < Centre && std::abs(MeanG - 0.5) < Centre && DevR < Spread && DevG < Spread && (double)Inside >= Disc * Count;
     }
 
+    bool KindBindsImages(DiskGame::Kind K)
+    {
+        return K == DiskGame::Kind::Material || K == DiskGame::Kind::Model || K == DiskGame::Kind::Fx;
+    }
+
     Outcome RebuildNormals(const Book& Roles, const fs::path& ImagesDir, DiskGame::Totals& T)
     {
         if (SettingsManager::GetSetting("patchnormals", "true") != "true")
@@ -460,6 +465,9 @@ namespace ImageRoles
             Check(O.Failed == 0, "files: no failure", std::to_string(O.Failed));
             fs::remove_all(Dir, Ec);
         }
+        // images met through a model pulled from another zone belong to the run's normals too
+        Check(KindBindsImages(DiskGame::Kind::Model) && KindBindsImages(DiskGame::Kind::Material) && KindBindsImages(DiskGame::Kind::Fx) && !KindBindsImages(DiskGame::Kind::Sound),
+              "a pulled model reads its zone's image roles", "");
         return Failed;
     }
 }

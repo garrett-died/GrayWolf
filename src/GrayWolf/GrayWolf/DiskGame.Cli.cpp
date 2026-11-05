@@ -262,6 +262,14 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
             In.Approximations = fs::path(C.OutRoot) / "graywolf_approximations.tsv";
             std::error_code GateEc;
             In.MapSources = fs::is_directory(Publish.OutputRoot / "map_source", GateEc) || Publish.FullMap;
+            // --full-map says which materials the maps draw on their own geometry: the gate fails one of them left <not in editor>
+            if (Publish.FullMap)
+            {
+                In.MapDrawn = Done.MapMaterials;
+                In.MapDrawnKnown = Done.MapDataComplete;
+                In.MapDataWhy = Done.MapDataWhy;
+                In.MapHeld = Done.MapHeld;
+            }
             bool RunGate = true;
             std::string NotRunWhy;
             if (Publish.Which == Pb::Target::ModTools)

@@ -152,12 +152,15 @@ namespace Maps
     struct FacingAreas
     {
         double Floor = 0, Ceiling = 0, Wall = 0;
-        void Add(const V3& A, const V3& B, const V3& C);
+        // How the triangle's cross(b - a, c - a) lies against the vertex normal, for the triangles given one (the game's winding, measured)
+        size_t WithNormal = 0, CrossAgrees = 0, CrossAgainst = 0;
+        // Which way a triangle faces: the vertex normal when the reader gives one (Normal, a unit vector), else the cross product's
+        // direction times Winding (+1: cross(b - a, c - a) points out of the front, -1: into it). The sign of the cross product
+        // depends on the game's winding, so it is never used unsigned for a game whose winding was not measured.
+        void Add(const V3& A, const V3& B, const V3& C, const V3* Normal = nullptr, int Winding = 1);
     };
-    // The usage Radiant lists a map's material under: a decal category "decal", a glass techset
-    // "window", else the facing with the most area: normal z above 0.7 "floor", below -0.7 "ceiling",
-    // "interior wall" otherwise
-    std::string MaterialUsage(bool Decal, const std::string& Techset, const FacingAreas& Areas);
+    // (The usage Radiant lists a map's material under is chosen from the BO3 techset the material gets and these areas:
+    // Techsets::UsageRules, zonekit/profiles/t7/target/material-usage.json.)
     constexpr const char* NotInEditor = "<not in editor>";
 
     // The rules above on synthetic input; the number failed (each failure appended to Failures)

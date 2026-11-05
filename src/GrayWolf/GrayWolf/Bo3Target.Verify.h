@@ -60,7 +60,14 @@ namespace Bo3Target::Verify
         const GdtDb::Catalog* Held = nullptr;           // the Mod Tools gdt.db; null: the stock-pair and unresolved-reference checks are not run
         const GdtDb::StockIndex* Stock = nullptr;       // which rows of Held are stock (Treyarch's own); null: every row is called a stock pair
         std::filesystem::path Approximations;           // the run's graywolf_approximations.tsv: it names why a material's surfaceType is <none> (material.surface_unknown / surface_unmapped); empty: not known
-        bool MapSources = false;                        // the output holds map sources: a material's usage cannot be judged
+        bool MapSources = false;                        // the output holds map sources: a material's usage cannot be judged ...
+        // ... unless the run says which materials the maps draw: asset name (lower case) -> the first surface that draws it. With MapDrawnKnown
+        // a drawn material left <not in editor> fails (naming the surface), and a material with a usage that no map draws fails.
+        std::map<std::string, std::string> MapDrawn;
+        bool MapDrawnKnown = false;
+        std::string MapDataWhy;
+        // Map-drawn materials the Mod Tools hold (no entry in the output): asset name (lower case) -> { gdt, the usage there or "unavailable: why" }
+        std::map<std::string, std::pair<std::string, std::string>> MapHeld;     // why the list of drawn materials is missing or partial; the usage check is then incomplete, never a pass
     };
 
     struct Result

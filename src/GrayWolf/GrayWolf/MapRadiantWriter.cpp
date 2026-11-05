@@ -846,7 +846,7 @@ namespace
             }
             // the materials the map's own render surfaces use are listed in Radiant under a usage by what
             // they draw (decal, window, floor, ceiling, interior wall); the others stay <not in editor>
-            std::map<std::string, std::string> Usage = GeometryUsage(Scene, &G.Materials);
+            std::map<std::string, Bo3Target::Techsets::MapUse> Usage = GeometryUse(Scene, &G.Materials);
             return [G = std::move(G), Described = std::move(Described), Sources = std::move(Sources), GameId = Scene.Game, Usage = std::move(Usage)](std::map<std::string, size_t>& Counters) {
                 const fs::path Images = G.Root / "model_export" / G.Map / "images";
                 // an image's file name there, the first source to take a name keeping it
@@ -866,10 +866,27 @@ namespace
                     }
                     return "model_export/" + G.Map + "/images/" + It->second;
                 }, "material_gdt_");
-                B.SetUsage(Usage);
+                B.SetMapUse(Usage);
                 for (size_t K = 0; K < Described.size(); K++) B.Add(Described[K], G.Root, &Sources[K], GameId);
                 std::vector<std::string> Entries = G.ModelEntries;
                 const std::vector<std::string> Mine = B.Entries("\n");
+                // every usage fallback leaves a row, as the publish step's approximations file does: <map>_radiant/graywolf_approximations.tsv
+                {
+                    std::string Rows = "code\tasset\tdetail\tmessage\n";
+                    size_t Fallbacks = 0;
+                    for (const auto& M : B.Resolve().Materials)
+                        for (const auto& N : M.Notes)
+                            if (N.Code == "material.usage_fallback")
+                            {
+                                Rows += N.Code + "\t" + M.Name + "\t" + N.Detail + "\t" + N.Message + "\n";
+                                Fallbacks++;
+                            }
+                    Counters["material_usage_fallback"] += Fallbacks;
+                    std::error_code RowEc;
+                    fs::create_directories(G.Root, RowEc);
+                    if (Fallbacks != 0) std::ofstream(G.Root / "graywolf_approximations.tsv", std::ios::binary | std::ios::trunc) << Rows;
+                    else fs::remove(G.Root / "graywolf_approximations.tsv", RowEc);
+                }
                 Entries.insert(Entries.end(), Mine.begin(), Mine.end());
                 std::error_code Ec;
                 fs::create_directories(Images, Ec);

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "about": "Editor usage (the usage field of a material entry, Radiant's Usage filter) for a material a map draws. No game stores it. Chosen from the BO3 techset the material ends up with (its category and type) and what the map measured; docs/hydrax-port/p2-usage.md has every number. Rules are tried in order, first match wins; a rule's fields must all match.",
+  "population": "Treyarch's own material rows of gdt.db under the StockIndex filter (16,057 materials, 2,028 with a usage other than <not in editor>), measured 2026-11-05. A rate is the share of the materials that match the rule and have a usage which agree with it; the materials left <not in editor> are the ones no map used.",
+  "fallback": "interior wall",
+  "facing": { "floor": "floor", "ceiling": "ceiling", "wall": "interior wall" },
+  "rules": [
+    { "id": "role_terrain", "role": "terrain", "usage": "terrain", "basis": "hypothesis: a mesh the game names terrain draws a terrain layer; stock has 143 terrain materials (65 lit, 47 of category Decal), the role itself is not in stock data" },
+    { "id": "role_sky", "role": "sky", "usage": "sky", "basis": "hypothesis: the map's sky model; stock has 6 sky materials, 4 of 5 non-decal materials with sky in the name are sky (n=5)" },
+    { "id": "tools_clip", "category": "Tools", "name_token": "clip", "usage": "clip", "basis": "tested: category Tools with a usage 204; name token clip: clip 106 of 107", "n": 107, "hits": 106 },
+    { "id": "tools", "category": "Tools", "usage": "tools", "basis": "tested: category Tools without the clip token: tools 96 of 97", "n": 97, "hits": 96 },
+    { "id": "decal", "category": "Decal", "usage": "decal", "basis": "tested: category Decal with a usage 624: decal 496 (79.5%); terrain 47, exterior wall 19, floor 18, interior wall 14 (terrain layers are caught by role_terrain first)", "n": 624, "hits": 496 },
+    { "id": "glass", "type_prefix": "glass", "usage": "window", "basis": "tested: techset glass* with a usage 18: window 15 (83.3%)", "n": 18, "hits": 15 },
+    { "id": "water", "type_prefix": "water_shore", "usage": "water", "basis": "tested: techset water_shore* with a usage 5: water 5 (small sample)", "n": 5, "hits": 5 },
+    { "id": "sky_techset", "type_prefix": "sky_", "usage": "sky", "basis": "hypothesis: 9 stock sky_* materials, all <not in editor> (none is in a map), so stock neither agrees nor disagrees; sky is the only usage that fits" }
+  ],
+  "tie_tokens": [
+    { "token": "carpet", "usage": "floor", "n": 18, "hits": 18 },
+    { "token": "linoleum", "usage": "floor", "n": 13, "hits": 13 },
+    { "token": "wallpaper", "usage": "interior wall", "n": 12, "hits": 12 },
+    { "token": "cobweb", "usage": "ceiling", "n": 10, "hits": 10 },
+    { "token": "rock", "usage": "terrain", "n": 34, "hits": 31 },
+    { "token": "gravel", "usage": "terrain", "n": 11, "hits": 10 }
+  ],
+  "tie_rule": "a token is adopted at precision 0.85 or more over at least 10 non-decal, non-tool materials with a usage; it decides only where the facing is not usable (no triangle measured, or the two largest facings tie)"
+}

@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <format>
@@ -281,9 +282,129 @@ bool Data::LoadCatalogText(const std::string& Json)
     return !Sets.empty();
 }
 
+void MapUse::Merge(const MapUse& O)
+{
+    Floor += O.Floor;
+    Ceiling += O.Ceiling;
+    Wall += O.Wall;
+    Terrain = Terrain || O.Terrain;
+    Sky = Sky || O.Sky;
+    if (Via.empty()) Via = O.Via;
+}
+
+bool UsageRules::Load(const std::string& JsonText)
+{
+    *this = UsageRules();
+    const nlohmann::json Root = nlohmann::json::parse(JsonText, nullptr, false);
+    if (Root.is_discarded() || !Root.is_object() || !Root.contains("rules") || !Root["rules"].is_array()) return false;
+    const auto Str = [](const nlohmann::json& J, const char* Key) { return J.contains(Key) && J[Key].is_string() ? J[Key].get<std::string>() : std::string(); };
+    if (const std::string F = Str(Root, "fallback"); !F.empty()) Fallback = F;
+    if (Root.contains("facing") && Root["facing"].is_object())
+    {
+        if (const std::string V = Str(Root["facing"], "floor"); !V.empty()) FloorUsage = V;
+        if (const std::string V = Str(Root["facing"], "ceiling"); !V.empty()) CeilingUsage = V;
+        if (const std::string V = Str(Root["facing"], "wall"); !V.empty()) WallUsage = V;
+    }
+    for (const nlohmann::json& J : Root["rules"])
+    {
+        if (!J.is_object()) continue;
+        Rule R;
+        R.Id = Str(J, "id");
+        R.Role = Str(J, "role");
+        R.Category = Str(J, "category");
+        R.Type = Str(J, "type");
+        R.TypePrefix = Str(J, "type_prefix");
+        R.NameToken = Str(J, "name_token");
+        R.Usage = Str(J, "usage");
+        // a rule with no condition would match everything, and one with no usage says nothing: neither is a rule
+        if (R.Usage.empty() || (R.Role.empty() && R.Category.empty() && R.Type.empty() && R.TypePrefix.empty() && R.NameToken.empty())) continue;
+        Rules.push_back(std::move(R));
+    }
+    if (Root.contains("tie_tokens") && Root["tie_tokens"].is_array())
+        for (const nlohmann::json& J : Root["tie_tokens"])
+            if (J.is_object() && !Str(J, "token").empty() && !Str(J, "usage").empty()) Tokens.emplace_back(Str(J, "token"), Str(J, "usage"));
+    return !Rules.empty();
+}
+
+std::string UsageRules::FacingUsage(const MapUse& U) const
+{
+    const double Total = U.Total();
+    if (Total <= 0) return std::string();
+    const double Top = (std::max)({ U.Floor, U.Ceiling, U.Wall });
+    // a tie at the top is not a facing
+    const int AtTop = (U.Floor == Top ? 1 : 0) + (U.Ceiling == Top ? 1 : 0) + (U.Wall == Top ? 1 : 0);
+    if (AtTop > 1) return std::string();
+    return U.Floor == Top ? FloorUsage : U.Ceiling == Top ? CeilingUsage : WallUsage;
+}
+
+UsageChoice UsageRules::Choose(const UsageQuery& Q) const
+{
+    UsageChoice C;
+    for (const Rule& R : Rules)
+    {
+        if (!R.Role.empty() && !((R.Role == "terrain" && Q.Use.Terrain) || (R.Role == "sky" && Q.Use.Sky))) continue;
+        if (!R.Category.empty() && R.Category != Q.Category) continue;
+        if (!R.Type.empty() && R.Type != Q.Type) continue;
+        if (!R.TypePrefix.empty() && Q.Type.rfind(R.TypePrefix, 0) != 0) continue;
+        if (!R.NameToken.empty())
+        {
+            bool Has = false;
+            std::string Tok;
+            for (size_t I = 0; I <= Q.Name.size() && !Has; I++)
+            {
+                const unsigned char Ch = I < Q.Name.size() ? static_cast<unsigned char>(Q.Name[I]) : 0;
+                if (std::isalnum(Ch)) Tok += static_cast<char>(std::tolower(Ch));
+                else
+                {
+                    Has = Tok == R.NameToken;
+                    Tok.clear();
+                }
+            }
+            if (!Has) continue;
+        }
+        C.Usage = R.Usage;
+        C.Rule = R.Id;
+        return C;
+    }
+    if (const std::string Facing = FacingUsage(Q.Use); !Facing.empty())
+    {
+        C.Usage = Facing;
+        C.Rule = "facing";
+        return C;
+    }
+    std::set<std::string> Words;
+    {
+        std::string Tok;
+        for (size_t I = 0; I <= Q.Name.size(); I++)
+        {
+            const unsigned char Ch = I < Q.Name.size() ? static_cast<unsigned char>(Q.Name[I]) : 0;
+            if (std::isalnum(Ch)) Tok += static_cast<char>(std::tolower(Ch));
+            else
+            {
+                if (!Tok.empty()) Words.insert(Tok);
+                Tok.clear();
+            }
+        }
+    }
+    for (const auto& [Token, Usage] : Tokens)
+        if (Words.count(Token))
+        {
+            C.Usage = Usage;
+            C.Rule = "token:" + Token;
+            return C;
+        }
+    C.Usage = Fallback;
+    C.Rule = "fallback";
+    C.Fallback = true;
+    C.Why = Q.Use.Total() <= 0 ? "no render triangle of the map's own geometry was measured for this material" : "the two largest facings of its triangles tie";
+    if (!Loaded()) C.Why += " (the usage rules material-usage.json are not loaded: the facing is the only evidence)";
+    return C;
+}
+
 void Data::Load(const fs::path& Profiles)
 {
     Missing.clear();
+    UsageTable = UsageRules();
     DefaultValues.clear();
     Layouts.clear();
     const auto Slurp = [](const fs::path& File, std::string& Text) {
@@ -306,6 +427,8 @@ void Data::Load(const fs::path& Profiles)
                 if (V.is_object() && V.contains("share") && V["share"].is_number() && V["share"].get<double>() >= 0.5 && V.contains("value") && V["value"].is_string())
                     DefaultValues[Key] = V["value"].get<std::string>();
     }
+
+    if (!Slurp(T7 / "material-usage.json", Text) || !UsageTable.Load(Text)) Missing.push_back("zonekit/profiles/t7/target/material-usage.json");
 
     if (!Slurp(Bo4 / "constant-layouts.json", Text)) Missing.push_back("zonekit/profiles/bo4/target/constant-layouts.json");
     else
@@ -1234,13 +1357,13 @@ int SelfTest(std::string& Failures)
     {
         Data Missing;
         Missing.Load(fs::temp_directory_path() / "graywolf_no_such_profiles_dir");
-        Check(!Missing.HasCatalog() && !Missing.HasDefaults() && !Missing.HasLayouts() && Missing.Problems().size() == 3, "missing files: three problems, no data", std::to_string(Missing.Problems().size()));
+        Check(!Missing.HasCatalog() && !Missing.HasDefaults() && !Missing.HasLayouts() && Missing.Problems().size() == 4, "missing files: four problems, no data", std::to_string(Missing.Problems().size()));
         Check(Choose(Missing, Request{}).Chosen == nullptr, "missing files: nothing is chosen", "");
     }
 
     // the shipped data
     const Data& S = Shared();
-    Check(S.HasCatalog() && S.HasDefaults() && S.HasLayouts(), "shipped data loads (techsets, defaults, layouts)", S.Problems().empty() ? "" : S.Problems().front());
+    Check(S.HasCatalog() && S.HasDefaults() && S.HasLayouts() && S.Usage().Loaded(), "shipped data loads (techsets, defaults, layouts, usage)", S.Problems().empty() ? "" : S.Problems().front());
     if (!S.HasCatalog()) return Failed;
     Check(S.All().size() > 1000, "shipped catalog size", std::to_string(S.All().size()));
     const Techset* Lit = S.Find("lit");
@@ -1317,6 +1440,82 @@ int SelfTest(std::string& Failures)
                         if (const Slot* Sl = C.Chosen->ByKey(K); Sl == nullptr || !Accepts(*Sl, I)) { ++Bad; First = C.Chosen->Name + " lacks " + K; }
             }
         Check(Bad == 0, "every wanted slot exists on a techset chosen by a slot rule; no special-purpose or bare lit", First);
+    }
+    // the editor usage rules: role, category and techset first, then the facing when it is clear, then the tie tokens, then the fallback
+    {
+        UsageRules U;
+        const std::string Json = R"({ "clear_share": 0.5, "fallback": "interior wall", "facing": { "floor": "floor", "ceiling": "ceiling", "wall": "interior wall" },
+            "rules": [ { "id": "role_terrain", "role": "terrain", "usage": "terrain" }, { "id": "role_sky", "role": "sky", "usage": "sky" },
+                       { "id": "tools_clip", "category": "Tools", "name_token": "clip", "usage": "clip" }, { "id": "tools", "category": "Tools", "usage": "tools" },
+                       { "id": "decal", "category": "Decal", "usage": "decal" }, { "id": "glass", "type_prefix": "glass", "usage": "window" },
+                       { "id": "water", "type_prefix": "water_shore", "usage": "water" }, { "id": "nothing", "usage": "never" } ],
+            "tie_tokens": [ { "token": "carpet", "usage": "floor" }, { "token": "cobweb", "usage": "ceiling" } ] })";
+        Check(U.Load(Json) && U.RuleCount() == 7, "usage: a rule with no condition is dropped", std::to_string(U.RuleCount()));
+        const auto Q = [&](const char* Cat, const char* Type, const char* Name, double F, double C, double W, bool Terrain = false, bool Sky = false) {
+            UsageQuery X;
+            X.Category = Cat, X.Type = Type, X.Name = Name;
+            X.Use.Floor = F, X.Use.Ceiling = C, X.Use.Wall = W, X.Use.Terrain = Terrain, X.Use.Sky = Sky, X.Use.Via = "world#0";
+            return U.Choose(X);
+        };
+        Check(Q("Decal", "lit_decal", "m", 100, 0, 0).Usage == "decal", "usage: a decal category is a decal whatever it faces", Q("Decal", "lit_decal", "m", 100, 0, 0).Usage);
+        Check(Q("Decal", "lit_decal_reveal", "m", 0, 0, 90, true).Usage == "terrain", "usage: a terrain mesh beats the decal category", Q("Decal", "lit_decal_reveal", "m", 0, 0, 90, true).Usage);
+        Check(Q("Geometry", "lit", "m", 5, 0, 90, false, true).Usage == "sky", "usage: the sky role", Q("Geometry", "lit", "m", 5, 0, 90, false, true).Usage);
+        Check(Q("Geometry", "glass_nocolor", "m", 100, 0, 0).Usage == "window", "usage: a glass techset is a window", Q("Geometry", "glass_nocolor", "m", 100, 0, 0).Usage);
+        Check(Q("Geometry", "water_shore_flow_nonflat", "m", 0, 0, 10).Usage == "water", "usage: a water techset", "");
+        Check(Q("Geometry", "lit", "m", 80, 10, 10).Usage == "floor" && Q("Geometry", "lit", "m", 10, 80, 10).Usage == "ceiling" && Q("Geometry", "lit", "m", 10, 10, 80).Usage == "interior wall",
+              "usage: the facing with a clear share", Q("Geometry", "lit", "m", 80, 10, 10).Usage);
+        Check(Q("Tools", "tools_blend", "mtl_tools_clip_player", 0, 0, 5).Usage == "clip" && Q("Tools", "tools_blend", "mtl_tools_trigger", 0, 0, 5).Usage == "tools",
+              "usage: a tool material is clip with the clip token, else tools", Q("Tools", "tools_blend", "mtl_tools_clip_player", 0, 0, 5).Usage);
+        Check(Q("Geometry", "lit", "mtl_clipboard_wall", 0, 0, 5).Usage == "interior wall", "usage: the clip token does not leak out of the Tools category", Q("Geometry", "lit", "mtl_clipboard_wall", 0, 0, 5).Usage);
+        // the largest facing wins even with a small share; a tie of the two largest goes to the token, else the fallback with a reason
+        Check(Q("Geometry", "lit", "m", 40, 30, 30).Usage == "floor" && Q("Geometry", "lit", "m", 40, 30, 30).Rule == "facing", "usage: the largest facing wins whatever its share", Q("Geometry", "lit", "m", 40, 30, 30).Usage);
+        const UsageChoice Tok = Q("Geometry", "lit", "mtl_carpet_blue", 40, 40, 20);
+        Check(Tok.Usage == "floor" && Tok.Rule == "token:carpet" && !Tok.Fallback, "usage: a tie-break token where two facings tie", Tok.Usage + "/" + Tok.Rule);
+        const UsageChoice Clear = Q("Geometry", "lit", "mtl_carpet_blue", 10, 10, 80);
+        Check(Clear.Usage == "interior wall" && Clear.Rule == "facing", "usage: a clear facing is not overruled by a token", Clear.Usage + "/" + Clear.Rule);
+        const UsageChoice Fb = Q("Geometry", "lit", "mtl_plain", 40, 40, 20);
+        Check(Fb.Usage == "interior wall" && Fb.Fallback && Fb.Why.find("tie") != std::string::npos, "usage: a tie and no token is the fallback with a reason", Fb.Why);
+        const UsageChoice None = Q("Geometry", "lit", "mtl_plain", 0, 0, 0);
+        Check(None.Usage == "interior wall" && None.Fallback && None.Why.find("no render triangle") != std::string::npos, "usage: no triangle is the fallback with a reason", None.Why);
+        const UsageChoice Tie = Q("Geometry", "lit", "mtl_plain", 50, 0, 50);
+        Check(Tie.Fallback, "usage: an exact tie at the top is not a facing", Tie.Usage + "/" + Tie.Rule);
+        MapUse A, B;
+        A.Floor = 1, A.Via = "a#0";
+        B.Floor = 2, B.Terrain = true, B.Via = "b#1";
+        A.Merge(B);
+        Check(A.Floor == 3 && A.Terrain && A.Via == "a#0", "usage: two maps' uses merge", std::to_string(A.Floor) + A.Via);
+        UsageRules Bad;
+        Check(!Bad.Load("{ not json") && !Bad.Loaded(), "usage: unreadable rules are not loaded", "");
+        UsageQuery X;
+        X.Type = "lit_decal";
+        X.Use.Floor = 100;
+        X.Use.Via = "w#0";
+        const UsageChoice NoRules = Bad.Choose(X);
+        Check(NoRules.Usage == "floor" && NoRules.Rule == "facing", "usage: without rules the facing alone", NoRules.Usage);
+        // the shipped table, when it is found next to the exe or in the checkout
+        const Data& D = Shared();
+        Check(D.Usage().Loaded(), "usage: the shipped table loads", D.Problems().empty() ? "" : D.Problems().front());
+        if (D.Usage().Loaded())
+        {
+            UsageQuery Y;
+            Y.Category = "Decal", Y.Type = "lit_decal", Y.Name = "t7_decal_x", Y.Use.Wall = 10, Y.Use.Via = "w#0";
+            Check(D.Usage().Choose(Y).Usage == "decal", "usage: the shipped table makes a Decal category a decal", D.Usage().Choose(Y).Usage);
+            UsageQuery T;
+            T.Category = "Geometry", T.Type = "lit", T.Name = "mtl_cobweb_01", T.Use.Floor = 34, T.Use.Ceiling = 34, T.Use.Wall = 0, T.Use.Via = "w#0";
+            Check(D.Usage().Choose(T).Usage == "ceiling" && D.Usage().Choose(T).Rule == "token:cobweb", "usage: the shipped table has the cobweb token", D.Usage().Choose(T).Usage + "/" + D.Usage().Choose(T).Rule);
+            T.Name = "mtl_carpet_01";
+            Check(D.Usage().Choose(T).Usage == "floor", "usage: the shipped table has the carpet token", D.Usage().Choose(T).Usage);
+            T.Name = "mtl_concrete_01";
+            Check(D.Usage().Choose(T).Fallback, "usage: a name no token knows is the fallback where two facings tie", D.Usage().Choose(T).Usage);
+            T.Category = "Tools", T.Type = "tools_blend", T.Name = "mtl_tools_clip_nosight";
+            Check(D.Usage().Choose(T).Usage == "clip", "usage: the shipped table has clip for a tool material", D.Usage().Choose(T).Usage);
+            T.Category = "Geometry", T.Type = "water_shore_flow_nonflat", T.Name = "mtl_w";
+            Check(D.Usage().Choose(T).Usage == "water", "usage: the shipped table has water", D.Usage().Choose(T).Usage);
+            T.Type = "glass_nocolor";
+            Check(D.Usage().Choose(T).Usage == "window", "usage: the shipped table has glass as window", D.Usage().Choose(T).Usage);
+            T.Type = "sky_latlong_hdr";
+            Check(D.Usage().Choose(T).Usage == "sky", "usage: the shipped table has a sky techset as sky", D.Usage().Choose(T).Usage);
+        }
     }
     return Failed;
 }

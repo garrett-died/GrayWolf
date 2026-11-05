@@ -705,8 +705,9 @@ namespace
                     for (const auto& A : Take) Elsewhere(A, Why);
                     continue;
                 }
-                // a material pulled writes its images: their roles come with the zone's materials
-                if (Roles != nullptr && std::any_of(Take.begin(), Take.end(), [](const AssetId& A) { return A.K == Kind::Material; }))
+                // a material pulled writes its images, and so does a model pulled (its materials' images): their roles come with the zone's
+                // materials. A model alone used to leave its images out of the book, so their normals kept the two-component Z of the game.
+                if (Roles != nullptr && std::any_of(Take.begin(), Take.end(), [](const AssetId& A) { return ImageRoles::KindBindsImages(A.K); }))
                     CollectRoles(*Zone, *Roles, Run, T, Mon);
                 for (Kind K : AllKinds())
                 {

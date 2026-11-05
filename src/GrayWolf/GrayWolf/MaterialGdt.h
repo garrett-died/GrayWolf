@@ -110,9 +110,11 @@ namespace MaterialGdt
         // Without them (the default: no Mod Tools root) the name is written as the game's table spells it, which is unchecked.
         void SurfaceOptions(std::vector<std::string> Options) { SurfaceChoices = std::move(Options); }
 
-        // The usage Radiant lists the materials under (their Source names): every material has
-        // "<not in editor>", which hides it, except those named here (a map's geometry materials)
-        void SetUsage(std::map<std::string, std::string> BySource) { Usage = std::move(BySource); }
+        // What the map measured about the materials its own geometry draws (their Source names). Every other material keeps
+        // "<not in editor>", which hides it in Radiant; these get a usage chosen from the BO3 techset they ended up with and the
+        // measure (Techsets::UsageRules, zonekit material-usage.json). A material whose facing cannot be measured gets the
+        // fallback value and a material.usage_fallback note. Without TechsetData the facing alone decides.
+        void SetMapUse(std::map<std::string, Bo3Target::Techsets::MapUse> BySource) { Usage = std::move(BySource); }
         // The semantic a stock image (one the Mod Tools hold under the name this builder would give the image) declares, "" when it
         // cannot be read or the image is not stock. With it the techset and the slot are chosen by what the stock image is, not by
         // what the source game slot meant: a stock specular mask never lands in a colour specular slot.
@@ -172,6 +174,7 @@ namespace MaterialGdt
             std::map<std::string, Image> Slots;                 // colorMap -> image
             std::vector<std::pair<std::string, std::string>> Values;   // other fields set
             bool Targeted = false;
+            bool SourceDecal = false;                           // the source game's techset name or renderFlags say decal (read when no catalog chose the BO3 techset)
             std::vector<Note> Notes;
         };
 
@@ -181,7 +184,7 @@ namespace MaterialGdt
         std::string Prefix;
         std::map<std::string, Material> Defined;                // by asset name
         std::map<std::string, std::set<std::string>> Collisions;
-        std::map<std::string, std::string> Usage;
+        std::map<std::string, Bo3Target::Techsets::MapUse> Usage;
         std::vector<std::string> SurfaceChoices;
         std::map<std::string, size_t> Count;
         std::vector<std::pair<std::string, Note>> SkippedMaterials;

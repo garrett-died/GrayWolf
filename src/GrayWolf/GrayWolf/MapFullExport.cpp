@@ -11,6 +11,9 @@
 #include "SurfaceTypes.h"
 
 #include <algorithm>
+#include <charconv>
+#include <cstring>
+#include <format>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -75,7 +78,14 @@ std::vector<MapDependency> CollectMapDependencies(const MapScene& Scene)
     std::set<std::string> Seen;
     const auto Add = [&](const std::string& Type, const std::string& Name, const std::string& Via, const std::string& Detail = std::string()) {
         if (Name.empty() || Name == "none") return;
-        if (!Seen.insert(Type + "|" + LowerOf(Name)).second) return;
+        if (!Seen.insert(Type + "|" + LowerOf(Name)).second)
+        {
+            // a material the map draws on its geometry keeps its row whatever named it first (a lutmaterial of the same name)
+            if (Type == "material" && Detail.rfind("facing=", 0) == 0)
+                for (MapDependency& D : Out)
+                    if (D.Type == Type && LowerOf(D.Name) == LowerOf(Name)) D.Via = Clean(Via), D.Detail = Clean(Detail);
+            return;
+        }
         Out.push_back({ Type, Clean(Name), Clean(Via), Clean(Detail) });
     };
     const auto Model = [&](const std::string& Name, const char* Via) {
@@ -90,8 +100,7 @@ std::vector<MapDependency> CollectMapDependencies(const MapScene& Scene)
         for (const auto& [Key, Value] : Entity)
             if (const std::string Type = EntityAssetType(Key, Value); !Type.empty()) Add(Type, Value, Key);
 
-    const std::map<std::string, std::string> Usage = GeometryUsage(Scene);
-    for (const auto& [Name, Use] : Usage) Add("material", Name, "surface:" + Use, "usage=" + Use);
+    for (const auto& [Name, Use] : GeometryUse(Scene)) Add("material", Name, std::string(Use.Sky ? "sky:" : "surface:") + Use.Via, FormatMapUse(Use));
     return Out;
 }
 
@@ -102,15 +111,36 @@ bool IsDecalMaterial(const MapScene& Scene, const std::string& MaterialName)
     return LowerOf(Mat->second.Techset).find("decal") != std::string::npos || SurfaceTypes::IsDecal(LowerOf(Scene.Game), Mat->second.RenderFlags);
 }
 
-std::map<std::string, std::string> GeometryUsage(const MapScene& Scene, const std::set<std::string>* Only)
+int WindingOf(const std::string& Game)
+{
+    const std::string G = LowerOf(Game);
+    return G == "bo3" || G == "bo4" ? -1 : 1;
+}
+
+std::map<std::string, Bo3Target::Techsets::MapUse> GeometryUse(const MapScene& Scene, const std::set<std::string>* Only, FacingStats* Stats)
 {
     using RadiantGeometry::V3;
-    std::map<std::string, FacingAreas> Drawn;
+    std::map<std::string, Bo3Target::Techsets::MapUse> Drawn;
+    const int Winding = WindingOf(Scene.Game);
+    // a reader that fills the vertex normal gives some vertex a normal other than the default (0, 0, 1)
+    bool NormalsRead = false;
     for (const Mesh& M : Scene.Objects)
         for (const Surface& S : M.Surfaces)
+            for (const Vertex& V : S.Vertices)
+                if (V.Normal[0] != 0.0f || V.Normal[1] != 0.0f || V.Normal[2] != 1.0f) NormalsRead = true;
+    if (Stats != nullptr) Stats->NormalsRead = NormalsRead;
+    // the area of one mesh's surfaces by facing, into Drawn; Terrain / Sky: the role of the mesh
+    const auto Measure = [&](const Mesh& M, const std::string& Label, bool Terrain, bool Sky) {
+        for (size_t N = 0; N < M.Surfaces.size(); N++)
         {
+            const Surface& S = M.Surfaces[N];
             if (S.Material.empty() || (Only != nullptr && !Only->count(S.Material))) continue;
-            FacingAreas& A = Drawn[S.Material];
+            Bo3Target::Techsets::MapUse& U = Drawn[S.Material];
+            if (U.Via.empty()) U.Via = Label + "#" + std::to_string(N);
+            U.Terrain = U.Terrain || Terrain;
+            U.Sky = U.Sky || Sky;
+            if (Sky) continue;   // the sky model's triangles are in the model's space: they say nothing about a floor or a wall
+            FacingAreas A;
             for (size_t K = 0; K + 2 < S.Indices.size(); K += 3)
             {
                 if (S.Indices[K] >= S.Vertices.size() || S.Indices[K + 1] >= S.Vertices.size() || S.Indices[K + 2] >= S.Vertices.size()) continue;
@@ -118,17 +148,135 @@ std::map<std::string, std::string> GeometryUsage(const MapScene& Scene, const st
                     const Vertex& V = S.Vertices[S.Indices[K + J]];
                     return V3{ V.Pos[0], V.Pos[1], V.Pos[2] };
                 };
-                A.Add(P(0), P(1), P(2));
+                // the vertex normal when the reader gives one (the mean of the three, a unit vector), else the game's winding
+                V3 Mean = { 0, 0, 0 };
+                bool HaveNormal = false;
+                if (NormalsRead)
+                {
+                    for (size_t J = 0; J < 3; J++)
+                        for (size_t Axis = 0; Axis < 3; Axis++) Mean[Axis] += S.Vertices[S.Indices[K + J]].Normal[Axis];
+                    const double Len = std::sqrt(Mean[0] * Mean[0] + Mean[1] * Mean[1] + Mean[2] * Mean[2]);
+                    if (Len > 0.5)
+                    {
+                        for (size_t Axis = 0; Axis < 3; Axis++) Mean[Axis] /= Len;
+                        HaveNormal = true;
+                    }
+                }
+                A.Add(P(0), P(1), P(2), HaveNormal ? &Mean : nullptr, Winding);
             }
+            if (Stats != nullptr)
+            {
+                Stats->WithNormal += A.WithNormal;
+                Stats->CrossAgrees += A.CrossAgrees;
+                Stats->CrossAgainst += A.CrossAgainst;
+                Stats->Triangles += S.Indices.size() / 3;
+            }
+            U.Floor += A.Floor;
+            U.Ceiling += A.Ceiling;
+            U.Wall += A.Wall;
         }
-    std::map<std::string, std::string> Usage;
-    for (const auto& [Name, Areas] : Drawn)
+    };
+    for (const Mesh& M : Scene.Objects) Measure(M, M.Name.empty() ? std::string("world") : M.Name, LowerOf(M.Name).rfind("terrain", 0) == 0, false);
+    // the sky model is the map's own sky: its materials are named by the map's geometry
+    if (!Scene.Sky.Model.empty())
+        if (const auto Sky = Scene.Models.find(Scene.Sky.Model); Sky != Scene.Models.end()) Measure(Sky->second, Scene.Sky.Model, false, true);
+    return Drawn;
+}
+
+std::vector<std::string> DrawnAssetKeys(const std::string& Name)
+{
+    const std::string Asset = LowerOf(MaterialGdt::AssetName(Name));
+    return { Asset, LowerOf(Bo3Target::Placement::Shorten(Asset)) };
+}
+
+bool ReadDrawnMaterials(const fs::path& MapFolder, std::map<std::string, std::string>& Drawn, std::string& Why)
+{
+    std::vector<std::pair<std::string, std::string>> Index;
+    if (!ReadMapIndex(MapFolder, Index))
     {
-        const auto Mat = Scene.Materials.find(Name);
-        const std::string Techset = Mat != Scene.Materials.end() ? Mat->second.Techset : std::string();
-        Usage[Name] = MaterialUsage(IsDecalMaterial(Scene, Name), Techset, Areas);
+        Why = std::string("no ") + MapIndexFile + " in " + MapFolder.string();
+        return false;
     }
-    return Usage;
+    bool Ok = true;
+    size_t Lists = 0;
+    for (const auto& [Kind, Name] : Index)
+    {
+        if (Kind != "list" || LowerOf(Name).size() < std::strlen(FullMapListSuffix) || LowerOf(Name).compare(Name.size() - std::strlen(FullMapListSuffix), std::string::npos, FullMapListSuffix) != 0) continue;
+        std::ifstream File(MapFolder / Name, std::ios::binary);
+        const std::string Text((std::istreambuf_iterator<char>(File)), std::istreambuf_iterator<char>());
+        MapDependencyList List;
+        if (!File || !ParseDependencyList(Text, List))
+        {
+            Why += "the map list " + Name + " does not read; ";
+            Ok = false;
+            continue;
+        }
+        Lists++;
+        for (const MapDependency& D : List.Dependencies)
+        {
+            if (D.Type != "material") continue;
+            Bo3Target::Techsets::MapUse Use;
+            if (D.Detail.rfind("usage=", 0) == 0 || (D.Detail.rfind("facing=", 0) == 0 && !ParseMapUse(D.Detail, D.Via, Use)))
+            {
+                Why += "a material row of " + Name + " is in an old or unreadable form (" + D.Name + "); ";
+                Ok = false;
+            }
+            else if (D.Detail.rfind("facing=", 0) == 0)
+                for (const std::string& Key : DrawnAssetKeys(D.Name)) Drawn.emplace(Key, Use.Via);
+        }
+    }
+    if (Lists == 0)
+    {
+        Why += "the index names no map list; ";
+        Ok = false;
+    }
+    return Ok;
+}
+
+std::string FormatMapUse(const Bo3Target::Techsets::MapUse& Use)
+{
+    std::string Out = std::format("facing={:.3f}:{:.3f}:{:.3f}", Use.Floor, Use.Ceiling, Use.Wall);
+    if (Use.Terrain) Out += ";role=terrain";
+    if (Use.Sky) Out += ";role=sky";
+    return Out;
+}
+
+bool ParseMapUse(const std::string& Detail, const std::string& Via, Bo3Target::Techsets::MapUse& Use)
+{
+    Use = Bo3Target::Techsets::MapUse();
+    if (Detail.rfind("facing=", 0) != 0) return false;
+    size_t At = 7;
+    double V[3] = { 0, 0, 0 };
+    for (int I = 0; I < 3; I++)
+    {
+        const size_t End = Detail.find_first_of(":;", At);
+        const std::string Part = Detail.substr(At, End == std::string::npos ? std::string::npos : End - At);
+        const char* const PartEnd = std::to_address(Part.end());
+        const auto R = std::from_chars(Part.data(), PartEnd, V[I]);
+        if (Part.empty() || R.ec != std::errc() || R.ptr != PartEnd || !(V[I] >= 0)) return false;
+        if (I < 2)
+        {
+            if (End == std::string::npos || Detail[End] != ':') return false;
+            At = End + 1;
+        }
+        else At = End == std::string::npos ? Detail.size() : End;
+    }
+    Use.Floor = V[0], Use.Ceiling = V[1], Use.Wall = V[2];
+    while (At < Detail.size())
+    {
+        if (Detail[At] != ';') return false;
+        const size_t End = Detail.find(';', At + 1);
+        const std::string Part = Detail.substr(At + 1, End == std::string::npos ? std::string::npos : End - At - 1);
+        if (Part == "role=terrain") Use.Terrain = true;
+        else if (Part == "role=sky") Use.Sky = true;
+        else return false;
+        At = End == std::string::npos ? Detail.size() : End;
+    }
+    // the surface: "surface:<mesh>#<n>" or "sky:<model>#<n>"
+    const size_t Colon = Via.find(':');
+    Use.Via = Colon == std::string::npos ? Via : Via.substr(Colon + 1);
+    if (Use.Via.empty()) Use.Via = "(unnamed surface)";
+    return true;
 }
 
 std::string FormatDependencyList(const MapDependencyList& List)
@@ -246,15 +394,6 @@ bool AppendDependencies(const fs::path& ListFile, const std::vector<MapDependenc
     return File && (File << Out);
 }
 
-std::string StrongerUsage(const std::string& A, const std::string& B)
-{
-    const auto Rank = [](const std::string& U) {
-        return U == "decal" ? 5 : U == "window" ? 4 : U == "floor" ? 3 : U == "ceiling" ? 2 : U == "interior wall" ? 1 : 0;
-    };
-    const int Ra = Rank(A), Rb = Rank(B);
-    return Ra != Rb ? (Ra > Rb ? A : B) : std::min(A, B);
-}
-
 bool WriteFullMapFiles(const MapScene& Scene, const Materials::IAdapter& Adapter, const fs::path& ModelsDir, const std::string& Stem,
                        std::map<std::string, size_t>& Counters, std::string& Error)
 {
@@ -262,6 +401,16 @@ bool WriteFullMapFiles(const MapScene& Scene, const Materials::IAdapter& Adapter
     List.Map = fs::path(Stem).filename().string();
     List.Dependencies = CollectMapDependencies(Scene);
     for (const MapDependency& D : List.Dependencies) Counters["map_full_dependencies_" + D.Type]++;
+    {
+        // how the facing was decided, per game: the vertex normal against the cross product's direction
+        FacingStats Facing;
+        GeometryUse(Scene, nullptr, &Facing);
+        Counters["map_facing_triangles"] += Facing.Triangles;
+        Counters["map_facing_with_normal"] += Facing.WithNormal;
+        Counters["map_facing_cross_with_normal"] += Facing.CrossAgrees;
+        Counters["map_facing_cross_against_normal"] += Facing.CrossAgainst;
+        Counters["map_facing_normals_read"] += Facing.NormalsRead ? 1 : 0;
+    }
 
     // the materials the render surfaces draw, and the lut material when the scene read it
     std::set<std::string> Geometry;
@@ -370,11 +519,21 @@ int FullMapSelfTest(std::string& Failures)
         "{ \"classname\" \"script_brushmodel\" \"model\" \"*3\" }\n"
         "{ \"classname\" \"trigger_use\" \"model\" \"?2\" }\n"
         "{ \"classname\" \"zbarrier\" \"zbarrierboardModel1\" \"p7_board\" \"zbarrierboardModel2\" \"p7_board\" \"walkAnim1\" \"a_walk\" }\n"
-        "{ \"classname\" \"script_model\" \"model\" \"p7_c\" }\n";
+        "{ \"classname\" \"script_model\" \"model\" \"p7_c\" }\n"
+        "{ \"classname\" \"worldspawn\" \"lutmaterial\" \"mtl_floor\" }\n";   // the lut names a material the world also draws: the geometry row must stay
     Mesh World;
     World.Name = "world";
     World.Surfaces = { Triangle("mtl_floor", 1), Triangle("mtl_ceiling", -1) };
-    Scene.Objects = { World };
+    Mesh Terrain;
+    Terrain.Name = "terrain_0";
+    Terrain.Surfaces = { Triangle("mtl_layer", 1), Triangle("mtl_layer", 1) };
+    Scene.Objects = { World, Terrain };
+    Mesh Sky;
+    Sky.Name = "skybox_synth";
+    Sky.Surfaces = { Triangle("mtl_skybox", 1) };
+    Scene.Models["skybox_synth"] = Sky;
+    Scene.Sky.Model = "skybox_synth";
+    Scene.Materials["mtl_skybox"].Name = "mtl_skybox";
     Mesh Prop;
     Prop.Name = "p7_a";
     Prop.Surfaces = { Triangle("mtl_prop_only", 1) };
@@ -393,11 +552,26 @@ int FullMapSelfTest(std::string& Failures)
     Check(Find(Deps, "material", "mtl_lut_synth") != nullptr, "the lut material");
     Check(Find(Deps, "fx", "debris/a.efx") != nullptr && Find(Deps, "xanim", "a_walk") != nullptr, "an effect and an xanim are named");
     const MapDependency* Floor = Find(Deps, "material", "mtl_floor");
-    Check(Floor && Floor->Detail == "usage=floor" && Floor->Via == "surface:floor", "a render surface material carries its usage", Floor ? Floor->Detail : "(none)");
-    Check(Find(Deps, "material", "mtl_ceiling") && Find(Deps, "material", "mtl_ceiling")->Detail == "usage=ceiling", "a ceiling surface");
+    Check(Floor && Floor->Detail == "facing=50.000:0.000:0.000" && Floor->Via == "surface:world#0", "a render surface material carries its facing areas and the surface that names it",
+          Floor ? Floor->Detail + " / " + Floor->Via : "(none)");
+    Check(Find(Deps, "material", "mtl_ceiling") && Find(Deps, "material", "mtl_ceiling")->Detail == "facing=0.000:50.000:0.000" && Find(Deps, "material", "mtl_ceiling")->Via == "surface:world#1",
+          "a ceiling surface");
+    const MapDependency* Layer = Find(Deps, "material", "mtl_layer");
+    Check(Layer && Layer->Detail == "facing=100.000:0.000:0.000;role=terrain" && Layer->Via == "surface:terrain_0#0", "a terrain mesh's material has the terrain role and both triangles", Layer ? Layer->Detail + " / " + Layer->Via : "(none)");
+    const MapDependency* SkyDep = Find(Deps, "material", "mtl_skybox");
+    Check(SkyDep && SkyDep->Detail == "facing=0.000:0.000:0.000;role=sky" && SkyDep->Via == "sky:skybox_synth#0", "the sky model's material has the sky role and no facing", SkyDep ? SkyDep->Detail + " / " + SkyDep->Via : "(none)");
+    {
+        Bo3Target::Techsets::MapUse Round;
+        Check(Layer && ParseMapUse(Layer->Detail, Layer->Via, Round) && Round.Floor == 100 && Round.Terrain && !Round.Sky && Round.Via == "terrain_0#0", "a use reads back as it was written", Round.Via);
+        Check(!ParseMapUse("usage=floor", "surface:floor", Round) && !ParseMapUse("facing=1:2", "x", Round) && !ParseMapUse("facing=1.000:2.000:x", "x", Round) &&
+                  !ParseMapUse("facing=1.000:2.000:3.000;role=nonsense", "x", Round) && !ParseMapUse("facing=-1.000:2.000:3.000", "x", Round),
+              "text that is not a use is refused");
+    }
     Check(Find(Deps, "material", "mtl_prop_only") == nullptr, "a prop's material alone is no geometry material");
-    const auto Usage = GeometryUsage(Scene);
-    Check(Usage.size() == 2 && !Usage.count("mtl_prop_only"), "usage only for what a world surface draws");
+    const auto Usage = GeometryUse(Scene);
+    Check(Usage.size() == 4 && !Usage.count("mtl_prop_only"), "a measure only for what a world surface, a terrain mesh or the sky draws", std::to_string(Usage.size()));
+    const std::set<std::string> Only = { "mtl_floor" };
+    Check(GeometryUse(Scene, &Only).size() == 1, "a measure only for the materials asked");
 
     MapDependencyList List;
     List.Map = "mp_synth";
@@ -422,8 +596,77 @@ int FullMapSelfTest(std::string& Failures)
     std::ifstream In(Dir / "maps" / ("mp_synth" + std::string(FullMapListSuffix)), std::ios::binary);
     const std::string Text((std::istreambuf_iterator<char>(In)), std::istreambuf_iterator<char>());
     Check(ParseDependencyList(Text, Read) && Read.Owner == "mp_synth_geometry", "the list file names the geometry owner", Text);
-    Check(Counters["map_full_geometry_materials"] == 2, "two geometry materials", std::to_string(Counters["map_full_geometry_materials"]));
+    Check(Counters["map_full_geometry_materials"] == 4, "four geometry materials", std::to_string(Counters["map_full_geometry_materials"]));
     fs::remove_all(Dir, Ec);
+
+    // the facing of a game's triangles: by the vertex normal when the reader gives one, else by the game's measured winding
+    {
+        MapScene Winding;
+        Winding.Game = "bo4";
+        Mesh W;
+        W.Name = "world";
+        W.Surfaces = { Triangle("m_cross_down", -1) };          // cross(b - a, c - a) points down; no reader normal: BO4 winding -1 makes it a floor
+        Winding.Objects = { W };
+        const auto UseA = GeometryUse(Winding);
+        Check(UseA.count("m_cross_down") == 1 && UseA.at("m_cross_down").Floor > 0 && UseA.at("m_cross_down").Ceiling == 0, "bo4 without a reader normal: cross down is a floor (winding -1)");
+        Winding.Game = "iw3";
+        const auto UseB = GeometryUse(Winding);
+        Check(UseB.at("m_cross_down").Ceiling > 0, "a game with no measured winding keeps the cross product's sign (+1)");
+        MapScene Normal;
+        Normal.Game = "bo4";
+        Mesh N;
+        N.Name = "world";
+        Surface S = Triangle("m_normal_down", 1);               // cross up, but the reader's normal says down
+        for (Vertex& V : S.Vertices) V.Normal[0] = 0, V.Normal[1] = 0, V.Normal[2] = -1;
+        N.Surfaces = { S };
+        Normal.Objects = { N };
+        FacingStats Stats;
+        const auto UseC = GeometryUse(Normal, nullptr, &Stats);
+        Check(UseC.at("m_normal_down").Ceiling > 0 && UseC.at("m_normal_down").Floor == 0 && Stats.NormalsRead && Stats.WithNormal == 1 && Stats.CrossAgainst == 1,
+              "the reader's vertex normal decides, and the stats compare it with the cross product");
+    }
+
+    // what the maps draw, read back from the lists the index names (the stand-alone gate and the hook share this)
+    {
+        const fs::path Folder = fs::temp_directory_path() / ("graywolf_selftest_drawn_" + std::to_string(GetCurrentProcessId()));
+        fs::remove_all(Folder, Ec);
+        fs::create_directories(Folder, Ec);
+        const std::string Long = "mtl_a_very_long_material_name_that_goes_well_past_the_sixty_three_character_limit_of_an_asset";
+        MapDependencyList One;
+        One.Map = "mp_d";
+        One.Dependencies = { { "material", Long, "surface:world#4", "facing=10.000:0.000:0.000" }, { "material", "mtl_short", "surface:world#5", "facing=0.000:0.000:3.000" } };
+        std::ofstream(Folder / ("mp_d" + std::string(FullMapListSuffix)), std::ios::binary) << FormatDependencyList(One);
+        BeginRunMapFiles(Folder);
+        NoteRunMapFile(Folder, "mp_d" + std::string(FullMapListSuffix), "list");
+        std::map<std::string, std::string> Drawn;
+        std::string Why;
+        const bool Ok = ReadDrawnMaterials(Folder, Drawn, Why);
+        const std::vector<std::string> Keys = DrawnAssetKeys(Long);
+        Check(Ok && Why.empty() && Drawn.count("mtl_short") == 1 && Keys.size() == 2 && Keys[1].size() <= 63 && Keys[1] != Keys[0] && Drawn.count(Keys[0]) == 1 && Drawn.count(Keys[1]) == 1 && Drawn.at(Keys[1]) == "world#4",
+              "the drawn materials are read under the full and the shortened asset name", Why + " / " + std::to_string(Drawn.size()));
+        // a list that does not read, and one with an old row, make the evidence incomplete
+        std::ofstream(Folder / ("mp_bad" + std::string(FullMapListSuffix)), std::ios::binary) << "not a list";
+        NoteRunMapFile(Folder, "mp_bad" + std::string(FullMapListSuffix), "list");
+        std::map<std::string, std::string> Drawn2;
+        std::string Why2;
+        Check(!ReadDrawnMaterials(Folder, Drawn2, Why2) && Why2.find("mp_bad") != std::string::npos, "an unreadable list makes the drawn-materials evidence incomplete", Why2);
+        MapDependencyList Old;
+        Old.Map = "mp_o";
+        Old.Dependencies = { { "material", "mtl_old", "surface:floor", "usage=floor" } };
+        BeginRunMapFiles(Folder);
+        std::ofstream(Folder / ("mp_o" + std::string(FullMapListSuffix)), std::ios::binary) << FormatDependencyList(Old);
+        NoteRunMapFile(Folder, "mp_o" + std::string(FullMapListSuffix), "list");
+        std::map<std::string, std::string> Drawn3;
+        std::string Why3;
+        Check(!ReadDrawnMaterials(Folder, Drawn3, Why3) && Why3.find("mtl_old") != std::string::npos, "an old usage= row makes the evidence incomplete", Why3);
+        BeginRunMapFiles(Folder);
+        std::map<std::string, std::string> Drawn4;
+        std::string Why4;
+        Check(!ReadDrawnMaterials(Folder, Drawn4, Why4), "an index naming no list makes the evidence incomplete", Why4);
+        fs::remove(Folder / MapIndexFile, Ec);
+        Check(!ReadDrawnMaterials(Folder, Drawn4, Why4), "no index makes the evidence incomplete", Why4);
+        fs::remove_all(Folder, Ec);
+    }
     return Failed;
 }
 }

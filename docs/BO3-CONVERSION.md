@@ -107,8 +107,11 @@ through the same publish step as models (GDTDB check, placement, techsets, image
    writes `graywolf_full_map_report.tsv` (`map kind type name via detail`): `exported`, `in_mod_tools`,
    `unresolved` (the zone does not hold it, or it was not published), `not_exported_yet` (effects and xanims, which
    do not publish yet), and a summary line. `--plan` lists without writing; counters are `publish_full_map_*`.
-4. A material a world surface draws gets the editor usage Radiant lists it under (decal, window, floor, ceiling,
-   interior wall), also when a prop uses it; a material only props use stays `<not in editor>`.
+4. A material the map draws gets a usage so Radiant lists it, chosen from its final BO3 techset on every game: tools or clip,
+   decal, glass as window, water, sky, then floor, ceiling or interior wall by the largest facing area from vertex normals.
+   `zonekit/profiles/t7/target/material-usage.json` holds the rules with their stock rates. Interior versus exterior is assumed.
+   A material only props use stays `<not in editor>`. A material the Mod Tools already hold is never rewritten: it gets a
+   `material.usage_held` row naming its GDT.
 
 Checked on the Black Ops 4 zone `mp_frenetic` (`--target folder`, nothing written to an install): 6,036 names walked:
 3,533 exported, 2,496 held by the Mod Tools, 4 unresolved (two hashed models, the rope model `cylinder`, the
@@ -164,8 +167,7 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
   their flag word yet.
 - Black Ops 4 decals come from the techset `renderFlags`. A material whose techset record could not be read gets no class and a
   `material.render_class_unread` row: 335 of 2,209 materials on `mp_frenetic`. Cold War has no decal class yet.
-- `usage` is set for a map's geometry materials (`--full-map`); every other material
-  stays `<not in editor>`, so Radiant lists the map's geometry and not yet a model's materials.
+- Materials only models use stay `<not in editor>`, so Radiant lists a map's geometry and not a model's materials.
 - Normal maps are rebuilt per material slot, not per file name. The Black Ops III, 4 and Cold War readers keep a
   normal as two components (X in red, Y in green, blue holds a variance term), so the export rebuilds blue as the Z
   of red and green (Z = 0 is stored 0.5: a channel holds (Z + 1) / 2). Only a file this run wrote is rewritten, only

@@ -538,24 +538,21 @@ bool IsUnresolvedReference(const std::string& Game, const std::string& Key, cons
 
 // ---- materials
 
-void FacingAreas::Add(const V3& A, const V3& B, const V3& C)
+void FacingAreas::Add(const V3& A, const V3& B, const V3& C, const V3* Normal, int Winding)
 {
     const V3 Cr = Cross(Sub(B, A), Sub(C, A));
     const double L = Length(Cr);
     if (L < 1e-9) return;
-    const double Z = Cr[2] / L, Area = L / 2;
+    double Z = Winding * Cr[2] / L;
+    if (Normal != nullptr)
+    {
+        Z = (*Normal)[2];
+        WithNormal++;
+        const double Dot = (Cr[0] * (*Normal)[0] + Cr[1] * (*Normal)[1] + Cr[2] * (*Normal)[2]) / L;
+        (Dot >= 0 ? CrossAgrees : CrossAgainst)++;
+    }
+    const double Area = L / 2;
     (Z > 0.7 ? Floor : Z < -0.7 ? Ceiling : Wall) += Area;
-}
-
-std::string MaterialUsage(bool Decal, const std::string& Techset, const FacingAreas& A)
-{
-    if (Decal) return "decal";
-    std::string T;
-    for (const char C : Techset) T += (char)std::tolower((unsigned char)C);
-    if (T.rfind("glass", 0) == 0) return "window";
-    if (A.Floor > A.Ceiling && A.Floor > A.Wall) return "floor";
-    if (A.Ceiling > A.Floor && A.Ceiling > A.Wall) return "ceiling";
-    return "interior wall";
 }
 
 // ---- self test
@@ -845,15 +842,36 @@ int RadiantRulesSelfTest(std::string& Failures)
         Floor.Add({ 0, 0, 0 }, { 10, 0, 0 }, { 0, 10, 0 });         // normal +z
         Ceiling.Add({ 0, 0, 0 }, { 0, 10, 0 }, { 10, 0, 0 });       // normal -z
         Wall.Add({ 0, 0, 0 }, { 10, 0, 0 }, { 0, 0, 10 });          // normal -y
-        Check(MaterialUsage(false, "lit", Floor) == "floor", "up facing is floor");
-        Check(MaterialUsage(false, "lit", Ceiling) == "ceiling", "down facing is ceiling");
-        Check(MaterialUsage(false, "lit", Wall) == "interior wall", "side facing is interior wall");
-        Check(MaterialUsage(false, "lit", FacingAreas()) == "interior wall", "no triangles is interior wall");
-        Check(MaterialUsage(true, "lit", Floor) == "decal", "a decal is decal whatever it faces");
-        Check(MaterialUsage(false, "glass_clear", Floor) == "window", "a glass techset is window");
+        // a triangle is placed by its vertex normal when given, and by the winding times the cross product otherwise
+        {
+            FacingAreas Up, Down, ByNormal;
+            const V3 N = { 0, 0, 1 }, Dn = { 0, 0, -1 };
+            Up.Add({ 0, 0, 0 }, { 10, 0, 0 }, { 0, 10, 0 }, nullptr, 1);       // cross +z, winding +1: up
+            Down.Add({ 0, 0, 0 }, { 10, 0, 0 }, { 0, 10, 0 }, nullptr, -1);    // the same triangle where the front is clockwise: down
+            Check(Up.Floor > 0 && Down.Ceiling > 0 && Down.Floor == 0, "the winding sign turns the cross product");
+            ByNormal.Add({ 0, 0, 0 }, { 10, 0, 0 }, { 0, 10, 0 }, &Dn, 1);     // the vertex normal says down whatever the winding
+            ByNormal.Add({ 0, 0, 0 }, { 10, 0, 0 }, { 0, 10, 0 }, &N, 1);
+            Check(ByNormal.Ceiling > 0 && ByNormal.Floor > 0 && ByNormal.WithNormal == 2 && ByNormal.CrossAgrees == 1 && ByNormal.CrossAgainst == 1, "the vertex normal decides, and the cross product is compared with it");
+        }
+        // a real Black Ops 4 triangle: mp_frenetic, t8_concrete_floor_rough_02, vertices (986,1696,182.5) (806,1764,182.5) (986,1764,182.5), every vertex
+        // normal (0,0,1). cross(b - a, c - a) points down (z = -12240): the winding is opposite to the normal, as on 98,064 of 98,133 triangles measured
+        {
+            const V3 A = { 986, 1696, 182.5 }, B = { 806, 1764, 182.5 }, C = { 986, 1764, 182.5 }, Up = { 0, 0, 1 };
+            FacingAreas ByNormal, ByWinding, Unsigned;
+            ByNormal.Add(A, B, C, &Up, 1);
+            ByWinding.Add(A, B, C, nullptr, -1);
+            Unsigned.Add(A, B, C, nullptr, 1);   // the old behaviour: the floor comes out a ceiling
+            Check(ByNormal.Floor > 0 && ByNormal.Ceiling == 0 && ByNormal.CrossAgainst == 1 && ByNormal.CrossAgrees == 0, "a real BO4 floor triangle: the vertex normal says floor, the cross product is against it");
+            Check(ByWinding.Floor > 0 && ByWinding.Ceiling == 0, "a real BO4 floor triangle: winding -1 gives floor with no normal");
+            Check(Unsigned.Ceiling > 0 && Unsigned.Floor == 0, "a real BO4 floor triangle: the unsigned cross product would call it a ceiling (the defect)");
+        }
+        // the areas only; the usage is chosen from them and the BO3 techset (Techsets::UsageRules, tested in Bo3Target.Techsets.cpp)
+        Check(Floor.Floor > 0 && Floor.Ceiling == 0 && Floor.Wall == 0, "up facing is floor area");
+        Check(Ceiling.Ceiling > 0 && Ceiling.Floor == 0 && Ceiling.Wall == 0, "down facing is ceiling area");
+        Check(Wall.Wall > 0 && Wall.Floor == 0 && Wall.Ceiling == 0, "side facing is wall area");
         FacingAreas Mixed = Wall;
         Mixed.Add({ 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 });
-        Check(MaterialUsage(false, "lit", Mixed) == "interior wall", "the facing with most area wins");
+        Check(Mixed.Wall > Mixed.Floor && Mixed.Floor > 0, "a mixed surface keeps both areas");
     }
     Check(RadiantNumber(1.00004) == "1" && RadiantNumber(-0.00001) == "0" && RadiantNumber(2.5) == "2.5", "numbers are four decimals trimmed");
     return Failed;

@@ -80,16 +80,72 @@ namespace Bo3Target::Techsets
         bool Srgb = false;
     };
 
+    // What a map measured about a material it draws: the area of its render triangles by the way they face (normal z above 0.7 floor, below
+    // -0.7 ceiling, else wall), whether the game draws it on a terrain mesh or as the map's sky, and the surface that names it (mesh and
+    // surface number, for the gate's message). A material no map surface names has Via empty.
+    struct MapUse
+    {
+        double Floor = 0, Ceiling = 0, Wall = 0;
+        bool Terrain = false, Sky = false;
+        std::string Via;
+        bool Drawn() const { return !Via.empty(); }
+        double Total() const { return Floor + Ceiling + Wall; }
+        // Another map's use of the same material: the areas add, the roles join, the first surface stays
+        void Merge(const MapUse& O);
+    };
+
+    struct UsageQuery
+    {
+        std::string Category, Type;     // the BO3 techset the material got: its catalog category and name ("Decal", "lit_decal")
+        std::string Name;               // the material's name, for the tie-break tokens
+        MapUse Use;
+    };
+
+    struct UsageChoice
+    {
+        std::string Usage;
+        std::string Rule;               // the rule id ("decal", "facing", "token:carpet", "fallback")
+        bool Fallback = false;          // nothing measured or named it: the fallback value
+        std::string Why;                // for a fallback: what was missing
+    };
+
+    // The rule table zonekit/profiles/t7/target/material-usage.json (see the file and docs/hydrax-port/p2-usage.md). Never throws.
+    class UsageRules
+    {
+    public:
+        bool Load(const std::string& JsonText);
+        bool Loaded() const { return !Rules.empty(); }
+        // Role and techset rules first, then the facing with the largest area (as HydraX does), then the tie tokens of the name when no
+        // triangle was measured or two facings tie, then the fallback. Without loaded rules: the facing alone.
+        UsageChoice Choose(const UsageQuery& Q) const;
+        // The facing's usage: floor, ceiling or wall by the largest area; empty when there is no area or the largest two tie
+        std::string FacingUsage(const MapUse& U) const;
+        size_t RuleCount() const { return Rules.size(); }
+
+    private:
+        struct Rule
+        {
+            std::string Id, Role, Category, Type, TypePrefix, NameToken, Usage;
+        };
+        std::vector<Rule> Rules;
+        std::vector<std::pair<std::string, std::string>> Tokens;    // token -> usage
+        std::string Fallback = "interior wall", FloorUsage = "floor", CeilingUsage = "ceiling", WallUsage = "interior wall";
+    };
+
     class Data
     {
     public:
-        // Reads <Profiles>/t7/target/{techsets,material-defaults}.json and <Profiles>/bo4/target/constant-layouts.json.
+        // Reads <Profiles>/t7/target/{techsets,material-defaults,material-usage}.json and <Profiles>/bo4/target/constant-layouts.json.
         // A missing or unreadable file leaves its part empty (Problems says which).
         void Load(const std::filesystem::path& Profiles);
         bool HasCatalog() const { return !Sets.empty(); }
         bool HasDefaults() const { return !DefaultValues.empty(); }
         bool HasLayouts() const { return !Layouts.empty(); }
         const std::vector<std::string>& Problems() const { return Missing; }
+        // The editor usage rules (material-usage.json); not loaded when the file is missing (Problems says so)
+        const UsageRules& Usage() const { return UsageTable; }
+        // Test hook: the usage rules from JSON text
+        bool LoadUsageText(const std::string& Json) { return UsageTable.Load(Json); }
 
         const Techset* Find(const std::string& Name) const;
         // the rule table: a techset name the game gives that is forced to a catalog techset (optional "overrides" in
@@ -136,6 +192,7 @@ namespace Bo3Target::Techsets
         std::map<uint32_t, std::map<std::string, int>> KeysOfHash;
         std::map<std::string, std::map<std::string, size_t>> CodeSemantics;   // lower code image -> semantic -> slot count
         std::vector<std::string> Missing;
+        UsageRules UsageTable;
         std::shared_ptr<WraithNameIndex> Names;
     };
 

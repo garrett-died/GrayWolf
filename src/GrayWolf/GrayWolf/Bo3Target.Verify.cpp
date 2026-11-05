@@ -1171,10 +1171,19 @@ namespace Bo3Target::Verify
             if (const std::string* Usage = E.Get("usage"); Usage != nullptr)
             {
                 C.Judged("material.usage");
-                if (*Usage != "<not in editor>")
+                if (C.In.MapSources && !C.In.MapDrawnKnown)
+                    C.Incomplete("material.usage", "the materials the maps draw are not known (" + (C.In.MapDataWhy.empty() ? std::string("no map list given") : C.In.MapDataWhy) + "): a drawn material left <not in editor> would pass unseen");
+                const auto Drawn = C.In.MapDrawnKnown ? C.In.MapDrawn.find(Lower(E.Name)) : C.In.MapDrawn.end();
+                if (Drawn != C.In.MapDrawn.end())
                 {
-                    if (C.In.MapSources) C.Add("material.usage", E.Id(), Severity::Info, "usage \"" + *Usage + "\" with map sources in the output: the gate cannot tell whether a map draws this material");
-                    else C.Fail("material.usage", E, "usage \"" + *Usage + "\" on a material no map draws (usage is for map geometry only)");
+                    // a material the map's own geometry draws must be listed in Radiant: <not in editor> hides it
+                    if (*Usage == "<not in editor>")
+                        C.Fail("material.usage", E, "the map draws this material (surface " + Drawn->second + ") and its usage is <not in editor>: Radiant would not list it");
+                }
+                else if (*Usage != "<not in editor>")
+                {
+                    if (C.In.MapSources && !C.In.MapDrawnKnown) C.Add("material.usage", E.Id(), Severity::Info, "usage \"" + *Usage + "\" with map sources in the output: the gate cannot tell whether a map draws this material");
+                    else C.Fail("material.usage", E, "usage \"" + *Usage + "\" on a material " + (C.In.MapDrawnKnown ? "that none of the run's maps draws on its geometry" : "no map draws") + " (usage is for map geometry only)");
                 }
             }
 
@@ -1687,6 +1696,15 @@ namespace Bo3Target::Verify
                 }
             }
             C.R.Entries = C.Entries.size();
+            // a map-drawn material the Mod Tools hold is not ours to rewrite: warn where its usage there hides it (or cannot be read)
+            for (const auto& [Asset, Held] : In.MapHeld)
+            {
+                C.Judged("material.usage_held");
+                if (Held.second == "<not in editor>" || Held.second.rfind("unavailable", 0) == 0)
+                    C.Add("material.usage_held", "material:" + Asset, Severity::Warning,
+                          "the map draws this material, the Mod Tools hold it in " + (Held.first.empty() ? std::string("(unknown gdt)") : Held.first) + " with usage " + Held.second +
+                              (Held.second == "<not in editor>" ? ": Radiant will not list it" : ": its usage could not be read"));
+            }
             if (C.Entries.empty()) C.Add("gate.no_entries", "gate", Severity::Failure, "zero entries were read: nothing was judged, so this is not a pass");
 
             ResolveParents(C);
@@ -2662,6 +2680,8 @@ void GenerateUI( asset Asset )
                                          { "specColorMap", "i_nowhere" }, { "surfaceType", "<none>" }, { "uScroll", "11" }, { "usage", "floor" } }),
             Ent("mtl_ok", "material", { { "colorMap", "i_c" }, { "colorTint", "1 1 1 1" }, { "materialType", "lit" }, { "normalMap", "i_n" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
             Ent("mtl_slotname", "material", { { "colorMap", "i_c" }, { "glossRangeMax", "18" }, { "materialType", "lit" }, { "surfaceType", "metal" }, { "usage", "<not in editor>" } }),
+            Ent("mtl_map_hidden", "material", { { "colorMap", "i_c" }, { "materialType", "lit" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+            Ent("mtl_map_shown", "material", { { "colorMap", "i_c" }, { "materialType", "lit" }, { "surfaceType", "concrete" }, { "usage", "floor" } }),
         }));
         // a second file: a duplicate pair, an LF file, a BOM, a quote in a value
         Put(Out / "source_data" / "dup.gdt", Gdt({ Ent("mtl_ok", "material", { { "materialType", "lit" } }) }));
@@ -2705,6 +2725,55 @@ void GenerateUI( asset Asset )
         Check(Count("gdt.single_file", "material:mtl_ok") == 1, "one (name, GDF) in two files fails");
         Check(Count("gdt.syntax", "file:source_data/lf.gdt") == 1 && Count("gdt.bom", "file:source_data/bom.gdt") == 1 && Count("gdt.unsafe_value", "image:q") == 1, "LF is a syntax failure, a BOM is gdt.bom, a quote in a value is an unsafe value");
         Check(Count("image.source", "image:i_c") == 0 && Count("image.format", "image:i_c") == 0 && Count("image.bit_depth", "image:i_c") == 0, "a clean image has no format failure");
+        // the run says which materials the maps draw: a drawn one left <not in editor> fails and names its surface, a model-only one with a usage fails
+        {
+            Inputs Map = In;
+            Map.MapSources = true;
+            const Result Before = Run(Map);
+            const auto Failing = [&](const Result& X, const char* Asset) {
+                std::string Detail;
+                for (const Finding& F : X.Findings)
+                    if (F.Check == "material.usage" && F.Level == Severity::Failure && F.Asset == Asset) Detail += F.Detail + "|";
+                return Detail;
+            };
+            Check(Before.ExitCode() != 0 && std::any_of(Before.Incomplete.begin(), Before.Incomplete.end(), [](const auto& I) { return I.first == "material.usage"; }),
+                  "map sources and no list of the drawn materials: the usage check is incomplete, not a pass");
+            const auto Infos = [&](const Result& X, const char* Asset) {
+                size_t N = 0;
+                for (const Finding& F : X.Findings)
+                    if (F.Check == "material.usage" && F.Level == Severity::Info && F.Asset == Asset) N++;
+                return N;
+            };
+            // with no list the gate says so for each material with a usage (an Info row each), and fails none of them
+            Check(Failing(Before, "material:mtl_map_hidden").empty() && Failing(Before, "material:mtl_map_shown").empty() && Failing(Before, "material:mtl_bad").empty() &&
+                      Infos(Before, "material:mtl_bad") == 1 && Infos(Before, "material:mtl_map_shown") == 1 && Infos(Before, "material:mtl_ok") == 0,
+                  "map sources and no list of the drawn materials: usage is not judged (an Info row each, no failure)");
+            Map.MapDrawn = { { "mtl_map_hidden", "world#7" }, { "mtl_map_shown", "terrain_0#3" } };
+            Map.MapDrawnKnown = true;
+            const Result Known = Run(Map);
+            const std::string Hidden = Failing(Known, "material:mtl_map_hidden");
+            Check(Hidden.find("world#7") != std::string::npos && Hidden.find("<not in editor>") != std::string::npos, "a map-drawn material left <not in editor> fails with the surface that draws it", Hidden);
+            Check(Failing(Known, "material:mtl_map_shown").empty(), "a map-drawn material with a usage passes", Failing(Known, "material:mtl_map_shown"));
+            Check(!Failing(Known, "material:mtl_bad").empty(), "a model-only material with a usage still fails", Failing(Known, "material:mtl_bad"));
+            // a pass needs proof the check ran: every entry with a usage key was judged, and the model-only one left <not in editor> has no finding at all
+            size_t OkFindings = 0;
+            for (const Finding& F : Known.Findings)
+                if (F.Check == "material.usage" && F.Asset == "material:mtl_ok") OkFindings++;
+            Check(Known.Checks.count("material.usage") != 0 && Known.Checks.at("material.usage").Judged >= 6 && OkFindings == 0 && Known.Checks.at("material.usage").Failures == 2,
+                  "a model-only material left <not in editor> passes: all usage keys judged, exactly the drawn-hidden and the model-only-with-usage fail",
+                  Known.Checks.count("material.usage") ? std::to_string(Known.Checks.at("material.usage").Judged) + "/" + std::to_string(Known.Checks.at("material.usage").Failures) : "(none)");
+            // held materials: a warning naming the gdt, only where the held usage hides the material or cannot be read
+            Map.MapHeld = { { "mtl_held_hidden", { "model_export\\t7.gdt", "<not in editor>" } }, { "mtl_held_shown", { "model_export\\t7.gdt", "floor" } }, { "mtl_held_unread", { "", "unavailable: no file" } } };
+            const Result Heldr = Run(Map);
+            size_t HeldWarn = 0, HeldNamed = 0;
+            for (const Finding& F : Heldr.Findings)
+                if (F.Check == "material.usage_held" && F.Level == Severity::Warning)
+                {
+                    HeldWarn++;
+                    if (F.Asset == "material:mtl_held_hidden" && F.Detail.find("t7.gdt") != std::string::npos) HeldNamed++;
+                }
+            Check(HeldWarn == 2 && HeldNamed == 1, "a held map material: a warning naming its gdt when its usage hides it or is unreadable, none when it has a usage", std::to_string(HeldWarn) + "/" + std::to_string(HeldNamed));
+        }
         Check(R.ExitCode() == 2 && R.Failures > 0, "failures give exit 2");
         const std::string Tsv = R.Tsv();
         Check(Tsv.rfind("# static gate", 0) == 0 && Tsv.find("\ncheck\tasset\tseverity\tdetail\n") != std::string::npos && Tsv.find("gate.entries\timage\tinfo\tentries=") != std::string::npos,

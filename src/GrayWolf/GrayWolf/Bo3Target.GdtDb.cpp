@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <format>
 
@@ -93,10 +94,96 @@ namespace Bo3Target::GdtDb
             Gdfs.insert(Gdf);
         }
         if (!Entry.GdtFile.empty()) Gdts.insert(PathKey(Entry.GdtFile));
+        if (!Entry.GdtFile.empty() && (Gdf == "material" || Gdf == "material.gdf")) MaterialFiles.emplace(Name, Entry.GdtFile);
         if (!Entry.GdtFile.empty() && (Gdf == "image" || Gdf == "image.gdf")) {
             const auto Put = ImageFiles.emplace(Name, Entry.GdtFile);
             if (!Put.second && PathKey(Put.first->second) != PathKey(Entry.GdtFile)) ++Conflicts;
         }
+    }
+
+    bool Catalog::MaterialGdtFile(std::string_view Name, std::string& File) const
+    {
+        const auto It = MaterialFiles.find(NormaliseName(Name));
+        if (It == MaterialFiles.end()) return false;
+        File = It->second;
+        return true;
+    }
+
+    namespace
+    {
+        // One entry of a gdt text: "name" ( "material.gdf" ) { ... } or the derived form "name" [ "parent" ] { ... }. Parent is set for the derived form.
+        bool FindEntry(const std::string& Text, const std::string& Lower, const std::string& Name, size_t& Open, size_t& Close, std::string& Parent)
+        {
+            Parent.clear();
+            const std::string Plain = "\"" + Name + "\" ( \"material.gdf\" )";
+            size_t At = Lower.find(Plain);
+            if (At == std::string::npos)
+            {
+                const std::string Head = "\"" + Name + "\" [ \"";
+                At = Lower.find(Head);
+                if (At == std::string::npos) return false;
+                const size_t P0 = At + Head.size(), P1 = Text.find('"', P0);
+                if (P1 == std::string::npos) return false;
+                Parent = Text.substr(P0, P1 - P0);
+            }
+            Open = Lower.find('{', At);
+            Close = Open == std::string::npos ? std::string::npos : Lower.find('}', Open);
+            return Close != std::string::npos;
+        }
+    }
+
+    bool HeldMaterialUsage(const Catalog& Held, const std::filesystem::path& ModToolsRoot, std::string_view Name, std::string& File, std::string& Usage, std::string& Why)
+    {
+        std::string Current(Name);
+        for (int Depth = 0; Depth < 8; Depth++)
+        {
+            std::string Stored;
+            if (!Held.MaterialGdtFile(Current, Stored))
+            {
+                Why = Depth == 0 ? "the gdt.db holds no material of this name with a gdt file" : "the parent entity " + Current + " has no gdt file in the gdt.db";
+                return false;
+            }
+            if (Depth == 0) File = Stored;
+            std::filesystem::path Path(Stored);
+            std::error_code Ec;
+            if (Path.is_relative() || !std::filesystem::is_regular_file(Path, Ec)) Path = ModToolsRoot / Stored;
+            std::ifstream In(Path, std::ios::binary);
+            if (!In)
+            {
+                Why = "the gdt file " + Stored + " cannot be opened";
+                return false;
+            }
+            const std::string Text((std::istreambuf_iterator<char>(In)), std::istreambuf_iterator<char>());
+            const std::string Lower = LowerAscii(Text);
+            size_t Open = 0, Close = 0;
+            std::string Parent;
+            if (!FindEntry(Text, Lower, LowerAscii(Current), Open, Close, Parent))
+            {
+                Why = "the gdt file " + Stored + " holds no entry for " + Current;
+                return false;
+            }
+            const size_t Key = Lower.find("\"usage\"", Open);
+            if (Key != std::string::npos && Key < Close)
+            {
+                const size_t V0 = Text.find('"', Key + 7);
+                const size_t V1 = V0 == std::string::npos ? V0 : Text.find('"', V0 + 1);
+                if (V1 == std::string::npos)
+                {
+                    Why = "the usage value cannot be read";
+                    return false;
+                }
+                Usage = Text.substr(V0 + 1, V1 - V0 - 1);
+                return true;
+            }
+            if (Parent.empty())
+            {
+                Why = "the entry has no usage key";
+                return false;
+            }
+            Current = Parent;   // a derived entry takes the parent's value
+        }
+        Why = "the parent chain is longer than 8";
+        return false;
     }
 
     bool Catalog::ImageGdtFile(std::string_view Name, std::string& File) const
@@ -1252,6 +1339,44 @@ namespace Bo3Target::GdtDb
             Held.Add(Same);
             std::string First;
             Check(Held.ImageFileConflicts() == 1 && Held.ImageGdtFile("i_base", First) && First == "a.gdt", "stock image: a name in two gdt files is counted once and the first row kept (the same file again is no conflict)", std::to_string(Held.ImageFileConflicts()) + " " + First);
+            std::filesystem::remove_all(Dir, Ec);
+        }
+        // the usage a held material carries, read from the Mod Tools' own gdt (read only), through a derived entry's parent
+        {
+            std::error_code Ec;
+            const std::filesystem::path Dir = std::filesystem::temp_directory_path() / ("graywolf_selftest_heldusage_" + std::to_string(GetCurrentProcessId()));
+            std::filesystem::remove_all(Dir, Ec);
+            std::filesystem::create_directories(Dir / "texture_assets", Ec);
+            {
+                std::ofstream F(Dir / "texture_assets" / "m.gdt", std::ios::binary);
+                F << "{\n\t\"mtl_plain\" ( \"material.gdf\" )\n\t{\n\t\t\"usage\" \"decal\"\n\t\t\"type\" \"material\"\n\t}\n"
+                     "\t\"mtl_hidden\" ( \"material.gdf\" )\n\t{\n\t\t\"usage\" \"<not in editor>\"\n\t}\n"
+                     "\t\"mtl_child\" [ \"mtl_plain\" ]\n\t{\n\t\t\"colorTint\" \"1 1 1 1\"\n\t}\n"
+                     "\t\"mtl_own\" [ \"mtl_plain\" ]\n\t{\n\t\t\"usage\" \"floor\"\n\t}\n"
+                     "\t\"mtl_nousage\" ( \"material.gdf\" )\n\t{\n\t\t\"type\" \"material\"\n\t}\n}\n";
+            }
+            Catalog Held;
+            for (const char* Name : { "mtl_plain", "mtl_hidden", "mtl_child", "mtl_own", "mtl_nousage", "mtl_nofile" })
+            {
+                Row R;
+                R.Name = Name;
+                R.Gdf = "material";
+                R.GdtFile = std::string(Name) == "mtl_nofile" ? std::string() : "texture_assets/m.gdt";
+                Held.Add(R);
+            }
+            const auto Read = [&](const char* Name, std::string& Usage, std::string& Why) {
+                std::string File;
+                return HeldMaterialUsage(Held, Dir, Name, File, Usage, Why);
+            };
+            std::string U1, U2, U3, U4, U5, U6, W;
+            Check(Read("mtl_plain", U1, W) && U1 == "decal", "held usage: a plain entry", U1 + W);
+            Check(Read("mtl_hidden", U2, W) && U2 == "<not in editor>", "held usage: <not in editor> is read as it is", U2 + W);
+            Check(Read("mtl_child", U3, W) && U3 == "decal", "held usage: a derived entry takes its parent's", U3 + W);
+            Check(Read("mtl_own", U4, W) && U4 == "floor", "held usage: a derived entry's own value wins", U4 + W);
+            W.clear();
+            Check(!Read("mtl_nousage", U5, W) && W.find("no usage") != std::string::npos, "held usage: an entry with none says so", W);
+            W.clear();
+            Check(!Read("mtl_nofile", U6, W) && !W.empty() && !Read("mtl_unknown", U6, W), "held usage: no file, or no row: not available, with a reason", W);
             std::filesystem::remove_all(Dir, Ec);
         }
         return Failed;

@@ -11,11 +11,16 @@
 #include "CliSupport.h"
 #include "GameCommand.h"
 #include "GameInstalls.h"
+#include "MapFullExport.h"
+#include "MaterialGdt.h"
 
 #include <CLI/CLI.hpp>
 
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 
 namespace fs = std::filesystem;
 
@@ -58,6 +63,19 @@ namespace
         In.Catalog = &Bo3Target::Techsets::Shared();
         for (const fs::path& R : In.Roots)
             if (fs::is_directory(R / "map_source", Ec)) In.MapSources = true;
+        // the maps this run exported (<run>/maps/*.full_map.tsv, the ones its index names): the materials they draw on their own geometry
+        {
+            bool AnyOk = false;
+            std::string Why;
+            for (const fs::path& R : In.Roots)
+            {
+                std::string RootWhy;
+                if (Maps::ReadDrawnMaterials(R.parent_path() / "maps", In.MapDrawn, RootWhy)) AnyOk = true;
+                else Why += RootWhy;
+            }
+            In.MapDrawnKnown = AnyOk && Why.empty();
+            In.MapDataWhy = Why;
+        }
         Pb::Loaded Mod;
         std::vector<std::string> Warnings;
         if (HaveRoot) Mod.Open(Root, true, Warnings);

@@ -426,7 +426,7 @@ namespace Bo3Target::Publish
         // models and their materials are published above like any model's; the list says which of them the maps name, the
         // usage Radiant lists the geometry materials under, and the model that carries the geometry materials
         std::vector<Maps::MapDependencyList> MapLists;
-        std::map<std::string, std::string> GeometryUsage;       // material source name -> usage
+        std::map<std::string, Techsets::MapUse> GeometryUse;    // material source name -> what the maps measured (the usage is chosen from the BO3 techset)
         std::set<std::string> GeometryOwners;                   // model names that have materials and no file
         // the files the map export made THIS run (graywolf_map_index.tsv): a .map or a list left in the folder by an
         // earlier run is not published, and not read
@@ -452,18 +452,39 @@ namespace Bo3Target::Publish
                 if (!List.Owner.empty()) GeometryOwners.insert(MaterialGdt::AssetName(List.Owner));
                 for (const Maps::MapDependency& D : List.Dependencies)
                 {
-                    if (D.Type != "material" || !StartsWith(D.Detail, "usage=")) continue;
-                    // two maps may use a material differently: the stronger use stays, whichever map came first
-                    const auto [Have, New] = GeometryUsage.emplace(D.Name, D.Detail.substr(6));
-                    if (!New && Have->second != D.Detail.substr(6))
+                    if (D.Type == "material" && StartsWith(D.Detail, "usage="))
                     {
-                        Have->second = Maps::StrongerUsage(Have->second, D.Detail.substr(6));
-                        Count("map_usage_disagreements");
+                        // a list of an older build named the usage itself, chosen from the source game's techset: it is not used
+                        Count("map_use_old_format");
+                        continue;
                     }
+                    if (D.Type != "material" || !StartsWith(D.Detail, "facing=")) continue;
+                    Techsets::MapUse Use;
+                    if (!Maps::ParseMapUse(D.Detail, D.Via, Use))
+                    {
+                        Count("map_use_unread");
+                        continue;
+                    }
+                    // two maps may draw a material: the areas add and the roles join, so the result does not depend on the order of the maps
+                    const auto [Have, New] = GeometryUse.emplace(D.Name, Use);
+                    if (!New)
+                    {
+                        Have->second.Merge(Use);
+                        Count("map_use_merged");
+                    }
+                    // the asset name the GDT will carry, and the surface that draws it: the gate fails a drawn material left <not in editor>
+                    // (a name over 63 characters is shortened in the GDT: the gate looks up either spelling)
+                    for (const std::string& Key : Maps::DrawnAssetKeys(D.Name)) R.MapMaterials.emplace(Key, Use.Via);
                 }
                 MapLists.push_back(std::move(List));
             }
             Count("full_map_lists", MapLists.size());
+            // the evidence of what the maps draw is whole only when a list was read, none was skipped, and no row was old or unreadable
+            R.MapDataComplete = !MapLists.empty() && C.count("publish_full_map_lists_unread") == 0 && C.count("publish_map_use_unread") == 0 && C.count("publish_map_use_old_format") == 0;
+            if (!R.MapDataComplete)
+                R.MapDataWhy = MapLists.empty() ? "no map list was read" : "a map list or a material row of one was skipped (unreadable or old form)";
+            if (C.count("publish_map_use_old_format") != 0)
+                R.Warnings.push_back("a map list names its materials usage the old way (usage=): those materials are not listed in Radiant; export the map again");
             if (MapLists.empty())
                 R.Warnings.push_back("--full-map found no map list of this run under " + MapFolder.string() + (HaveMapIndex ? ": the run exported no map" : " (no " + std::string(Maps::MapIndexFile) + ": the maps were not exported by this build)"));
         }
@@ -486,7 +507,7 @@ namespace Bo3Target::Publish
             });
         }
         B.PlanOnly(O.Plan);
-        B.SetUsage(GeometryUsage);              // a map's geometry materials are listed in Radiant; every other material stays <not in editor>
+        B.SetMapUse(GeometryUse);               // a map's geometry materials are listed in Radiant (usage chosen from the BO3 techset); every other material stays <not in editor>
         std::map<std::string, std::vector<std::string>> ModelMaterials;     // model name -> its material asset names
         std::map<std::string, std::vector<std::string>> MaterialModels;     // material asset name -> models using it
         std::map<std::string, std::string> TechsetOf;
@@ -636,6 +657,22 @@ namespace Bo3Target::Publish
             A.ManifestType = "gdt";
             const auto Users = MaterialModels.find(M.Name);
             Decide(A, Users == MaterialModels.end() ? std::string() : Pl::Shorten(Users->second.front()), 0);
+            // a material the map draws that the Mod Tools hold: no entry is written (a duplicate would break, the root is not ours), so its
+            // usage there stays as it is; say what it is, and what this export would have chosen
+            if (const auto Drawn = GeometryUse.find(M.Source); Drawn != GeometryUse.end() && (A.Action == "already_in_mod_tools" || A.Action == "name_conflict"))
+            {
+                std::string File, HeldUsage, Why;
+                if (Know.Held == nullptr || !GdtDb::HeldMaterialUsage(*Know.Held, O.ModToolsRoot, A.Name, File, HeldUsage, Why))
+                    HeldUsage = "unavailable: " + (Know.Held == nullptr ? std::string("no gdt.db was read") : Why);
+                std::string Chosen = "(none)";
+                for (const auto& [K, V] : M.Fields)
+                    if (K == "usage") Chosen = V;
+                Approxes.push_back({ "material.usage_held", A.Name,
+                                     "gdt=" + (File.empty() ? std::string("(unknown)") : File) + ", held_usage=" + HeldUsage + ", this_export_would_choose=" + Chosen + ", surface=" + Drawn->second.Via,
+                                     "the Mod Tools hold this material and the map draws it: its entry is not rewritten, so it is listed in Radiant under the held usage" });
+                R.MapHeld[Lower(A.Name)] = { File, HeldUsage };
+                Count("map_usage_held");
+            }
             // the techset came from the catalog: only what was not exact is reported, with what the rule did
             for (const auto& N : M.Notes)
             {
@@ -2074,8 +2111,9 @@ namespace Bo3Target::Publish
             List.Dependencies = { { "xmodel", "p7_crate_x", "staticModel", "" },
                                   { "xmodel", "p7_crate_a", "model", "" },
                                   { "xmodel", "p7_missing", "model", "" },
-                                  { "material", "mtl_floor", "surface:floor", "usage=floor" },
-                                  { "material", "mtl_shared", "surface:interior wall", "usage=interior wall" },
+                                  { "material", "mtl_floor", "surface:world#0", "facing=90.000:0.000:10.000" },
+                                  { "material", "mtl_shared", "surface:world#1", "facing=0.000:0.000:90.000" },
+                                  { "material", "mtl_held_one", "surface:world#2", "facing=5.000:0.000:0.000" },
                                   { "fx", "debris/a.efx", "rattleEfx", "" },
                                   { "xanim", "a_walk", "walkAnim1", "" } };
             std::ofstream(Run / "maps" / ("mp_x" + std::string(Maps::FullMapListSuffix)), std::ios::binary) << Maps::FormatDependencyList(List);
@@ -2143,6 +2181,13 @@ namespace Bo3Target::Publish
             };
             Check(Contains(EntryOf("mtl_floor"), "\"usage\" \"floor\""), "full map: the floor material carries its usage", EntryOf("mtl_floor"));
             Check(Contains(EntryOf("mtl_shared"), "\"usage\" \"interior wall\""), "full map: a material a prop also uses keeps the world surface's usage", EntryOf("mtl_shared"));
+            // a drawn material the Mod Tools hold is not rewritten: a row says what its usage there is (here the gdt file is not on disk, so it says so)
+            Check(R.MapHeld.count("mtl_held_one") == 1 && R.MapHeld.at("mtl_held_one").second.rfind("unavailable", 0) == 0 && Contains(Slurp(Run / "graywolf_approximations.tsv"), "material.usage_held") &&
+                      Contains(Slurp(Run / "graywolf_approximations.tsv"), "held_usage=unavailable") && !Contains(Gdts, "\"mtl_held_one\" ( \"material.gdf\" )"),
+                  "full map: a drawn material the Mod Tools hold gets a usage_held row and no entry", R.MapHeld.empty() ? "(none)" : R.MapHeld.begin()->first);
+            Check(R.MapDataComplete, "full map: every list read and understood is complete map data", R.MapDataWhy);
+            Check(R.MapMaterials.count("mtl_floor") == 1 && R.MapMaterials.count("mtl_shared") == 1 && R.MapMaterials.count("mtl_prop") == 0 && R.MapMaterials.at("mtl_floor") == "world#0",
+                  "full map: the result names the map-drawn materials and the surface that draws each", std::to_string(R.MapMaterials.size()));
             Check(Contains(EntryOf("mtl_prop"), "\"usage\" \"<not in editor>\""), "full map: a material only a prop uses stays <not in editor>", EntryOf("mtl_prop"));
             std::set<std::string> Unique(Names.begin(), Names.end());
             Check(Unique.size() == Names.size() && !Names.empty(), "full map: no name twice across the GDTs", std::to_string(Names.size()) + " / " + std::to_string(Unique.size()));
@@ -2151,17 +2196,34 @@ namespace Bo3Target::Publish
             {
                 Maps::MapDependencyList Other;
                 Other.Map = "mp_y";
-                Other.Dependencies = { { "material", "mtl_shared", "surface:floor", "usage=floor" } };
+                Other.Dependencies = { { "material", "mtl_shared", "surface:other#0", "facing=500.000:0.000:0.000" } };
                 std::ofstream(Run / "maps" / ("mp_old" + std::string(Maps::FullMapListSuffix)), std::ios::binary) << Maps::FormatDependencyList(Other);
                 const fs::path Stale = Run / "bo3_stale";
                 Result One = GoFull(Stale, true);
-                Check(One.Counters["publish_map_usage_disagreements"] == 0, "full map: a list the run did not make is not read", std::to_string(One.Counters["publish_map_usage_disagreements"]));
+                Check(One.Counters["publish_map_use_merged"] == 0, "full map: a list the run did not make is not read", std::to_string(One.Counters["publish_map_use_merged"]));
                 Maps::NoteRunMapFile(Run / "maps", "mp_old" + std::string(Maps::FullMapListSuffix), "list");
                 const fs::path Both = Run / "bo3_both";
                 Result Two = GoFull(Both, true);
-                Check(Two.Error.empty() && Two.Counters["publish_map_usage_disagreements"] == 1, "full map: two maps disagreeing on a usage are counted", std::to_string(Two.Counters["publish_map_usage_disagreements"]));
-                Check(Maps::StrongerUsage("interior wall", "floor") == "floor" && Maps::StrongerUsage("floor", "interior wall") == "floor" && Maps::StrongerUsage("decal", "floor") == "decal",
-                      "full map: the stronger usage does not depend on the order", Maps::StrongerUsage("interior wall", "floor"));
+                Check(Two.Error.empty() && Two.Counters["publish_map_use_merged"] == 1, "full map: a material two maps draw is counted merged", std::to_string(Two.Counters["publish_map_use_merged"]));
+                // a list the index names that does not read: the map data is incomplete, never taken for the whole picture
+                {
+                    std::ofstream(Run / "maps" / ("mp_junk" + std::string(Maps::FullMapListSuffix)), std::ios::binary) << "not a list";
+                    Maps::NoteRunMapFile(Run / "maps", "mp_junk" + std::string(Maps::FullMapListSuffix), "list");
+                    Result Junk = GoFull(Run / "bo3_junk", true);
+                    Check(!Junk.MapDataComplete && Junk.Counters["publish_full_map_lists_unread"] == 1 && !Junk.MapDataWhy.empty(), "full map: an unreadable list leaves the map data incomplete", Junk.MapDataWhy);
+                    fs::remove(Run / "maps" / ("mp_junk" + std::string(Maps::FullMapListSuffix)), E);
+                    Maps::BeginRunMapFiles(Run / "maps");
+                    Maps::NoteRunMapFile(Run / "maps", "mp_old" + std::string(Maps::FullMapListSuffix), "list");
+                    Maps::NoteRunMapFile(Run / "maps", "mp_x" + std::string(Maps::FullMapListSuffix), "list");
+                }
+                // 90 of wall from one map, 500 of floor from the other: the summed areas make it a floor, whichever list is read first
+                const fs::path Written = Run / "bo3_both_written";
+                GoFull(Written, false);
+                std::vector<std::string> WrittenNames;
+                const std::string BothText = AllGdt(Written, WrittenNames);
+                const size_t At = BothText.find("\"mtl_shared\" ( \"material.gdf\" )");
+                const std::string Shared = At == std::string::npos ? std::string() : BothText.substr(At, BothText.find('}', At) - At);
+                Check(Contains(Shared, "\"usage\" \"floor\""), "full map: two maps' areas add, so the larger facing wins", Shared);
                 // the one map again: the checks below compare against it
                 fs::remove(Run / "maps" / ("mp_old" + std::string(Maps::FullMapListSuffix)), E);
                 Maps::BeginRunMapFiles(Run / "maps");

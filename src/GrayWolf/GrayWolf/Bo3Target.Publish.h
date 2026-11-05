@@ -87,6 +87,14 @@ namespace Bo3Target::Publish
         std::map<std::string, size_t> Counters;     // publish_<what>
         std::vector<std::string> Warnings;
         std::string Error;                          // set: nothing was written, the step was refused
+        // --full-map: the GDT asset name of every material the maps' own geometry draws, with the first surface that names it ("world#3",
+        // "terrain_0#1", "skybox#0"). The gate fails one of these left <not in editor>, and names the surface.
+        std::map<std::string, std::string> MapMaterials;
+        // --full-map: a map-drawn material the Mod Tools already hold (no entry is written for it): asset name (lower case) -> { the gdt that
+        // holds it, its usage there or "unavailable: why" }. The held entry is never rewritten; the gate warns for each.
+        std::map<std::string, std::pair<std::string, std::string>> MapHeld;
+        bool MapDataComplete = false;               // --full-map: every list was read and every material row understood; else MapMaterials is not the whole picture
+        std::string MapDataWhy;
     };
 
     // Checks what can be checked before the export runs: the target's output folder is not inside an install

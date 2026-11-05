@@ -89,6 +89,9 @@ namespace ImageRoles
     // kind names them, in the run's image format), in place: each file is rewritten beside itself and
     // moved over the old one (a hard link to it, written by the dedup, is not changed). The
     // "patchnormals" setting off: nothing is done. Adds its counters to T.
+    // Whether pulling an asset of this kind from another zone writes images whose slots the zone's materials name (so the zone's roles must
+    // be read): a material, a model (its materials' images) and an effect.
+    bool KindBindsImages(DiskGame::Kind K);
     Outcome RebuildNormals(const Book& Roles, const std::filesystem::path& ImagesDir, DiskGame::Totals& T);
 
     // RebuildNormals for a given image format, whatever the "patchnormals" setting says. Only files
