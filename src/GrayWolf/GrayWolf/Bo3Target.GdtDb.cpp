@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <mutex>
 #include <format>
 
 namespace fs = std::filesystem;
@@ -92,6 +93,201 @@ namespace Bo3Target::GdtDb
             Gdfs.insert(Gdf);
         }
         if (!Entry.GdtFile.empty()) Gdts.insert(PathKey(Entry.GdtFile));
+        if (!Entry.GdtFile.empty() && (Gdf == "image" || Gdf == "image.gdf")) {
+            const auto Put = ImageFiles.emplace(Name, Entry.GdtFile);
+            if (!Put.second && PathKey(Put.first->second) != PathKey(Entry.GdtFile)) ++Conflicts;
+        }
+    }
+
+    bool Catalog::ImageGdtFile(std::string_view Name, std::string& File) const
+    {
+        const auto It = ImageFiles.find(NormaliseName(Name));
+        if (It == ImageFiles.end()) return false;
+        File = It->second;
+        return true;
+    }
+
+    // ---- the semantic of a stock image ------------------------------------------------------------------------
+
+    struct StockImages::State
+    {
+        const Catalog* Held = nullptr;
+        std::filesystem::path Root;
+        mutable std::mutex Lock;
+        struct Parsed
+        {
+            std::map<std::string, std::string> Entities, OpenParents, OwnOfOpen;
+        };
+        mutable std::map<std::string, std::shared_ptr<Parsed>> Files;   // gdt path key -> its image entities (null: unreadable)
+    };
+
+    std::map<std::string, std::string> StockImages::ParseImageEntities(const std::string& Text, std::map<std::string, std::string>* OpenParents, std::map<std::string, std::string>* OwnOfOpen)
+    {
+        // every entity of the file: its type (empty for a derived one), its parent in this file (derived), its own semantic
+        struct Ent
+        {
+            std::string Gdf, Parent, Semantic;
+        };
+        std::map<std::string, Ent> All;
+        std::string Current;
+        size_t At = 0;
+        while (At < Text.size())
+        {
+            size_t End = Text.find('\n', At);
+            if (End == std::string::npos) End = Text.size();
+            std::string_view Line = std::string_view(Text).substr(At, End - At);
+            At = End + 1;
+            while (!Line.empty() && (Line.back() == '\r' || Line.back() == ' ' || Line.back() == '\t')) Line.remove_suffix(1);
+            while (!Line.empty() && (Line.front() == ' ' || Line.front() == '\t')) Line.remove_prefix(1);
+            if (Line.empty() || Line.front() != '"') continue;
+            const size_t Quote = Line.find('"', 1);
+            if (Quote == std::string_view::npos) continue;
+            const std::string_view Rest = Line.substr(Quote + 1);
+            const size_t Open = Line.find("( \"");
+            const size_t Bracket = Line.find("[ \"");
+            if (Open != std::string_view::npos && Open > Quote)
+            {
+                // an entity header: "name" ( "type.gdf" ), or "name" [ "parent" ] ( "type.gdf" )
+                Current = NormaliseName(Line.substr(1, Quote - 1));
+                Ent& E = All[Current];
+                const std::string_view Type = Line.substr(Open + 3);
+                E.Gdf = std::string(Type.substr(0, Type.find('"')));
+                // "child" [ "parent" ] ( "image.gdf" ): the parent is kept, the semantic is inherited from it
+                if (Bracket != std::string_view::npos && Bracket > Quote && Bracket < Open)
+                {
+                    const std::string_view Par = Line.substr(Bracket + 3);
+                    E.Parent = NormaliseName(Par.substr(0, Par.find('"')));
+                }
+                continue;
+            }
+            if (Bracket != std::string_view::npos && Bracket > Quote && Rest.find_first_not_of(" \t") == Rest.find("[ \""))
+            {
+                // a derived entity: "name" [ "parent" ]
+                Current = NormaliseName(Line.substr(1, Quote - 1));
+                Ent& E = All[Current];
+                const std::string_view Par = Line.substr(Bracket + 3);
+                E.Parent = NormaliseName(Par.substr(0, Par.find('"')));
+                continue;
+            }
+            if (Current.empty()) continue;
+            if (Line.substr(1, Quote - 1) != "semantic") continue;
+            const size_t V0 = Line.find('"', Quote + 1);
+            const size_t V1 = V0 == std::string_view::npos ? V0 : Line.find('"', V0 + 1);
+            if (V1 != std::string_view::npos) All[Current].Semantic = std::string(Line.substr(V0 + 1, V1 - V0 - 1));
+        }
+        // an image is an entity of image.gdf, or one derived (in this file) from an image; its semantic its own, else its parent's
+        std::map<std::string, std::string> Out;
+        for (const auto& [Name, E] : All)
+        {
+            std::string Semantic = E.Semantic;
+            const Ent* Cur = &E;
+            std::string Gdf = E.Gdf, Open;
+            for (int Depth = 0; Depth < 64 && !Cur->Parent.empty() && (Gdf.empty() || Semantic.empty()); ++Depth)
+            {
+                const auto Up = All.find(Cur->Parent);
+                if (Up == All.end())
+                {
+                    Open = Cur->Parent;
+                    break;
+                }
+                Cur = &Up->second;
+                if (Gdf.empty()) Gdf = Cur->Gdf;
+                if (Semantic.empty()) Semantic = Cur->Semantic;
+            }
+            const bool Image = Gdf.rfind("image.gdf", 0) == 0;
+            if (Image) Out[Name] = Semantic;
+            if (OpenParents != nullptr && !Open.empty() && (Image ? Semantic.empty() : Gdf.empty()))
+            {
+                (*OpenParents)[Name] = Open;
+                if (OwnOfOpen != nullptr && !E.Semantic.empty()) (*OwnOfOpen)[Name] = E.Semantic;     // its own value wins over the parent's
+            }
+        }
+        return Out;
+    }
+
+    StockImages::StockImages(const Catalog& Held, std::filesystem::path ModToolsRoot) : Data(std::make_unique<State>())
+    {
+        Data->Held = &Held;
+        Data->Root = std::move(ModToolsRoot);
+    }
+
+    StockImages::~StockImages() = default;
+
+    StockSemantic StockImages::Semantic(std::string_view ImageName) const
+    {
+        return SemanticAt(ImageName, 8);
+    }
+
+    StockSemantic StockImages::SemanticAt(std::string_view ImageName, int Depth) const
+    {
+        StockSemantic Out;
+        std::string Stored;
+        if (!Data->Held->ImageGdtFile(ImageName, Stored))
+        {
+            Out.Why = "the gdt.db holds no image of this name with a gdt file";
+            return Out;
+        }
+        std::filesystem::path File(Stored);
+        if (File.is_relative()) File = Data->Root / File;
+        const std::string Key = LowerAscii(File.generic_string());
+        std::shared_ptr<State::Parsed> Entities;
+        {
+            std::lock_guard<std::mutex> Guard(Data->Lock);
+            const auto It = Data->Files.find(Key);
+            if (It != Data->Files.end()) Entities = It->second;
+            else
+            {
+                std::ifstream In(File, std::ios::binary);
+                if (In)
+                {
+                    const std::string Text((std::istreambuf_iterator<char>(In)), std::istreambuf_iterator<char>());
+                    Entities = std::make_shared<State::Parsed>();
+                    Entities->Entities = ParseImageEntities(Text, &Entities->OpenParents, &Entities->OwnOfOpen);
+                }
+                Data->Files[Key] = Entities;
+            }
+        }
+        if (!Entities)
+        {
+            Out.Why = "the stock GDT " + File.string() + " is not readable";
+            return Out;
+        }
+        const std::string Wanted = NormaliseName(ImageName);
+        const auto Hit = Entities->Entities.find(Wanted);
+        const auto Open = Entities->OpenParents.find(Wanted);
+        if (Hit == Entities->Entities.end() && Open == Entities->OpenParents.end())
+        {
+            Out.Why = "the stock GDT " + File.filename().string() + " holds no image entity of this name";
+            return Out;
+        }
+        if (Hit == Entities->Entities.end() || Hit->second.empty())
+        {
+            // an untyped child that sets its own semantic keeps it (when its parent is an image of the database); else it inherits from the parent
+            if (Hit == Entities->Entities.end() && Open != Entities->OpenParents.end())
+            {
+                const auto Own = Entities->OwnOfOpen.find(Wanted);
+                std::string ParentFile;
+                if (Own != Entities->OwnOfOpen.end() && Data->Held->ImageGdtFile(Open->second, ParentFile))
+                {
+                    Out.Known = true;
+                    Out.Semantic = Own->second;
+                    return Out;
+                }
+            }
+            // inherited from a parent that lives in another gdt: follow it through the database
+            if (Open != Entities->OpenParents.end() && Depth > 0)
+            {
+                StockSemantic Up = SemanticAt(Open->second, Depth - 1);
+                if (Up.Known) return Up;
+                Up.Why = "the parent " + Open->second + " of the stock image: " + Up.Why;
+                return Up;
+            }
+            Out.Why = "the stock image entity declares no semantic field";
+            return Out;
+        }
+        Out.Known = true;
+        Out.Semantic = Hit->second;
+        return Out;
     }
 
     bool Catalog::Contains(std::string_view Gdf, std::string_view Name) const
@@ -860,6 +1056,98 @@ namespace Bo3Target::GdtDb
         const StockExclusion Self{ "texture_assets", "texture_assets\\t7_wall.gdt" };
         Check(!Stock.Closest("material", "t7_wall_dirty", Match, &Self), "leave-one-out: a prefix held only by the row itself finds nothing", "");
         Check(Stock.Closest("xmodel", "t7_prop_crate_a", Match, &Self) && Match.Tokens == 4, "leave-one-out elsewhere keeps the full-prefix match", std::to_string(Match.Tokens));
+
+        // the semantic of a stock image, read from the stock GDT text the database names
+        {
+            const std::string Text =
+                "{\r\n"
+                "\t\"I_Mask\" ( \"image.gdf\" )\r\n\t{\r\n\t\t\"baseImage\" \"x.tif\"\r\n\t\t\"semantic\" \"specularMask\"\r\n\t\t\"type\" \"image\"\r\n\t}\r\n"
+                "\t\"mtl_not_an_image\" ( \"material.gdf\" )\r\n\t{\r\n\t\t\"semantic\" \"wrong\"\r\n\t}\r\n"
+                "\t\"i_color\" ( \"image.gdf\" )\r\n\t{\r\n\t\t\"semantic\" \"specularMap\"\r\n\t}\r\n"
+                "\t\"i_none\" ( \"image.gdf\" )\r\n\t{\r\n\t\t\"type\" \"image\"\r\n\t}\r\n"
+                "}\r\n";
+            const auto Derived = StockImages::ParseImageEntities(Text + "{\r\n\t\"i_child\" [ \"i_mask\" ]\r\n\t{\r\n\t\t\"baseImage\" \"y.tif\"\r\n\t}\r\n\t\"i_child2\" [ \"i_color\" ]\r\n\t{\r\n\t\t\"semantic\" \"normalMap\"\r\n\t}\r\n\t\"mtl_child\" [ \"mtl_not_an_image\" ]\r\n\t{\r\n\t}\r\n\t\"i_orphan\" [ \"elsewhere\" ]\r\n\t{\r\n\t}\r\n}\r\n");
+            Check(Derived.at("i_child") == "specularMask" && Derived.at("i_child2") == "normalMap" && Derived.count("mtl_child") == 0 && Derived.count("i_orphan") == 0,
+                  "stock gdt: a derived image takes its parent's semantic unless it sets its own; a derived material or an unknown parent is no image", std::to_string(Derived.size()));
+            const auto Parsed = StockImages::ParseImageEntities(Text);
+            Check(Parsed.size() == 3 && Parsed.at("i_mask") == "specularMask" && Parsed.at("i_color") == "specularMap" && Parsed.at("i_none").empty() && Parsed.count("mtl_not_an_image") == 0,
+                  "stock gdt: image entities and their semantic only; a material's field is not read", std::to_string(Parsed.size()));
+            std::error_code Ec;
+            const std::filesystem::path Dir = std::filesystem::temp_directory_path(Ec) / std::format("gw_stockimg_{}", static_cast<unsigned long>(::GetCurrentProcessId()));
+            std::filesystem::remove_all(Dir, Ec);
+            std::filesystem::create_directories(Dir / "art", Ec);
+            std::ofstream(Dir / "art" / "s.gdt", std::ios::binary) << Text;
+            Catalog Held;
+            for (const char* Name : { "i_mask", "i_color", "i_none", "i_ghost" })
+            {
+                Row R;
+                R.Name = Name;
+                R.Gdf = "image.gdf";
+                R.GdtFile = Name == std::string("i_ghost") ? "art\\missing.gdt" : "art\\s.gdt";
+                Held.Add(R);
+            }
+            Row Mat;
+            Mat.Name = "mtl_x";
+            Mat.Gdf = "material.gdf";
+            Mat.GdtFile = "art\\s.gdt";
+            Held.Add(Mat);
+            const StockImages Read(Held, Dir);
+            const StockSemantic A = Read.Semantic("I_MASK"), B = Read.Semantic("i_color"), C = Read.Semantic("i_none"), D = Read.Semantic("i_ghost"), E = Read.Semantic("i_nowhere"), F = Read.Semantic("mtl_x");
+            Check(A.Known && A.Semantic == "specularMask" && B.Known && B.Semantic == "specularMap", "stock image: the semantic comes from the stock gdt, case aside", A.Semantic + "/" + B.Semantic);
+            Check(!C.Known && !C.Why.empty() && !D.Known && !D.Why.empty() && !E.Known && !E.Why.empty() && !F.Known, "stock image: no semantic field, an unreadable gdt, an unknown name and a non-image are unread, each with a reason", C.Why + " | " + D.Why + " | " + E.Why);
+            std::filesystem::remove_all(Dir, Ec);
+        }
+
+        // a derived image keeps its parent when the header also names the type, and a parent in another gdt is followed through the database
+        {
+            const std::string A =
+                "{\r\n"
+                "\t\"i_base\" ( \"image.gdf\" )\r\n\t{\r\n\t\t\"semantic\" \"specularMask\"\r\n\t}\r\n"
+                "\t\"i_kid\" [ \"i_base\" ] ( \"image.gdf\" )\r\n\t{\r\n\t\t\"baseImage\" \"k.tif\"\r\n\t}\r\n"
+                "\t\"i_kid_own\" [ \"i_base\" ] ( \"image.gdf\" )\r\n\t{\r\n\t\t\"semantic\" \"normalMap\"\r\n\t}\r\n"
+                "\t\"i_far\" [ \"i_elsewhere\" ] ( \"image.gdf\" )\r\n\t{\r\n\t}\r\n"
+                "\t\"i_far_own\" [ \"i_elsewhere\" ]\r\n\t{\r\n\t\t\"semantic\" \"normalMap\"\r\n\t}\r\n"
+                "}\r\n";
+            std::map<std::string, std::string> Open;
+            const auto P = StockImages::ParseImageEntities(A, &Open);
+            Check(P.at("i_kid") == "specularMask" && P.at("i_kid_own") == "normalMap" && P.at("i_far").empty() && Open.count("i_far") == 1 && Open.at("i_far") == "i_elsewhere" && Open.count("i_kid") == 0,
+                  "stock gdt: [ parent ] ( image.gdf ) inherits the parent's semantic unless set, and a parent elsewhere is reported open", std::to_string(P.size()));
+            std::error_code Ec;
+            const std::filesystem::path Dir = std::filesystem::temp_directory_path(Ec) / std::format("gw_stockimg2_{}", static_cast<unsigned long>(::GetCurrentProcessId()));
+            std::filesystem::remove_all(Dir, Ec);
+            std::filesystem::create_directories(Dir, Ec);
+            std::ofstream(Dir / "a.gdt", std::ios::binary) << A;
+            std::ofstream(Dir / "b.gdt", std::ios::binary) << "{\r\n\t\"i_elsewhere\" ( \"image.gdf\" )\r\n\t{\r\n\t\t\"semantic\" \"glossMap\"\r\n\t}\r\n}\r\n";
+            Catalog Held;
+            const std::vector<std::pair<std::string, std::string>> Rows = { { "i_base", "a.gdt" }, { "i_kid", "a.gdt" }, { "i_far", "a.gdt" }, { "i_far_own", "a.gdt" }, { "i_elsewhere", "b.gdt" } };
+            for (const auto& [Name, File] : Rows)
+            {
+                Row R;
+                R.Name = Name;
+                R.Gdf = "image.gdf";
+                R.GdtFile = File;
+                Held.Add(R);
+            }
+            const StockImages Read(Held, Dir);
+            const StockSemantic Kid = Read.Semantic("i_kid"), Far = Read.Semantic("i_far");
+            const StockSemantic FarOwn = Read.Semantic("i_far_own");
+            Check(FarOwn.Known && FarOwn.Semantic == "normalMap", "stock image: an untyped child that sets its own semantic keeps it over its parent in another gdt", FarOwn.Semantic);
+            Check(Kid.Known && Kid.Semantic == "specularMask" && Far.Known && Far.Semantic == "glossMap", "stock image: a parent in another gdt is followed through the database", Kid.Semantic + "/" + Far.Semantic + " " + Far.Why);
+            // the same name in two gdt files: the first row is kept and the conflict is counted
+            Row Again;
+            Again.Name = "I_Base";
+            Again.Gdf = "image.gdf";
+            Again.GdtFile = "b.gdt";
+            Held.Add(Again);
+            Row Same;
+            Same.Name = "i_base";
+            Same.Gdf = "image.gdf";
+            Same.GdtFile = "A.GDT";
+            Held.Add(Same);
+            std::string First;
+            Check(Held.ImageFileConflicts() == 1 && Held.ImageGdtFile("i_base", First) && First == "a.gdt", "stock image: a name in two gdt files is counted once and the first row kept (the same file again is no conflict)", std::to_string(Held.ImageFileConflicts()) + " " + First);
+            std::filesystem::remove_all(Dir, Ec);
+        }
         return Failed;
     }
 }

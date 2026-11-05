@@ -20,11 +20,14 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+class WraithNameIndex;
 
 namespace Bo3Target::Techsets
 {
@@ -99,6 +102,23 @@ namespace Bo3Target::Techsets
         const std::vector<ConstantAt>* LayoutOf(uint64_t TechsetHash) const;
         // True when Image is the default image of some catalog slot with this key
         bool IsDefaultImage(const std::string& Key, const std::string& Image) const;
+        // Whether some catalog techset has a texture of this slot hash (HydraX's known slots: a BO4-only slot is not known and is ignored)
+        bool KnownHash(uint32_t Hash) const { return KnownHashes.count(Hash) != 0; }
+        // The image semantics a code image ("$white_specular") stands for, read off the catalog: the semantics of the slots that
+        // name it as their default (the Mod Tools' techsetdefs), with the number of slots for each. Empty when no slot defaults to it.
+        const std::map<std::string, size_t>* CodeImageSemantics(const std::string& Image) const;
+        // The semantic most slots give it, else empty
+        std::string DominantCodeSemantic(const std::string& Image) const;
+
+        // The BO4 and Cold War techset names (package_index/cod_techsets.wni, filled by update-name-db from echo000/cod-name-db). The
+        // hash is the game's techset name hash, masked to 60 bits ('A'..'_' +32 FNV-style rule of TechsetHash is HydraX's; the index
+        // keys are the same hash). Empty index: names are unknown and the slot rules decide.
+        void LoadNames(const std::filesystem::path& WniFile);
+        bool HasNames() const { return Names != nullptr; }
+        // Test hook: a name set in place of the index file
+        void SetNameForTest(uint64_t Hash, const std::string& Name);
+        // The resolved name of a source techset id ("33832cd9511a3ad", "xtechset_<hex>"); empty when unknown or no index
+        std::string NameOfSource(const std::string& SourceTechset) const;
 
         // Test hook: the catalog from JSON text (the techsets.json format)
         bool LoadCatalogText(const std::string& Json);
@@ -109,7 +129,10 @@ namespace Bo3Target::Techsets
         std::map<std::string, std::string> DefaultValues, Overrides;
         std::map<uint64_t, std::vector<ConstantAt>> Layouts;
         std::set<std::pair<std::string, std::string>> DefaultImages;
+        std::set<uint32_t> KnownHashes;
+        std::map<std::string, std::map<std::string, size_t>> CodeSemantics;   // lower code image -> semantic -> slot count
         std::vector<std::string> Missing;
+        std::shared_ptr<WraithNameIndex> Names;
     };
 
     // The data shipped next to the exe (zonekit/profiles), loaded once. Empty parts when absent.
@@ -129,6 +152,16 @@ namespace Bo3Target::Techsets
         bool Emissive = false;
         bool HasColorSpec = false;      // the material has a specular map ...
         bool ColorSpec = true;          // ... which is an RGB colour (else a scalar mask)
+        // BO4: the class comes from the techset's renderFlags (HydraX's render class), not from the description. RenderFromFlags
+        // switches the slot rules to HydraX's: HasRender false (flags unread) means no class, never a guess, so only lit techsets
+        // are candidates; Class and Emissive are then unused. RenderTraits are Trait bits.
+        bool RenderFromFlags = false;
+        bool HasRender = false;
+        Blend RenderBlend = Blend::Other;
+        uint32_t RenderTraits = 0;
+        // The material's image slot hashes (the game's semantic hashes). When given, the exact slot set rule compares them with the
+        // texture names of each techset (HydraX exactSlotSet); empty: the rule works from Wanted.
+        std::vector<uint32_t> SlotHashes;
     };
 
     struct Choice
@@ -138,6 +171,15 @@ namespace Bo3Target::Techsets
         std::string Reason;
         bool Exact() const { return IsExact(Used); }
     };
+
+    // HydraX TreyarchRenderFlags.Classify: the render class of a techset renderFlags word; false when it says nothing (zero or unread)
+    bool ClassifyRender(int64_t Flags, Blend& Out, uint32_t& Traits);
+    // HydraX TreyarchRenderFlags.Matches: whether a catalog techset has the wanted class (glass and distortion told apart for premul)
+    bool RenderMatches(Blend WantedBlend, uint32_t WantedTraits, const Techset& T);
+
+    // The render class a known name stands for (HydraX would read the techset record; for a record that is not readable the name's own
+    // catalog techset, by the Exact, Normalized, Sky and Family routes, says the same). False when the name is no catalog techset.
+    bool ClassFromName(const Data& D, const std::string& Name, Blend& Out, uint32_t& Traits);
 
     // A name the game gave that can be looked up: not empty, not a bare hash ("2ce22f911a30ce4"), not "xtechset_<hash>".
     bool UsableName(std::string_view Name);

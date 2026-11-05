@@ -92,8 +92,15 @@ namespace Bo3Target::GdtDb
         bool HasTypes() const { return Typed; }
         // The GDFs (lower case) an entity of this name has, in order; empty when there is none.
         std::vector<std::string> TypesOf(std::string_view Name) const;
+        // The gdt file (as the database stores it) of the image entity of this name; false when the database has no such image
+        // or gave no file. Only image rows are kept for it.
+        bool ImageGdtFile(std::string_view Name, std::string& File) const;
+        // Image names the database holds in two different gdt files (ImageGdtFile keeps the first row): how often the choice is ambiguous
+        size_t ImageFileConflicts() const { return Conflicts; }
 
     private:
+        std::unordered_map<std::string, std::string> ImageFiles;   // normalised image name -> gdt file as stored
+        size_t Conflicts = 0;
         std::set<std::pair<std::string, std::string>> Pairs;   // (lower gdf, name)
         std::unordered_map<std::string, std::set<std::string>> TypesByName;
         std::unordered_set<std::string> Gdfs, Gdts;
@@ -132,6 +139,37 @@ namespace Bo3Target::GdtDb
     private:
         Database();
         std::unique_ptr<Impl> State;
+    };
+
+    // The semantic a stock image entity declares, read from the stock GDT text the gdt.db names for it (the Mod Tools' own data).
+    // Known false with Why when the database has no such image, its GDT file is not readable, the entity is not in that file, or it
+    // holds no "semantic" field (an inherited one is not followed): the caller must treat that as not judged, never as a pass.
+    struct StockSemantic
+    {
+        bool Known = false;
+        std::string Semantic, Why;
+    };
+
+    class StockImages
+    {
+    public:
+        // Held and the root must outlive this. Reads only; each GDT file is parsed once.
+        StockImages(const Catalog& Held, std::filesystem::path ModToolsRoot);
+        ~StockImages();
+        StockImages(const StockImages&) = delete;
+        StockImages& operator=(const StockImages&) = delete;
+        StockSemantic Semantic(std::string_view ImageName) const;
+        // The same, a parent in another file followed (at most Depth more steps)
+        StockSemantic SemanticAt(std::string_view ImageName, int Depth) const;
+
+        // Test hook: the image entities of a GDT text, name (normalised) -> semantic ("" when the entity has none)
+        // OpenParents (optional) gets, for each entity whose semantic or type is not settled in this file, the parent that lives elsewhere.
+        // OwnOfOpen (optional) gets the semantic such an entity sets itself: it wins over its parent's.
+        static std::map<std::string, std::string> ParseImageEntities(const std::string& GdtText, std::map<std::string, std::string>* OpenParents = nullptr, std::map<std::string, std::string>* OwnOfOpen = nullptr);
+
+    private:
+        struct State;
+        std::unique_ptr<State> Data;
     };
 
     // The age test of the stock rule, behind an interface.

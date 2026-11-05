@@ -27,7 +27,13 @@ slots a material fills, so they serve every game.
 
 `lit` has only colour and normal slots, so it is chosen only for a material with nothing else. A
 choice other than an exact one is listed as `material.techset_fallback`. Camo techsets are never
-chosen: the Mod Tools cannot register `lit_weapon_camo`.
+chosen: the Mod Tools cannot register `lit_weapon_camo`. Weapons-category and distortion techsets such as `lit_paintshop` are
+not candidates either.
+
+Black Ops 4 and Cold War hash their techset names. `update-name-db` fetches cod-name-db's `cod_techsets` list into
+`package_index`, and the name rules run on the names it knows: 630 of 869 techsets on `mp_frenetic`. Without the list the
+slot rules still run, and the run writes a `material.techset_names_missing` row. The rule behind each choice is in
+`graywolf_techset_rules.tsv`.
 
 ## Image packing
 
@@ -120,10 +126,10 @@ not proof Black Ops III accepts the asset. `pool-coverage` puts each pool in one
 its zones are the zones walked, and a gate only if its GDT hash still holds. `converted` counts are per GDF in that run, not
 per asset of a zone.
 
-Checked on the Black Ops 4 zone `mp_frenetic` (25 models): 0 failures and 31 warnings. `surfaceType <none>` passes only with a
+Checked on the Black Ops 4 zone `mp_frenetic` (25 models): 0 failures and 38 warnings. `surfaceType <none>` passes only with a
 report row showing the flag word was read and names no surface type; with no such row it is a failure. Compared with t7kb
-`gdt_check` on the same files. Not built: sound, weapon, animation and stock comparison checks. A
-slot bound to a stock image is not judged yet, so that output cannot reach exit 0. `--target modtools` has not been run.
+`gdt_check` on the same files. Not built: sound, weapon, animation and stock comparison checks. A slot bound to a stock
+image is judged from the stock GDT. A code image with no Mod Tools semantic stays incomplete, so that output does not reach exit 0. `--target modtools` has not been run.
 
 ## Known limits
 

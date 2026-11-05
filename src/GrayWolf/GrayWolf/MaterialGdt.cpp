@@ -207,6 +207,7 @@ bool Builder::Derive(const char* What, const Bo3Target::DeriveRequest& Request, 
 
 void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Materials::Source* Source, const std::string& Game)
 {
+    AddDir = Dir;
     const std::string Name = AssetName(D.Name);
     if (Name.empty())
     {
@@ -436,8 +437,34 @@ namespace
         if (Key == "cosinePowerMap") return "glossMap";
         if (Key == "specColorMap") return "specularMap";
         if (Key == "occMap") return "occlusionMap";
-        if (Key == "alphaRevealMap") return "thicknessMap";
+        if (Key == "alphaRevealMap") return "revealMap";    // 164 catalog slots of this key take a reveal map, 39 a thickness map (a backlit material binds its own, explicitly)
         return "diffuseMap";
+    }
+
+    // The semantic a code image stands for: the dominant one of the catalog slots that default to it. $specular_mask is no slot default, so
+    // the catalog cannot say; t7kb gdt_check reads it as a specular mask (mp_frenetic, 2026-11-04), which the name also says.
+    std::string CodeSemanticOf(const Tc::Data& D, const std::string& Image)
+    {
+        return D.DominantCodeSemantic(Image);     // $specular_mask is a (hypothesis) entry of the catalog data, like the gate's
+    }
+
+    bool CodeImageAccepted(const Tc::Data& D, const Tc::Slot& S, const std::string& Image, std::string& Shown)
+    {
+        std::vector<std::string> Own;
+        if (const auto* All = D.CodeImageSemantics(Image))
+            for (const auto& [Semantic, Count] : *All) Own.push_back(Semantic);
+        if (Own.empty())
+        {
+            const std::string One = CodeSemanticOf(D, Image);
+            if (!One.empty()) Own.push_back(One);
+        }
+        if (Own.empty()) return true;    // nothing known about it: not judged here
+        for (const std::string& O : Own)
+        {
+            Shown += (Shown.empty() ? "" : "/") + O;
+            if (Tc::Accepts(S, O)) return true;
+        }
+        return false;
     }
 
     bool ReadFloat(const std::vector<uint8_t>& Block, uint32_t At, float& Out)
@@ -452,12 +479,43 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
                             bool Emissive, bool Spec, bool Blend, bool Cutout)
 {
     Tc::Request Rq;
+    const std::string GameId = ExportNaming::Lower(Game);
+    const bool Hashed = GameId == "bo4" || GameId == "coldwar";     // the two games whose techsets are known by hash
     Rq.SourceTechset = Source != nullptr ? Source->Techset : std::string();
-    for (const auto& [Key, I] : M.Slots)
+    std::string ResolvedName;
+    if (Hashed && Source != nullptr && !Source->Techset.empty())
+    {
+        // the name list (package_index/cod_techsets.wni) turns the hash into the name the Name, Normalized, Sky and Family rules work on
+        ResolvedName = Targets->NameOfSource(Source->Techset);
+        if (!ResolvedName.empty()) Rq.SourceTechset = ResolvedName;
+        Counter(ResolvedName.empty() ? "techset_name_miss" : "techset_name_hit")++;
+        if (!Targets->HasNames()) Counter("techset_names_missing")++;
+    }
+    for (auto& [Key, I] : M.Slots)
     {
         // a placeholder of the slot ($white_gloss) is no wish for the slot
         if (!I.Builtin.empty() && Targets->IsDefaultImage(Key, I.Builtin)) continue;
-        Rq.Wanted.emplace_back(Key, I.Builtin.empty() ? I.Semantic : IntentOfKey(Key));
+        if (!I.Builtin.empty())
+        {
+            // a code image is what the catalog slots that default to it say it is ($white_specular is a specular mask), else what the key means
+            const std::string Own = CodeSemanticOf(*Targets, I.Builtin);
+            Rq.Wanted.emplace_back(Key, Own.empty() ? IntentOfKey(Key) : Own);
+            continue;
+        }
+        std::string Intent = I.Semantic;
+        if (StockSemanticOf)
+        {
+            // an image of a stock name is the stock image (the publish step leaves it out): its own semantic decides the slot
+            const std::string Stem = AssetName(I.File.stem().string());
+            const std::string Stock = StockSemanticOf(Stem.rfind("i_", 0) == 0 ? Stem : "i_" + Stem);
+            if (!Stock.empty())
+            {
+                I.StockSemantic = Stock;
+                Intent = Stock;
+                Counter("slots_stock_semantic_read")++;
+            }
+        }
+        Rq.Wanted.emplace_back(Key, Intent);
     }
     Rq.Class = Blend ? Tc::Blend::Blend : Cutout ? Tc::Blend::AlphaTest : Tc::Blend::Opaque;
     // a decal is told by the game's own techset name when it has one, and by the techset's renderFlags where the name is a hash (BO4)
@@ -466,8 +524,67 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
     if (DecalByName || DecalByFlags) Rq.Class = Tc::Blend::Decal;
     if (DecalByFlags && !DecalByName) Counter("decal_from_render_flags")++;
     Rq.Emissive = Emissive;
-    Rq.HasColorSpec = Spec;
-    Rq.ColorSpec = true;    // Description.Specular is an RGB colour (F0)
+    // Colour or mask specular: from the specular image's pixel format (the sidecar carries it for Black Ops 4 models), a code image's or a stock
+    // image's declared semantic. No specular image, or a format that was not read: HydraX's null, except that a description's specular is an
+    // RGB colour (F0) by contract, which the games that do not name their techsets keep.
+    Rq.HasColorSpec = false;
+    Rq.ColorSpec = true;
+    if (const auto SpecIt = M.Slots.find("specColorMap"); SpecIt != M.Slots.end())
+    {
+        const Image& SI = SpecIt->second;
+        bool Known = false, Colour = true;
+        if (!SI.Builtin.empty())
+        {
+            if (!Targets->IsDefaultImage("specColorMap", SI.Builtin))
+            {
+                const std::string Own = CodeSemanticOf(*Targets, SI.Builtin);
+                Known = Own == "specularMask" || Own == "specularMap";
+                Colour = Own == "specularMap";
+            }
+        }
+        else if (!SI.StockSemantic.empty())
+        {
+            Known = true;
+            Colour = SI.StockSemantic != "specularMask";
+        }
+        else if (Source != nullptr)
+        {
+            // HydraX: the pixel format of the specular image (single channel: a mask). The format is the source image's own, read by the game's
+            // reader (Black Ops 4 models today); with none the answer is null, never a guess from the pixels.
+            for (const Materials::Source::Image& Im : Source->Images)
+                if (Im.Semantic == Tc::SlotHash("specColorMap") && Im.Format != 0)
+                {
+                    Known = true;
+                    Colour = !(Im.Format == 80 || Im.Format == 81 || Im.Format == 61 || Im.Format == 56 || Im.Format == 54);     // BC4, R8, R16, R16F (HydraX IsSingleChannel)
+                    break;
+                }
+        }
+        if (Known)
+        {
+            Rq.HasColorSpec = true;
+            Rq.ColorSpec = Colour;
+        }
+        else if (!Hashed && Spec)
+            Rq.HasColorSpec = true;
+    }
+    // The exact slot set rule compares the material's slot hashes with the techset's texture names.
+    if (Source != nullptr && Hashed)
+        for (const Materials::Source::Image& Im : Source->Images)
+            if (Im.Semantic != 0 && std::find(Rq.SlotHashes.begin(), Rq.SlotHashes.end(), Im.Semantic) == Rq.SlotHashes.end()) Rq.SlotHashes.push_back(Im.Semantic);
+    // BO4: the class is the techset's own renderFlags (HydraX). Unread is no class, never a guess from the description.
+    if (Hashed)
+    {
+        Rq.RenderFromFlags = true;
+        if (Source != nullptr && SurfaceTypes::ClassOf(GameId, Source->RenderFlags) != SurfaceTypes::RenderClass::Unread)
+            Rq.HasRender = Tc::ClassifyRender(Source->RenderFlags, Rq.RenderBlend, Rq.RenderTraits);
+        // the techset record was not read but its name is known: the class is the one of the catalog techset the name stands for
+        if (!Rq.HasRender && !ResolvedName.empty() && Tc::ClassFromName(*Targets, ResolvedName, Rq.RenderBlend, Rq.RenderTraits))
+        {
+            Rq.HasRender = true;
+            Counter("techset_class_from_name")++;
+        }
+        if (!Rq.HasRender) Counter("techset_render_class_unread")++;
+    }
     const Tc::Choice C = Tc::Choose(*Targets, Rq);
     if (C.Chosen == nullptr)
     {
@@ -479,10 +596,39 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
     M.Type = T.Name;
     M.Category = T.Category.empty() ? "Geometry" : T.Category;
     Counter(std::string("techset_rule_") + Tc::RuleName(C.Used))++;
+    // every chosen techset states its rule (graywolf_techset_rules.tsv), so Exact% can be counted
+    M.Notes.push_back({ "material.techset_rule", std::string("rule=") + Tc::RuleName(C.Used) + ", exact=" + (C.Exact() ? "1" : "0") + ", source_techset=" + Rq.SourceTechset + ", result=" + T.Name, C.Reason });
     if (!C.Exact())
     {
         Counter("techset_fallback")++;
         M.Notes.push_back({ "material.techset_fallback", std::string("rule=") + Tc::RuleName(C.Used) + ", source_techset=" + Rq.SourceTechset + ", result=" + T.Name, C.Reason });
+    }
+
+    // A reveal map is no field of the material description: the source material's own reveal image (the texture named revealMap, a decal's
+    // alpha reveal) is bound by its slot hash to the key the chosen techset gives that texture (alphaRevealMap). Found on
+    // t8_decal_grunge_drips_lrg_01_lgt, which lost its reveal image.
+    if (Hashed && Source != nullptr)
+    {
+        const uint32_t RevealHash = Tc::SlotHash("revealMap");
+        const Tc::Slot* RevealSlot = nullptr;
+        for (const Tc::Slot& S : T.Slots)
+            if (S.Hash == RevealHash && !S.Key.empty()) RevealSlot = &S;
+        for (const Materials::Source::Image& Im : Source->Images)
+        {
+            if (Im.Semantic != RevealHash) continue;
+            if (RevealSlot == nullptr)
+            {
+                Counter("reveal_image_no_slot")++;
+                M.Notes.push_back({ "material.unmapped_slot", "slot=revealMap, techset=" + T.Name + ", image=" + fs::path(Im.Path).filename().string(), "the techset has no revealMap texture: the reveal image is not written" });
+            }
+            else if (!M.Slots.count(RevealSlot->Key) && Tc::Accepts(*RevealSlot, "revealMap"))
+            {
+                Materials::Map Reveal;
+                Reveal.Path = Im.Path;
+                if (Slot(M, RevealSlot->Key.c_str(), Reveal, AddDir, "revealMap", "Linear1ch", "compressed")) Counter("reveal_image_bound")++;
+            }
+            break;
+        }
     }
 
     // the images land on the slots of the chosen techset; one it lacks is reported, never written
@@ -511,17 +657,41 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
                 It = M.Slots.erase(It);
                 continue;
             }
+            if (std::string Shown; !CodeImageAccepted(*Targets, *S, I.Builtin, Shown))
+            {
+                if (Targets->IsDefaultImage(Key, I.Builtin))
+                {
+                    // the neutral placeholder of a slot of another kind ($white_specular, the mask slot's default, offered to a colour specular slot): the source had no image there
+                    Counter("slots_default_left_out")++;
+                    Counter("slot_placeholder_of_other_slot")++;
+                    It = M.Slots.erase(It);
+                    continue;
+                }
+                // a code image of another meaning in this slot ($white_specular, a mask, in a colour specular slot): the slot keeps its own default
+                M.Notes.push_back({ "material.slot_semantic_rejected", "slot=" + Key + ", techset=" + T.Name + ", image=" + I.Builtin + ", image_semantic=" + Shown,
+                                    "the slot " + Key + " takes " + S->Semantic + ", not what " + I.Builtin + " is: the image is not bound and the slot keeps its default" });
+                Counter("slot_semantic_rejected")++;
+                It = M.Slots.erase(It);
+                continue;
+            }
             ++It;
             continue;
         }
-        if (S == nullptr || !Tc::Accepts(*S, I.Semantic))
+        // a stock image is judged by what it declares, not by what the source slot meant
+        const std::string Effective = I.StockSemantic.empty() ? I.Semantic : I.StockSemantic;
+        if (S == nullptr || !Tc::Accepts(*S, Effective))
         {
             M.Notes.push_back({ "material.unmapped_slot", "slot=" + Key + ", techset=" + T.Name + ", image=" + I.File.filename().string(),
                                 S == nullptr ? "the techset has no slot " + Key + ": the image is not written"
-                                             : "the slot " + Key + " takes " + S->Semantic + ", not " + I.Semantic + ": the image is not written" });
+                                             : "the slot " + Key + " takes " + S->Semantic + ", not " + Effective + ": the image is not written" });
             Counter("unmapped_slot")++;
             Counter("unmapped_slot_" + Key)++;
             It = M.Slots.erase(It);
+            continue;
+        }
+        if (!I.StockSemantic.empty())
+        {
+            ++It;       // the stock image keeps its own semantic; nothing of it is written
             continue;
         }
         const std::string Sem = Tc::SemanticFor(*S, I.Semantic);
@@ -588,33 +758,88 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
 
 Builder::Resolved Builder::Resolve() const
 {
-    // the images: "i_<file stem>", the semantic's tag added when one stem names several images
+    // The techset and the stock decision were made on the name an image was expected to get (i_<stem>); the final name carries a tag when one stem
+    // names several images. So the names are worked out, each stock decision is asked again with the final name, and where the answer differs the
+    // image is decided again: no longer stock, it is this builder's own image with its own metadata for the slot (as the non-stock path gives it);
+    // another stock image, it is judged by what it declares. A slot that does not fit is left empty. The names are then worked out again.
+    std::map<std::string, Material> Work = Defined;
+    std::map<std::string, std::vector<Note>> Late;       // by material: what was decided again
     std::map<Image, std::string> ImageNames;
-    std::map<std::string, std::vector<Image>> ByStem;
-    for (const auto& [Name, M] : Defined)
-        for (const auto& [Key, I] : M.Slots)
-            if (I.Builtin.empty() && !ImageNames.count(I))
-            {
-                ImageNames[I];
-                // BO3's own convention, "i_<name>" (a name that has it already keeps it)
-                const std::string Stem = AssetName(I.File.stem().string());
-                ByStem[Stem.rfind("i_", 0) == 0 ? Stem : "i_" + Stem].push_back(I);
-            }
-    for (auto& [Stem, List] : ByStem)
-    {
-        std::sort(List.begin(), List.end());
-        std::map<std::string, size_t> Seen;
-        for (const Image& I : List)
+    const auto NameImages = [&] {
+        ImageNames.clear();
+        std::map<std::string, std::vector<Image>> ByStem;
+        for (const auto& [Name, M] : Work)
+            for (const auto& [Key, I] : M.Slots)
+                if (I.Builtin.empty() && !ImageNames.count(I))
+                {
+                    ImageNames[I];
+                    // BO3's own convention, "i_<name>" (a name that has it already keeps it)
+                    const std::string Stem = AssetName(I.File.stem().string());
+                    ByStem[Stem.rfind("i_", 0) == 0 ? Stem : "i_" + Stem].push_back(I);
+                }
+        for (auto& [Stem, List] : ByStem)
         {
-            std::string Name = Stem;
-            if (List.size() > 1) Name += "_" + Tag(I.Semantic) + (I.FromAlpha ? "a" : "");
-            if (const size_t N = Seen[Name]++) Name += "_" + std::to_string(N + 1);
-            ImageNames[I] = Name;
+            std::sort(List.begin(), List.end());
+            std::map<std::string, size_t> Seen;
+            for (const Image& I : List)
+            {
+                std::string Name = Stem;
+                if (List.size() > 1) Name += "_" + Tag(I.Semantic) + (I.FromAlpha ? "a" : "");
+                if (const size_t N = Seen[Name]++) Name += "_" + std::to_string(N + 1);
+                ImageNames[I] = Name;
+            }
         }
+    };
+    NameImages();
+    for (int Round = 0; Round < 3 && StockSemanticOf; ++Round)
+    {
+        bool Changed = false;
+        for (auto& [Name, M] : Work)
+        {
+            const Tc::Techset* TS = Targets != nullptr ? Targets->Find(M.Type) : nullptr;
+            for (auto It = M.Slots.begin(); It != M.Slots.end();)
+            {
+                const std::string Key = It->first;
+                Image& I = It->second;
+                if (!I.Builtin.empty()) { ++It; continue; }
+                const std::string Bound = ImageNames.at(I);
+                const std::string Now = StockSemanticOf(Bound);
+                if (Now == I.StockSemantic) { ++It; continue; }
+                Changed = true;
+                const std::string Judged = I.StockSemantic;
+                Late[Name].push_back({ "material.stock_semantic_late", "slot=" + Key + ", image=" + Bound + ", judged=" + (Judged.empty() ? "(none)" : Judged) + ", final=" + (Now.empty() ? "(none)" : Now),
+                                       "the image got its final name after the techset was chosen; its stock decision is made again with that name" });
+                const Tc::Slot* Sl = TS != nullptr ? TS->ByKey(Key) : nullptr;
+                I.StockSemantic = Now;
+                const std::string Effective = Now.empty() ? I.Semantic : Now;
+                if (Sl == nullptr || !Tc::Accepts(*Sl, Effective))
+                {
+                    Late[Name].push_back({ "material.slot_semantic_rejected", "slot=" + Key + ", techset=" + M.Type + ", image=" + Bound + ", image_semantic=" + Effective,
+                                           "the image of the final name does not fit the slot: the slot is left empty" });
+                    It = M.Slots.erase(It);
+                    continue;
+                }
+                if (Now.empty())
+                {
+                    // our own image after all: the metadata the slot gives it (a colour specular map in a mask slot is read as a mask)
+                    const std::string Sem = Tc::SemanticFor(*Sl, I.Semantic);
+                    if (Sem != I.Semantic)
+                    {
+                        const Tc::Form Form = Tc::FormOf(Sem);
+                        I.Semantic = Sem;
+                        I.Core = Form.Core;
+                        I.Compression = Form.Compression;
+                    }
+                }
+                ++It;
+            }
+        }
+        if (!Changed) break;
+        NameImages();      // the semantics (and so the tags) may have moved
     }
 
     Resolved Out;
-    for (const auto& [Name, M] : Defined)
+    for (const auto& [Name, M] : Work)
     {
         const auto Used = Usage.find(M.Source);
         Gdt::Fields F = { { "materialCategory", M.Category }, { "materialType", M.Type }, { "surfaceType", M.SurfaceType },
@@ -624,6 +849,7 @@ Builder::Resolved Builder::Resolve() const
         R.Source = M.Source;
         R.Targeted = M.Targeted;
         R.Notes = M.Notes;
+        if (const auto L = Late.find(Name); L != Late.end()) R.Notes.insert(R.Notes.end(), L->second.begin(), L->second.end());
         for (const auto& [Key, I] : M.Slots)
         {
             F.emplace_back(Key, I.Builtin.empty() ? ImageNames.at(I) : I.Builtin);
@@ -867,13 +1093,14 @@ int SelfTest(std::string& Failures)
             if (K == Key) return V;
         return std::string("(no key)");
     };
-    const auto One = [&](const Materials::Description& D, const Tc::Data* Targets, const std::string& Techset, Builder::Resolved& Out, std::map<std::string, size_t>* Counters = nullptr) {
+    const auto One = [&](const Materials::Description& D, const Tc::Data* Targets, const std::string& Techset, Builder::Resolved& Out, std::map<std::string, size_t>* Counters = nullptr, const char* Game = "bo4", int64_t RenderFlags = -1) {
         Builder B(Base, "t_");
         B.TechsetData(Targets);
         Materials::Source Src;
         Src.Name = D.Name;
         Src.Techset = Techset;
-        B.Add(D, Dir, &Src, "bo4");
+        Src.RenderFlags = RenderFlags;
+        B.Add(D, Dir, &Src, Game);
         Out = B.Resolve();
         if (Counters != nullptr) *Counters = B.Counters();
         return Out.Materials.size() == 1;
@@ -983,10 +1210,142 @@ int SelfTest(std::string& Failures)
         Check(T != nullptr && T->Name != "lit" && T->ByKey("cosinePowerMap") != nullptr && T->ByKey("occMap") != nullptr &&
               Value(R.Materials[0], "cosinePowerMap") != "" && Value(R.Materials[0], "occMap") != "", "gloss and occlusion give a techset that has those slots, both written", T ? T->Name : "(none)");
     }
+    // a stock image is judged by what the Mod Tools say it is: a stock specular mask never lands in a colour specular slot
+    {
+        const auto Build = [&](const std::string& StockSemantic, Builder::Resolved& R, std::map<std::string, size_t>& Counters) {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            B.SetStockImages([StockSemantic](const std::string& Name) { return Name == "i_s" ? StockSemantic : std::string(); });   // the spec map "s.png" is the stock image i_s
+            Materials::Source Src;
+            Src.Name = "mtl_stock_spec";
+            B.Add(Make("mtl_stock_spec", Gloss | Occ | Spec), Dir, &Src, "iw8");
+            R = B.Resolve();
+            Counters = B.Counters();
+            return R.Materials.size() == 1;
+        };
+        const auto SpecSlot = [&](const Builder::Resolved& R) -> const Tc::Slot* {
+            const Tc::Techset* T = Data.Find(Value(R.Materials[0], "materialType"));
+            return T == nullptr ? nullptr : T->ByKey("specColorMap");
+        };
+        Builder::Resolved Plain, Mask, Colour, Odd;
+        std::map<std::string, size_t> CPlain, CMask, CColour, COdd;
+        const bool Ok = Build("", Plain, CPlain) && Build("specularMask", Mask, CMask) && Build("specularMap", Colour, CColour) && Build("bogusMap", Odd, COdd);
+        const Tc::Slot* SP = Ok ? SpecSlot(Plain) : nullptr;
+        const Tc::Slot* SM = Ok ? SpecSlot(Mask) : nullptr;
+        const Tc::Slot* SC = Ok ? SpecSlot(Colour) : nullptr;
+        Check(SP != nullptr && Tc::Accepts(*SP, "specularMap") && CPlain["t_slots_stock_semantic_read"] == 0, "stock semantic: with nothing read the colour spec map takes a colour specular slot", Ok ? Value(Plain.Materials[0], "materialType") : "");
+        Check(SM != nullptr && Tc::Accepts(*SM, "specularMask") && SM->Semantic == "specularMask" && Value(Mask.Materials[0], "specColorMap") == "i_s" && CMask["t_slots_stock_semantic_read"] == 1,
+              "stock semantic: a stock specular mask gets a techset whose specular slot takes a mask, and stays bound", Ok ? Value(Mask.Materials[0], "materialType") : "");
+        Check(SC != nullptr && Tc::Accepts(*SC, "specularMap") && Value(Colour.Materials[0], "specColorMap") == "i_s", "stock semantic: a stock colour specular map keeps a colour specular slot", Ok ? Value(Colour.Materials[0], "materialType") : "");
+        bool Reported = false;
+        if (Ok)
+            for (const auto& N : Odd.Materials[0].Notes) Reported |= N.Code == "material.unmapped_slot";
+        Check(Ok && Reported && (Value(Odd.Materials[0], "specColorMap") == "(no key)" || Value(Odd.Materials[0], "specColorMap").empty()),
+              "stock semantic: a stock image no slot takes is reported unmapped and not bound", Ok ? Value(Odd.Materials[0], "specColorMap") : "");
+        // a code image of another meaning: a mask code image offered to a colour specular slot is not bound
+        {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            Materials::Source Src;
+            Src.Name = "mtl_code_spec";
+            Materials::Description D = Make("mtl_code_spec", Gloss | Occ | Spec);
+            D.Specular = Map("$specular_mask.png");    // a code image (no file), a mask by what the Mod Tools say it is
+            B.Add(D, Dir, &Src, "iw8");
+            const Builder::Resolved R = B.Resolve();
+            const Tc::Slot* S = R.Materials.size() == 1 ? SpecSlot(R) : nullptr;
+            const std::string Bound = R.Materials.size() == 1 ? Value(R.Materials[0], "specColorMap") : "";
+            Check(R.Materials.size() == 1 && (S == nullptr || Tc::Accepts(*S, "specularMask")) && (Bound.empty() || Bound == "(no key)" || Bound == "$specular_mask"),
+                  "code image: a mask code image never sits in a slot that takes a colour specular map", Bound);
+            if (S != nullptr && Bound == "$specular_mask") Check(Tc::Accepts(*S, "specularMask"), "code image: bound only where the slot takes a mask", Bound);
+        }
+    }
+    // follow-up tests: the colour or mask specular from the picture, the reveal image, the stock name asked again with the final name
+    {
+        // the colour or mask specular comes from the source image's format: BC4 (80) is a mask, BC7 (98) a colour, 0 (unread) is HydraX's null
+        const auto Type = [&](uint32_t Format) {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            Materials::Source Src;
+            Src.Name = "mtl_cs";
+            Src.RenderFlags = 0x4;       // opaque
+            Src.Images = { { "c.png", Materials::Role::Unknown, Tc::SlotHash("colorMap"), 0 }, { "n.png", Materials::Role::Unknown, Tc::SlotHash("normalMap"), 0 },
+                           { "g.png", Materials::Role::Unknown, Tc::SlotHash("glossMap"), 0 }, { "o.png", Materials::Role::Unknown, Tc::SlotHash("aoMap"), 0 },
+                           { "s.png", Materials::Role::Unknown, Tc::SlotHash("specColorMap"), Format } };
+            Materials::Description D = Make("mtl_cs", Gloss | Occ);
+            D.Specular = Map("s.png");
+            B.Add(D, Dir, &Src, "bo4");
+            const Builder::Resolved R = B.Resolve();
+            return R.Materials.size() == 1 ? Value(R.Materials[0], "materialType") : std::string("(none)");
+        };
+        const std::string Mask = Type(80), Colour = Type(98), Unread = Type(0);
+        const Tc::Techset* TM = Data.Find(Mask);
+        const Tc::Techset* TC = Data.Find(Colour);
+        Check(TM != nullptr && TC != nullptr && !TM->HasTrait(Tc::Trait::ColorSpec) && TC->HasTrait(Tc::Trait::ColorSpec),
+              "colour or mask specular: a BC4 specular image gets a mask techset, a BC7 one a colour-specular techset", Mask + " / " + Colour);
+        {
+            const Tc::Techset* TU = Data.Find(Unread);
+            Check(TU != nullptr && Unread != "(none)", "colour or mask specular: an unread format is HydraX's null (a techset is still chosen, nothing is guessed)", Unread);
+        }
+
+        // the reveal image of a hashed material is bound to the key the techset gives that texture
+        {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            std::ofstream(Dir / "r.png", std::ios::binary) << "x";
+            Materials::Source Src;
+            Src.Name = "mtl_reveal";
+            Src.RenderFlags = 0x80000a;       // a decal
+            Src.Images = { { "c.png", Materials::Role::Unknown, Tc::SlotHash("colorMap") }, { "n.png", Materials::Role::Unknown, Tc::SlotHash("normalMap") },
+                           { "r.png", Materials::Role::Unknown, Tc::SlotHash("revealMap") } };
+            B.Add(Make("mtl_reveal", 0), Dir, &Src, "bo4");
+            const Builder::Resolved R = B.Resolve();
+            const std::string Bound = R.Materials.size() == 1 ? Value(R.Materials[0], "alphaRevealMap") : "(none)";
+            const Tc::Techset* TR = R.Materials.size() == 1 ? Data.Find(Value(R.Materials[0], "materialType")) : nullptr;
+            Check(TR != nullptr && TR->ByKey("alphaRevealMap") != nullptr && Bound.rfind("i_r", 0) == 0, "reveal: the source reveal image is bound to alphaRevealMap of the chosen techset", Bound + " on " + (TR ? TR->Name : "(none)"));
+        }
+
+        // selection judged i_s; the final name of the image carries a tag (one stem, two meanings): the answer is asked again and the difference said
+        {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            auto Asked = std::make_shared<int>(0);      // only the first question (the selection of mtl_late_a) is answered: the name "i_s" is judged a mask once
+            B.SetStockImages([Asked](const std::string& Name) { return Name == "i_s" && (*Asked)++ == 0 ? std::string("specularMask") : std::string(); });
+            Materials::Source Src;
+            Src.Name = "mtl_late_a";
+            B.Add(Make("mtl_late_a", Spec), Dir, &Src, "iw8");
+            Materials::Description Other = Make("mtl_late_b", 0);
+            Other.Occlusion = Map("s.png");
+            Src.Name = "mtl_late_b";
+            B.Add(Other, Dir, &Src, "iw8");
+            const Builder::Resolved R = B.Resolve();
+            bool Late = false;
+            for (const auto& M : R.Materials)
+                if (M.Name == "mtl_late_a")
+                    for (const auto& N : M.Notes) Late |= N.Code == "material.stock_semantic_late";
+            std::string Seen;
+            for (const auto& M : R.Materials) { Seen += M.Name + ":"; for (const auto& N : M.Notes) Seen += N.Code + ","; for (const auto& [K, V] : M.Fields) if (K == "specColorMap" || K == "occMap") Seen += K + "=" + V + ","; Seen += " "; }
+            Check(R.Materials.size() == 2 && Late, "stock name: when the final image name differs from the judged one the stock semantic is asked again and reported", Seen);
+            std::string BoundA, SemA, CoreA;
+            for (const auto& M : R.Materials)
+                if (M.Name == "mtl_late_a")
+                    for (const auto& [K, V] : M.Fields)
+                        if (K == "specColorMap") BoundA = V;
+            for (const auto& I : R.ImagesOut)
+                if (I.Name == BoundA)
+                    for (const auto& [K, V] : I.Fields)
+                    {
+                        if (K == "semantic") SemA = V;
+                        if (K == "coreSemantic") CoreA = V;
+                    }
+            Check(!BoundA.empty() && BoundA != "i_s" && SemA == "specularMask" && CoreA == "Linear1ch",
+                  "stock name: an image that is no longer stock gets the metadata of the slot it sits in, not the colour metadata it had", BoundA + " " + SemA + " " + CoreA);
+        }
+    }
+
     // spec: a colour specular map on a fullspec slot is specularMap, sRGB3ch
     {
         Builder::Resolved R;
-        const bool Ok = One(Make("mtl_spec", Gloss | Occ | Spec), &Data, "", R);
+        const bool Ok = One(Make("mtl_spec", Gloss | Occ | Spec), &Data, "", R, nullptr, "iw8");   // the description's class (BO4 takes it from the techset flags)
         const Tc::Techset* T = Ok ? Data.Find(Value(R.Materials[0], "materialType")) : nullptr;
         std::string Sem, Core;
         if (Ok)
@@ -1023,7 +1382,7 @@ int SelfTest(std::string& Failures)
     // a fallback is reported with its rule, the source techset and the result
     {
         Builder::Resolved R;
-        const bool Ok = One(Make("mtl_cutout", Cutout), &Data, "2ce22f911a30ce4", R);
+        const bool Ok = One(Make("mtl_cutout", Cutout), &Data, "2ce22f911a30ce4", R, nullptr, "iw8");
         const Builder::Note* N = nullptr;
         if (Ok)
             for (const auto& X : R.Materials[0].Notes)

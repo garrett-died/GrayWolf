@@ -344,6 +344,17 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
 {
     SetUnhandledExceptionFilter(MyUnhandledExceptionFilter);
 
+    // Keep the process's multithreaded COM apartment alive from the start, for the CLI and the shell alike, and never release it.
+    // DirectXTex caches its WIC factory in a static: when the export's worker threads were the only COM users and had all ended, the
+    // apartment was gone and the next PNG or TIFF decode (the static gate after an export) read a freed factory (access violation, exit
+    // 0xC0DE, found 2026-11-04 on mp_frenetic). The cookie is deliberately never passed to CoDecrementMTAUsage.
+    {
+        // (the project targets an older _WIN32_WINNT than combaseapi.h's declaration needs: resolved by name)
+        using IncrementMtaUsage = HRESULT(WINAPI*)(void**);
+        static void* MtaUsage = nullptr;
+        if (const HMODULE Combase = LoadLibraryW(L"combase.dll"))
+            if (const auto Increment = reinterpret_cast<IncrementMtaUsage>(GetProcAddress(Combase, "CoIncrementMTAUsage"))) Increment(&MtaUsage);
+    }
 
     AppLog::Init();
 

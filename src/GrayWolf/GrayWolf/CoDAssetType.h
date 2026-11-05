@@ -221,6 +221,9 @@ struct XImage_t
     uint32_t SemanticHash;
 
     std::string ImageName;
+
+    // The image's DXGI format when the reader knows it (Black Ops 4: image header +0x64), else 0. Not a constructor argument.
+    uint32_t Format = 0;
 };
 
 struct XMaterialSetting_t

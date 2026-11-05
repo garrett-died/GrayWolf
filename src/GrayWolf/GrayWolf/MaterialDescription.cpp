@@ -528,6 +528,7 @@ std::string SidecarText(const Sidecar& S)
                 nlohmann::json One = nlohmann::json::object();
                 One["path"] = PortablePath(Img.Path);
                 One["semantic"] = Hex;
+                if (Img.Format != 0) One["format"] = Img.Format;
                 Imgs.push_back(std::move(One));
             }
             J["sources"] = std::move(Imgs);
@@ -628,6 +629,7 @@ bool ReadSidecar(const std::string& Path, Sidecar& S)
                     char* End = nullptr;
                     Img.Semantic = static_cast<uint32_t>(std::strtoul(Hex.c_str(), &End, 16));
                 }
+                Img.Format = One.value("format", 0u);
                 Src.Images.push_back(std::move(Img));
             }
             if (const std::string Bytes = J.value("constants", std::string()); !Bytes.empty() && Bytes.size() % 2 == 0)

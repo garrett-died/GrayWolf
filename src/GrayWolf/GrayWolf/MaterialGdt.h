@@ -82,6 +82,10 @@ namespace MaterialGdt
         // The usage Radiant lists the materials under (their Source names): every material has
         // "<not in editor>", which hides it, except those named here (a map's geometry materials)
         void SetUsage(std::map<std::string, std::string> BySource) { Usage = std::move(BySource); }
+        // The semantic a stock image (one the Mod Tools hold under the name this builder would give the image) declares, "" when it
+        // cannot be read or the image is not stock. With it the techset and the slot are chosen by what the stock image is, not by
+        // what the source game slot meant: a stock specular mask never lands in a colour specular slot.
+        void SetStockImages(std::function<std::string(const std::string&)> SemanticOf) { StockSemanticOf = std::move(SemanticOf); }
 
         bool Empty() const;
         // the material entries then the image entries, each by name
@@ -125,6 +129,7 @@ namespace MaterialGdt
             std::string Semantic, Core, Compression;
             bool FromAlpha = false;
             std::string Builtin;   // a BO3 code image ("$normal") named as it is: no entry, no file
+            std::string StockSemantic;   // the semantic the stock image of this name declares (SetStockImages), else empty
             bool operator<(const Image& O) const;
         };
         struct Material
@@ -139,6 +144,7 @@ namespace MaterialGdt
 
     private:
         std::function<std::string(const std::filesystem::path&)> BaseImageOf;
+        std::function<std::string(const std::string&)> StockSemanticOf;
         std::string Prefix;
         std::map<std::string, Material> Defined;                // by asset name
         std::map<std::string, std::set<std::string>> Collisions;
@@ -161,6 +167,7 @@ namespace MaterialGdt
         bool Derive(const char* What, const Bo3Target::DeriveRequest& Request, std::filesystem::path& File);
         // The catalog techset for the slots M holds; the slots it lacks are dropped and reported; the constants a
         // BO4 techset's layout proves are read from the source's constant block
+        std::filesystem::path AddDir;       // the folder of the sidecar being added (ChooseTechset resolves source image paths against it)
         void ChooseTechset(Material& M, const Materials::Description& D, const Materials::Source* Source, const std::string& Game,
                            bool Emissive, bool Spec, bool Blend, bool Cutout);
     };

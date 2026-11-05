@@ -93,6 +93,13 @@ namespace Bo3Target::Publish
     // (Folder), is one (ModTools), and the manifest there reads. An error aborts before any write.
     std::string Preflight(const Options& O);
 
+    // The reports one run leaves in its run folder: the placement, approximations and techset-rule reports and the gate result.
+    // ClearRunReports removes them (nothing else is touched), and returns an error text when one that exists cannot be removed (read-only
+    // and locked files included): an old report that survives could be read as this run's result, so the run must stop or ignore it.
+    std::string ClearRunReports(const std::filesystem::path& RunRoot);
+    // The same for the gate result alone (graywolf_gate.tsv, graywolf_gate_summary.txt)
+    std::string ClearGateReports(const std::filesystem::path& RunRoot);
+
     // The step: sidecars and files under RunRoot (<out>/<game>), the game's id and title.
     Result Run(const Options& O, const Knowledge& Know, const std::filesystem::path& RunRoot, const std::string& GameId);
 

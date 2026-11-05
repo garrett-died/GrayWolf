@@ -608,7 +608,7 @@ namespace
                 case ImageUsageType::GlossMap:    Hint = Materials::Role::Gloss; break;
                 default: break;
                 }
-                Src.Images.push_back({ Image.ImageName, Hint, Image.SemanticHash });
+                Src.Images.push_back({ Image.ImageName, Hint, Image.SemanticHash, Image.Format });
             }
             S.Materials.push_back(Adapter.Describe(Src));
             S.Sources.push_back(std::move(Src));

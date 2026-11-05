@@ -5,6 +5,7 @@
 #include "Bo3Target.Verify.h"
 
 #include "Bo3Target.Awi.h"
+#include "Bo3Target.GdtDb.h"
 #include "Bo3Target.Output.h"
 
 #include <algorithm>
@@ -116,11 +117,13 @@ namespace Bo3Target::Verify
             std::map<std::pair<std::string, std::string>, std::vector<size_t>> ByGdfName;   // (lower gdf, lower name)
             std::map<std::string, std::vector<size_t>> ByName;                              // lower name
             std::map<std::string, std::unique_ptr<Awi::Schema>> Schemas;                    // by gdf; null: not available
+            std::unique_ptr<GdtDb::StockImages> Stock;                                      // the semantic of a stock image, read from the Mod Tools' own GDTs
+            std::vector<std::string> SlotImageUnread;                                       // "image (why)" of slot images whose semantic could not be read
             std::set<std::string> SchemaWhy;
             std::set<std::string> FailedEntries;
             std::map<std::string, std::shared_ptr<Thumb>> Thumbs;
             std::set<std::string> Unjudged;     // counters for the notes
-            size_t UnresolvedNoDb = 0, SlotImageNotInOutput = 0, UnjudgedRange = 0;
+            size_t UnresolvedNoDb = 0, SlotImageNotInOutput = 0, UnjudgedRange = 0, SlotImageRead = 0;
             bool HaveAwi = false;
             // material asset (lower case) -> the reason its surfaceType is <none>, from graywolf_approximations.tsv
             std::map<std::string, std::string> SurfaceWhy;
@@ -171,6 +174,38 @@ namespace Bo3Target::Verify
             }
             void Fail(const char* Check, const Entry& E, const std::string& Detail) { Add(Check, E.Id(), Severity::Failure, Detail); }
             void Warn(const char* Check, const Entry& E, const std::string& Detail) { Add(Check, E.Id(), Severity::Warning, Detail); }
+
+            // The semantic(s) of an image that is not in this output, from the Mod Tools' own data: a code image ($white_specular) is what the
+            // catalog slots that default to it declare; any other name is a stock image, read from the stock GDT the gdt.db names for it.
+            // False with Why when it cannot be read: the caller must not count that as a pass.
+            bool OutsideSemantics(const std::string& Image, std::vector<std::string>& Semantics, std::string& Why)
+            {
+                if (!Image.empty() && Image.front() == '$')
+                {
+                    if (In.Catalog != nullptr)
+                        if (const auto* All = In.Catalog->CodeImageSemantics(Image))
+                        {
+                            for (const auto& [Semantic, Count] : *All) Semantics.push_back(Semantic);
+                            return true;
+                        }
+                    Why = "a code image no catalog slot defaults to: the Mod Tools data names no semantic for it";
+                    return false;
+                }
+                if (In.Held == nullptr || In.ModToolsRoot.empty())
+                {
+                    Why = "no gdt.db or Mod Tools root to read the stock image from";
+                    return false;
+                }
+                if (!Stock) Stock = std::make_unique<GdtDb::StockImages>(*In.Held, In.ModToolsRoot);
+                const GdtDb::StockSemantic Read = Stock->Semantic(Image);
+                if (!Read.Known)
+                {
+                    Why = Read.Why;
+                    return false;
+                }
+                Semantics.push_back(Read.Semantic);
+                return true;
+            }
 
             const Awi::Schema* SchemaFor(const std::string& Gdf)
             {
@@ -1002,7 +1037,28 @@ namespace Bo3Target::Verify
                     }
                     if (Slot->Default == Value) continue;
                     const Entry* Img = C.Find("image", Value);
-                    if (Img == nullptr) { C.SlotImageNotInOutput++; continue; }
+                    if (Img == nullptr)
+                    {
+                        // a stock or code image: judged by the semantic the Mod Tools give it; one that cannot be read stays incomplete, never a pass
+                        std::vector<std::string> Semantics;
+                        std::string Why;
+                        if (!C.OutsideSemantics(Value, Semantics, Why))
+                        {
+                            C.SlotImageNotInOutput++;
+                            if (C.SlotImageUnread.size() < 5) C.SlotImageUnread.push_back(Value + " (" + Why + ")");
+                            continue;
+                        }
+                        C.SlotImageRead++;
+                        C.Judged("material.slot_semantic");
+                        const bool Taken = std::any_of(Semantics.begin(), Semantics.end(), [&](const std::string& S) { return Tc::Accepts(*Slot, S); });
+                        if (!Taken)
+                        {
+                            std::string List;
+                            for (const std::string& S : Semantics) List += (List.empty() ? "" : "/") + S;
+                            C.Fail("material.slot_semantic", E, std::format("{} takes {} but the Mod Tools' image \"{}\" has semantic {}", Key, Slot->Semantic, Value, List));
+                        }
+                        continue;
+                    }
                     C.Judged("material.slot_semantic");
                     const std::string Semantic = Img->Value("semantic");
                     if (!Tc::Accepts(*Slot, Semantic))
@@ -1521,7 +1577,12 @@ namespace Bo3Target::Verify
             C.Incomplete("material.type, material.camo, material.slot_key, material.slot_semantic", "the techset catalog (zonekit/profiles/t7/target/techsets.json) is not loaded");
         if (Judgeable && In.Held == nullptr)
             C.Incomplete("gdt.stock_pair, awi.reference_unresolved", std::format("no gdt.db was read (no Mod Tools root, or the database is unreadable): stock pairs and references to assets outside this output cannot be judged ({} reference(s) seen)", C.UnresolvedNoDb));
-        if (C.SlotImageNotInOutput > 0) C.Incomplete("material.slot_semantic (part)", std::format("{} filled slot(s) name an image outside this output: its semantic is unknown here", C.SlotImageNotInOutput));
+        if (C.SlotImageNotInOutput > 0)
+        {
+            std::string Examples;
+            for (const std::string& X : C.SlotImageUnread) Examples += (Examples.empty() ? "" : "; ") + X;
+            C.Incomplete("material.slot_semantic (part)", std::format("{} filled slot(s) name an image outside this output whose semantic the Mod Tools data could not give ({} others were read and judged); e.g. {}", C.SlotImageNotInOutput, C.SlotImageRead, Examples));
+        }
         if (C.UnjudgedRange > 0) C.Incomplete("awi.range (part)", std::format("{} value(s) of keys whose min or max the awi gives as an expression this reader cannot resolve were not range-checked", C.UnjudgedRange));
         R.NotRun.emplace_back("sound (check 6)", "not built this round");
         R.NotRun.emplace_back("weapon and anim (check 7)", "not built this round");
@@ -2171,6 +2232,68 @@ void GenerateUI( asset Asset )
         Check(Clean.Failures == 0 && Clean.ExitCode() != 2 && Clean.Entries == 3 && Clean.Gdfs.at("image").second == 0, "a clean layout has no failure",
               Clean.Summary() + (Clean.Findings.empty() ? "" : " first: " + Clean.Findings.front().Check + " " + Clean.Findings.front().Detail));
         Check(Clean.ImagesDecoded == 2, "the pixel rules ran on both images", std::to_string(Clean.ImagesDecoded));
+
+
+        // a slot bound to an image outside the output is judged by the semantic the Mod Tools give that image (stock GDT text, or the catalog's slot defaults)
+        {
+            const auto SHas = [](const Result& R, const char* C1, Severity Level, const char* Asset) {
+                size_t N = 0;
+                for (const Finding& F : R.Findings)
+                    if (F.Check == C1 && F.Level == Level && F.Asset == Asset) N++;
+                return N;
+            };
+            const auto SDescribe = [](const Result& R) {
+                std::string L;
+                for (const Finding& F : R.Findings) L += F.Check + "@" + F.Asset + "; ";
+                return L + R.Summary();
+            };
+            Tc::Data Spec;
+            Spec.LoadCatalogText(R"({"techsets":[
+                {"n":"lit_full","c":"Geometry","f":"none","b":"Opaque","t":0,"s":[["colorMap","colorMap","diffuseMap","$white_diffuse"],["specColorMap","specColorMap","specularMap","$specular"]]},
+                {"n":"lit_mask","c":"Geometry","f":"none","b":"Opaque","t":0,"s":[["colorMap","colorMap","diffuseMap","$white_diffuse"],["specColorMap","specColorMap","specularMask","$white_specular"]]}]})");
+            GdtDb::Catalog Stock;
+            for (const char* Name : { "i_stock_mask", "i_stock_color", "i_stock_gone", "i_stock_nosem" })
+            {
+                GdtDb::Row Row;
+                Row.Name = Name;
+                Row.Gdf = "image.gdf";
+                Row.GdtFile = "stock/stock_images.gdt";
+                Stock.Add(Row);
+            }
+            Put(Mod / "stock" / "stock_images.gdt", Gdt({
+                Ent("i_stock_mask", "image", { { "semantic", "specularMask" }, { "type", "image" } }),
+                Ent("i_stock_color", "image", { { "semantic", "specularMap" }, { "type", "image" } }),
+                Ent("i_stock_nosem", "image", { { "type", "image" } }),
+            }));
+            const fs::path Root = Base / "stocksem" / "bo3";
+            Put(Root / "m.gdt", Gdt({
+                Ent("mtl_full_mask", "material", { { "materialType", "lit_full" }, { "specColorMap", "i_stock_mask" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+                Ent("mtl_mask_mask", "material", { { "materialType", "lit_mask" }, { "specColorMap", "i_stock_mask" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+                Ent("mtl_full_color", "material", { { "materialType", "lit_full" }, { "specColorMap", "i_stock_color" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+                Ent("mtl_full_code", "material", { { "materialType", "lit_full" }, { "specColorMap", "$white_specular" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+                Ent("mtl_full_unknown_code", "material", { { "materialType", "lit_full" }, { "specColorMap", "$mystery" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+                Ent("mtl_full_gone", "material", { { "materialType", "lit_full" }, { "specColorMap", "i_stock_gone" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+                Ent("mtl_full_nosem", "material", { { "materialType", "lit_full" }, { "specColorMap", "i_stock_nosem" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+                Ent("mtl_full_default", "material", { { "materialType", "lit_full" }, { "specColorMap", "$specular" }, { "surfaceType", "concrete" }, { "usage", "<not in editor>" } }),
+            }));
+            Inputs S = In;
+            S.Roots = { Root };
+            S.Catalog = &Spec;
+            S.Held = &Stock;
+            const Result Sr = Run(S);
+            Check(SHas(Sr, "material.slot_semantic", Severity::Failure, "material:mtl_full_mask") == 1, "stock mask image in a colour specular slot fails", SDescribe(Sr));
+            Check(SHas(Sr, "material.slot_semantic", Severity::Failure, "material:mtl_mask_mask") == 0 && SHas(Sr, "material.slot_semantic", Severity::Failure, "material:mtl_full_color") == 0, "stock mask in a mask slot and stock colour in a colour slot pass", SDescribe(Sr));
+            Check(SHas(Sr, "material.slot_semantic", Severity::Failure, "material:mtl_full_code") == 1, "a code image that is a mask slot default fails in a colour specular slot", SDescribe(Sr));
+            Check(SHas(Sr, "material.slot_semantic", Severity::Failure, "material:mtl_full_unknown_code") == 0 && SHas(Sr, "material.slot_semantic", Severity::Failure, "material:mtl_full_gone") == 0 &&
+                  SHas(Sr, "material.slot_semantic", Severity::Failure, "material:mtl_full_nosem") == 0 && SHas(Sr, "material.slot_semantic", Severity::Failure, "material:mtl_full_default") == 0, "an image whose semantic cannot be read is not failed", SDescribe(Sr));
+            const auto Part = std::find_if(Sr.Incomplete.begin(), Sr.Incomplete.end(), [](const auto& X) { return X.first == "material.slot_semantic (part)"; });
+            Check(Part != Sr.Incomplete.end() && Part->second.find("3 filled slot") != std::string::npos && Sr.ExitCode() == 2, "unreadable images stay incomplete (3 of them), never a pass", Part == Sr.Incomplete.end() ? "(none)" : Part->second);
+            Check(Sr.Checks.at("material.slot_semantic").Judged == 4, "four slots were judged by the Mod Tools data", std::to_string(Sr.Checks.at("material.slot_semantic").Judged));
+            Inputs NoRoot = S;
+            NoRoot.ModToolsRoot.clear();
+            const Result Nr = Run(NoRoot);
+            Check(SHas(Nr, "material.slot_semantic", Severity::Failure, "material:mtl_full_mask") == 0 && SHas(Nr, "material.slot_semantic", Severity::Failure, "material:mtl_full_code") == 1, "no Mod Tools root: the stock image is unread (not failed, not passed), the code image is still judged", SDescribe(Nr));
+        }
 
         // the report writer and the layout roots
         std::string Error;

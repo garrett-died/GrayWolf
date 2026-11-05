@@ -309,6 +309,32 @@ namespace Bo3Target::Publish
         };
     }
 
+    namespace
+    {
+        std::string ClearReports(const fs::path& RunRoot, std::initializer_list<const char*> Names)
+        {
+            std::string Stuck;
+            for (const char* Name : Names)
+            {
+                std::error_code Ec, Exists;
+                fs::remove(RunRoot / Name, Ec);
+                if (fs::exists(fs::symlink_status(RunRoot / Name, Exists)) && !Exists)
+                    Stuck += (Stuck.empty() ? "" : "; ") + std::string(Name) + (Ec ? " (" + Ec.message() + ")" : "");
+            }
+            return Stuck.empty() ? Stuck : "an old report of this run folder cannot be removed, so it could be read as this run's result: " + Stuck + " in " + RunRoot.string();
+        }
+    }
+
+    std::string ClearRunReports(const fs::path& RunRoot)
+    {
+        return ClearReports(RunRoot, { "graywolf_placement.tsv", "graywolf_approximations.tsv", "graywolf_techset_rules.tsv", "graywolf_gate.tsv", "graywolf_gate_summary.txt" });
+    }
+
+    std::string ClearGateReports(const fs::path& RunRoot)
+    {
+        return ClearReports(RunRoot, { "graywolf_gate.tsv", "graywolf_gate_summary.txt" });
+    }
+
     // ---- the step ---------------------------------------------------------------------------------------------------
 
     Result Run(const Options& O, const Knowledge& Know, const fs::path& RunRoot, const std::string& GameId)
@@ -317,6 +343,13 @@ namespace Bo3Target::Publish
         auto& C = R.Counters;
         const auto Count = [&](const std::string& What, size_t N = 1) { C["publish_" + What] += N; };
         if (O.Which == Target::None) return R;
+        // the reports of an earlier run are gone before anything can fail or crash: the gate reads these as this run's evidence, and a
+        // refused or crashed run must never leave an old result behind; one that cannot be removed stops the run
+        if (const std::string Stuck = ClearRunReports(RunRoot); !Stuck.empty())
+        {
+            R.Error = Stuck;
+            return R;
+        }
         if (Know.Stock == nullptr)
         {
             R.Error = "internal: the publish step needs a stock index";
@@ -342,7 +375,7 @@ namespace Bo3Target::Publish
         std::error_code Ec;
 
         std::vector<Row> Rows;
-        std::vector<Approx> Approxes;
+        std::vector<Approx> Approxes, Rules;
 
         // 1. the models: their sidecars and XMODEL_BIN files
         const fs::path ModelsDir = RunRoot / DiskGame::KindFolder(DiskGame::Kind::Model);
@@ -426,6 +459,16 @@ namespace Bo3Target::Publish
         B.ConvertImages(true);
         B.SurfaceOptions(MaterialGdt::SurfaceChoicesOf(O.ModToolsRoot));   // material.awi's surfaceType options: a name it lacks is <none> with a note
         B.TechsetData(&Techsets::Shared());     // a missing data file is counted (m_techset_data_missing) and reported below
+        // an image the Mod Tools already hold is left out; the material then names the stock image, so its semantic (read from the stock GDT) decides the slot
+        std::unique_ptr<GdtDb::StockImages> StockImages;
+        if (Know.Held != nullptr && !O.ModToolsRoot.empty())
+        {
+            StockImages = std::make_unique<GdtDb::StockImages>(*Know.Held, O.ModToolsRoot);
+            B.SetStockImages([&StockImages](const std::string& Name) {
+                const GdtDb::StockSemantic Read = StockImages->Semantic(Name);
+                return Read.Known ? Read.Semantic : std::string();
+            });
+        }
         B.PlanOnly(O.Plan);
         B.SetUsage(GeometryUsage);              // a map's geometry materials are listed in Radiant; every other material stays <not in editor>
         std::map<std::string, std::vector<std::string>> ModelMaterials;     // model name -> its material asset names
@@ -474,6 +517,11 @@ namespace Bo3Target::Publish
         // the data of the BO3 techset rules is read at run time: when a file is missing the old rules ran, and that is said once
         for (const std::string& Missing : Techsets::Shared().Problems())
             Approxes.push_back({ "material.techset_data_missing", "", "file=" + Missing, "the BO3 techset data was not found: materials were written with the fixed techset rules and the few keys of old" });
+        // BO4 and Cold War techset names come from package_index/cod_techsets.wni (update-name-db); without it the Name, Normalized and Family rules cannot run
+        if (const auto Missed = B.Counters().find("m_techset_names_missing"); Missed != B.Counters().end() && Missed->second > 0)
+            Approxes.push_back({ "material.techset_names_missing", "", "materials=" + std::to_string(Missed->second),
+                                 "package_index/cod_techsets.wni was not found: the techset names of these materials are unknown, so the slot rules chose their techsets (run update-name-db)" });
+        if (Know.Held != nullptr) Count("gdtdb_image_file_conflicts", Know.Held->ImageFileConflicts());
 
         // which models use each image (through the materials that name it)
         std::map<std::string, std::vector<std::string>> ImageModels;
@@ -567,7 +615,11 @@ namespace Bo3Target::Publish
             const auto Users = MaterialModels.find(M.Name);
             Decide(A, Users == MaterialModels.end() ? std::string() : Pl::Shorten(Users->second.front()), 0);
             // the techset came from the catalog: only what was not exact is reported, with what the rule did
-            for (const auto& N : M.Notes) Approxes.push_back({ N.Code, A.Name, N.Detail, N.Message });
+            for (const auto& N : M.Notes)
+            {
+                if (N.Code == "material.techset_rule") Rules.push_back({ N.Code, A.Name, N.Detail, N.Message });   // a statement, not an approximation
+                else Approxes.push_back({ N.Code, A.Name, N.Detail, N.Message });
+            }
             if (!M.Targeted && Lower(GameId) != "bo3")
             {
                 const auto T = TechsetOf.find(M.Name);
@@ -1188,6 +1240,13 @@ namespace Bo3Target::Publish
         std::error_code StaleEc;
         fs::remove(RunRoot / "graywolf_placement.tsv", StaleEc);
         fs::remove(RunRoot / "graywolf_approximations.tsv", StaleEc);
+        std::sort(Rules.begin(), Rules.end(), [](const Approx& X, const Approx& Y) { return std::tie(X.Asset, X.Detail) < std::tie(Y.Asset, Y.Detail); });
+        std::string RuleRows = Tsv({ "code", "asset", "detail", "message" });
+        for (const Approx& A : Rules) RuleRows += Tsv({ A.Code, A.Asset, A.Detail, A.Message });
+        Count("techset_rule_rows", Rules.size());
+        std::string RulesError;
+        if (!Out::WriteAtomic(RunRoot / "graywolf_techset_rules.tsv", RuleRows.data(), RuleRows.size(), RulesError))
+            R.Warnings.push_back("a report was not written: " + RulesError);
         std::string PlacementError, ApproximationsError;
         if (!Out::WriteAtomic(RunRoot / "graywolf_placement.tsv", Placement.data(), Placement.size(), PlacementError))
             R.Warnings.push_back("a report was not written: " + PlacementError);
@@ -1508,9 +1567,9 @@ namespace Bo3Target::Publish
                 fs::create_directories(Blocked / "graywolf_approximations.tsv", Ec);
                 std::ofstream(Blocked / "graywolf_approximations.tsv" / "keep.txt") << "x";
                 const Result Failed2 = Go(Blocked, Root1, Know);
-                bool Warned = false;
-                for (const std::string& W : Failed2.Warnings) Warned = Warned || W.find("a report was not written") != std::string::npos;
-                Check(Warned && !fs::is_regular_file(Blocked / "graywolf_approximations.tsv", Ec) && fs::is_regular_file(Blocked / "graywolf_placement.tsv", Ec), "a report that cannot be written warns and leaves no file; the other report is still written", "");
+                // a report path that cannot be cleared (a folder with a file in it) is refused up front now: the run stops and names it, and nothing is written
+                Check(Failed2.Error.find("graywolf_approximations.tsv") != std::string::npos && Failed2.Error.find("cannot be removed") != std::string::npos && !fs::is_regular_file(Blocked / "graywolf_placement.tsv", Ec),
+                      "a report path that cannot be cleared refuses the run and names the report; no other report is written", Failed2.Error);
             }
             Check(Before == After, "run 2: the tree is byte-identical", std::format("{} vs {} files", Before.size(), After.size()));
             Check(R.Counters["publish_files_written"] == 0 && R.Counters["publish_gdt_files_written"] == 0, "run 2: nothing is written", std::to_string(R.Counters["publish_files_written"]));
@@ -2047,6 +2106,48 @@ namespace Bo3Target::Publish
             Result Plan = GoFull(PlanRoot, true);
             Check(Plan.Error.empty() && !Exists(PlanRoot / "model_export") && !Exists(PlanRoot / "graywolf" / "manifest.json"), "full map: a plan writes nothing in the target", Plan.Error);
             Check(KindOf("xmodel", "p7_crate_x") == "exported" && Contains(Slurp(Run / "graywolf_placement.tsv"), "would_write"), "full map: a plan reports what it would write", "");
+        }
+
+        // a refused run leaves no report of an earlier run: the gate reads them as this run's evidence
+        {
+            const fs::path Stale = Base / "stale_reports";
+            fs::create_directories(Stale, Ec);
+            for (const char* Name : { "graywolf_placement.tsv", "graywolf_approximations.tsv", "graywolf_techset_rules.tsv", "graywolf_gate.tsv", "graywolf_gate_summary.txt" })
+                std::ofstream(Stale / Name, std::ios::binary) << "OLD\n";
+            Options O;
+            O.Which = Target::Folder;
+            O.OutputRoot = Stale / "bo3";
+            const Result Refused = Run(O, Knowledge{}, Stale, "bo4");      // no stock index: refused before anything is written
+            bool AnyLeft = false;
+            for (const char* Name : { "graywolf_placement.tsv", "graywolf_approximations.tsv", "graywolf_techset_rules.tsv", "graywolf_gate.tsv", "graywolf_gate_summary.txt" })
+                AnyLeft = AnyLeft || fs::exists(Stale / Name);
+            Check(!Refused.Error.empty() && !AnyLeft, "a refused run removes the reports and the gate result of an earlier run", Refused.Error);
+        }
+
+        // an old report that cannot be removed stops the run (locked: no delete sharing; read-only), so it is never read as this run's result
+        {
+            const fs::path Locked = Base / "locked_reports";
+            fs::create_directories(Locked, Ec);
+            std::ofstream(Locked / "graywolf_gate.tsv", std::ios::binary) << "OLD\n";
+            std::ofstream(Locked / "graywolf_placement.tsv", std::ios::binary) << "OLD\n";
+            const HANDLE Held = CreateFileW((Locked / "graywolf_gate.tsv").c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            const std::string Stuck = Held == INVALID_HANDLE_VALUE ? std::string() : ClearRunReports(Locked);
+            Options O;
+            O.Which = Target::Folder;
+            O.OutputRoot = Locked / "bo3";
+            const Result Refused = Held == INVALID_HANDLE_VALUE ? Result() : Run(O, Knowledge{}, Locked, "bo4");
+            const bool StillThere = fs::exists(Locked / "graywolf_gate.tsv");
+            if (Held != INVALID_HANDLE_VALUE) CloseHandle(Held);
+            Check(Held != INVALID_HANDLE_VALUE && StillThere && Stuck.find("graywolf_gate.tsv") != std::string::npos && Refused.Error.find("cannot be removed") != std::string::npos,
+                  "a locked old report is named in an error and the run is refused (ClearRunReports, Run)", Stuck + " | " + Refused.Error);
+            const fs::path ReadOnly = Base / "readonly_reports";
+            fs::create_directories(ReadOnly, Ec);
+            std::ofstream(ReadOnly / "graywolf_gate_summary.txt", std::ios::binary) << "OLD\n";
+            fs::permissions(ReadOnly / "graywolf_gate_summary.txt", fs::perms::owner_read, fs::perm_options::replace, Ec);
+            const std::string RoStuck = ClearGateReports(ReadOnly);
+            // either it is gone, or the error says it is not: an old report never survives silently
+            Check(!fs::exists(ReadOnly / "graywolf_gate_summary.txt") || !RoStuck.empty(), "a read-only old report is removed or named in an error, never left silently", RoStuck);
+            fs::permissions(ReadOnly / "graywolf_gate_summary.txt", fs::perms::owner_all, fs::perm_options::replace, Ec);
         }
         fs::remove_all(Base, Ec);
         return Failed;

@@ -36,6 +36,7 @@ namespace NameDbUpdater
         { "bo2_ipak",               "bo2_ipak" },
         { "bo2_sab",                "bo2_sab" },
         { "bo3_sab",                "bo3_sab" },
+        { "cod_techsets",           "cod_techsets" },   // BO4 / Cold War techset names: Bo3Target.Techsets Data::LoadNames
     };
 
     // "d4f6818e,diffuseFilter0\n..." - one entry per line, no header row, hash in hex without a

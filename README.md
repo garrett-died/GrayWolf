@@ -271,7 +271,8 @@ GrayWolf.exe disk-export --game bo4 --install <game> --out <dir> --type model,im
   --mod-tools-root <Black Ops III> casc:mp_frenetic.ff
 ```
 
-- **Materials**: each is given a real Black Ops III techset, chosen from the slots it fills, so its
+- **Materials**: each is given a real Black Ops III techset, chosen from its source techset name when
+  `update-name-db` has that name, and from the slots it fills, so its
   gloss, occlusion and specular maps are not dropped. Entries carry every key the Mod Tools write,
   and Black Ops 4's tints and gloss ranges where the techset's layout is proven. A material matched
   approximately is listed in `graywolf_approximations.tsv`.

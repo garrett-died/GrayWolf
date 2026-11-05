@@ -145,6 +145,7 @@ namespace Materials
             std::string Path;           // as the model file refers to it
             Role Hint = Role::Unknown;  // the usage the game reader gave it
             uint32_t Semantic = 0;      // the game's semantic hash, 0 when unknown
+            uint32_t Format = 0;        // the image's DXGI format when the reader knows it (Black Ops 4 models), else 0
         };
         std::string Name, Techset;
         std::vector<Image> Images;

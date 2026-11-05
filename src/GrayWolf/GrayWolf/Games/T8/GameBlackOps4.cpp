@@ -603,7 +603,7 @@ const XMaterial_t GameBlackOps4::ReadXMaterial(uint64_t MaterialPointer)
 
     // The slots: image pointer, semantic, name hash. A header with no image (a disk export's
     // material another zone defines) takes its slots from that zone (ImagesElsewhere).
-    struct Slot { uint64_t ImagePtr; uint32_t Semantic; uint64_t Hash; };
+    struct Slot { uint64_t ImagePtr; uint32_t Semantic; uint64_t Hash; uint32_t Format; };
     std::vector<Slot> Slots;
     Slots.reserve(MaterialData.ImageCount);
     for (uint32_t m = 0; m < MaterialData.ImageCount; m++)
@@ -613,7 +613,8 @@ const XMaterial_t GameBlackOps4::ReadXMaterial(uint64_t MaterialPointer)
         if (ImageInfo.ImagePtr == 0) continue;
         // Get Hash and mask it (some bits are used for other stuffs)
         Slots.push_back({ ImageInfo.ImagePtr, ImageInfo.SemanticHash,
-                          CoDAssets::GameInstance->Read<uint64_t>(ImageInfo.ImagePtr + 0x20) & 0xFFFFFFFFFFFFFFF });
+                          CoDAssets::GameInstance->Read<uint64_t>(ImageInfo.ImagePtr + 0x20) & 0xFFFFFFFFFFFFFFF,
+                          CoDAssets::GameInstance->Read<uint32_t>(ImageInfo.ImagePtr + 0x64) });    // the DXGI format (the zone reader's image header offset)
     }
     // the technique set's name hash (+0x30 -> its header) and the constant blob (+0x90: size at
     // +0x90, bytes at +0x98), which the adapter reads through shading.txt
@@ -636,7 +637,7 @@ const XMaterial_t GameBlackOps4::ReadXMaterial(uint64_t MaterialPointer)
     MaterialElsewhere Elsewhere;
     if (MaterialData.ImageCount == 0 && ImagesElsewhere && ImagesElsewhere(MaterialData.NamePtr, Elsewhere))
     {
-        for (const auto& [Hash, Semantic] : Elsewhere.Images) Slots.push_back({ ExportWriters::ImageElsewhere, Semantic, Hash });
+        for (const auto& [Hash, Semantic] : Elsewhere.Images) Slots.push_back({ ExportWriters::ImageElsewhere, Semantic, Hash, 0 });
         if (Elsewhere.Techset != 0) Result.TechsetName = std::format("{:x}", Elsewhere.Techset);
         Result.SurfaceFlags = Elsewhere.SurfaceFlags, Result.RenderFlags = Elsewhere.RenderFlags;
         if (!Elsewhere.Constants.empty())
@@ -655,6 +656,7 @@ const XMaterial_t GameBlackOps4::ReadXMaterial(uint64_t MaterialPointer)
         const auto Named = Names.find(S.Hash);
         Result.Images.emplace_back(GameReaders::TreyarchSemanticUsage(S.Semantic), S.Semantic, S.ImagePtr,
                                    Named != Names.end() ? Named->second : std::format("ximage_{:x}", S.Hash));
+        Result.Images.back().Format = S.Format;
     }
 
     return Result;

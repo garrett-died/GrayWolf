@@ -226,6 +226,11 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
         if (Publish.Which != Bo3Target::Publish::Target::None && Bo3Target::Output::Touches(Options.Out, &Install))
             return Fail("--out lies in (or cannot be told from) the Mod Tools install " + Install.string() + "; use a folder outside it (--target modtools writes there on purpose)");
         if (const std::string Refused = Bo3Target::Publish::Preflight(Publish); !Refused.empty()) return Fail(Refused);
+        // As soon as the run folder is known and before anything can fail: the reports an earlier run left at this run's paths go, so a refused,
+        // failed or crashed rerun never leaves an old result. Only the five report files are removed; with --target none (no report is written
+        // or read) nothing is touched; a --plan rewrites the reports anyway, and its export and sidecars are not among them.
+        if (Publish.Which != Bo3Target::Publish::Target::None)
+            if (const std::string Stuck = Bo3Target::Publish::ClearRunReports(C.OutRoot); !Stuck.empty()) return Fail(Stuck);
     }
     // the publish step, once the export is on disk: counters into T, its lines for the report, an error text when refused
     std::string PublishLines;
@@ -274,6 +279,13 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
             }
             else
             {
+                // no result of an earlier run survives a crash in the gate; one that cannot be removed means the gate is not run
+                if (const std::string Stuck = Bo3Target::Publish::ClearGateReports(C.OutRoot); !Stuck.empty())
+                {
+                    PublishLines += "gate_mode=not run (" + Stuck + ")" + char(10);
+                    Into.Counters["gate_not_run"] += 1;
+                    return;
+                }
                 const Vf::Result Gate = Vf::Run(In);
                 std::string GateError;
                 if (Vf::WriteReports(Gate, C.OutRoot, GateError))

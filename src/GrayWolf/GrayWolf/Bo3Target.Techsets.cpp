@@ -2,6 +2,8 @@
 
 #include "Bo3Target.Techsets.h"
 
+#include "WraithNameIndex.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -168,12 +170,59 @@ bool Data::IsDefaultImage(const std::string& Key, const std::string& Image) cons
     return DefaultImages.count({ Key, Lower(Image) }) != 0;
 }
 
+void Data::LoadNames(const fs::path& WniFile)
+{
+    Names.reset();
+    std::error_code Ec;
+    if (!fs::is_regular_file(WniFile, Ec)) return;
+    auto Index = std::make_shared<WraithNameIndex>();
+    Index->LoadIndex(WniFile.string());      // keys masked to 60 bits
+    if (Index->NameDatabase.size() == 0) return;
+    Names = std::move(Index);
+}
+
+void Data::SetNameForTest(uint64_t Hash, const std::string& Name)
+{
+    if (!Names) Names = std::make_shared<WraithNameIndex>();
+    Names->NameDatabase.insert_or_assign(Hash & 0x0FFFFFFFFFFFFFFFull, Name);
+}
+
+std::string Data::NameOfSource(const std::string& SourceTechset) const
+{
+    if (!Names) return std::string();
+    std::string Hex = SourceTechset;
+    if (Hex.rfind("xtechset_", 0) == 0) Hex = Hex.substr(9);
+    if (Hex.empty() || Hex.size() > 16 || !IsHex(Hex)) return std::string();
+    const uint64_t Key = std::stoull(Hex, nullptr, 16) & 0x0FFFFFFFFFFFFFFFull;
+    const auto It = Names->NameDatabase.find(Key);
+    return It == Names->NameDatabase.end() ? std::string() : It->second;
+}
+
+const std::map<std::string, size_t>* Data::CodeImageSemantics(const std::string& Image) const
+{
+    const auto It = CodeSemantics.find(Lower(Image));
+    return It == CodeSemantics.end() ? nullptr : &It->second;
+}
+
+std::string Data::DominantCodeSemantic(const std::string& Image) const
+{
+    const std::map<std::string, size_t>* All = CodeImageSemantics(Image);
+    if (All == nullptr) return std::string();
+    std::string Best;
+    size_t Most = 0;
+    for (const auto& [Semantic, Count] : *All)
+        if (Count > Most) { Best = Semantic; Most = Count; }
+    return Best;
+}
+
 bool Data::LoadCatalogText(const std::string& Json)
 {
     Sets.clear();
     ByName.clear();
     Overrides.clear();
     DefaultImages.clear();
+    CodeSemantics.clear();
+    KnownHashes.clear();
     const nlohmann::json Root = nlohmann::json::parse(Json, nullptr, false);
     if (Root.is_discarded() || !Root.is_object() || !Root.contains("techsets") || !Root["techsets"].is_array()) return false;
     const auto Str = [](const nlohmann::json& J, const char* Key) {
@@ -201,13 +250,19 @@ bool Data::LoadCatalogText(const std::string& Json)
                 S.Semantic = Cell(2);
                 S.Default = Cell(3);
                 S.Hash = SlotHash(S.Name);
+                KnownHashes.insert(S.Hash);
                 if (!S.Key.empty() && !S.Default.empty()) DefaultImages.insert({ S.Key, Lower(S.Default) });
+                if (!S.Default.empty() && S.Default.front() == '$')
+                    for (const std::string& One : SplitList(S.Semantic)) CodeSemantics[Lower(S.Default)][One]++;
                 T.Slots.push_back(std::move(S));
             }
         }
         ByName[T.Name] = Sets.size();
         Sets.push_back(std::move(T));
     }
+    // HYPOTHESIS: $specular_mask is no slot's default, so the techsetdefs say nothing about it. t7kb gdt_check reads it as a specularMask
+    // (mp_frenetic, 2026-11-04) and the name says so; this one line is the single rule the writer and the gate both use.
+    if (CodeSemantics.find("$specular_mask") == CodeSemantics.end()) CodeSemantics["$specular_mask"]["specularMask"] = 1;
     if (Root.contains("overrides") && Root["overrides"].is_object())
         for (const auto& [From, To] : Root["overrides"].items())
             if (To.is_string()) Overrides[From] = To.get<std::string>();
@@ -290,11 +345,13 @@ const Data& Shared()
             if (fs::exists(Profiles / "t7" / "target" / "techsets.json", Ec))
             {
                 D.Load(Profiles);
+                D.LoadNames(fs::path(Buf).parent_path() / "package_index" / "cod_techsets.wni");
                 return D;
             }
             if (P == P.parent_path()) break;
         }
         D.Load(fs::path(Buf).parent_path() / "zonekit" / "profiles");   // nothing found: the problems say which files
+        D.LoadNames(fs::path(Buf).parent_path() / "package_index" / "cod_techsets.wni");
         return D;
     }();
     return Loaded;
@@ -379,146 +436,300 @@ std::string TintComponentText(float Linear)
     return B;
 }
 
+bool ClassifyRender(int64_t Flags, Blend& Out, uint32_t& Traits)
+{
+    // HydraX TreyarchRenderFlags.Classify; the bits were measured on the BO4 and Cold War techsets, not documented
+    if (Flags <= 0) return false;
+    const uint32_t F = static_cast<uint32_t>(Flags);
+    constexpr uint32_t Opaque = 0x4, DecalBit = 0x8, DoubleSided = 0x10, Transparent = 0x20, EmissiveBit = 0x40, GlassBit = 0x1000, EffectBit = 0x4000, DistortionBit = 0x8000, Occluder = 0x10000;
+    Traits = 0;
+    if (F & DoubleSided) Traits |= Trait::TwoSided;
+    if (F & EmissiveBit) Traits |= Trait::Emissive;
+    if ((F & DecalBit) != 0 && (F & Opaque) == 0)
+    {
+        Out = (F & EmissiveBit) != 0 ? Blend::Add : Blend::Decal;
+        Traits |= Trait::DecalState;
+        return true;
+    }
+    if (F & Transparent)
+    {
+        if (F & DistortionBit) { Out = Blend::Premul; Traits |= Trait::Distortion | Trait::Effect; }
+        else if (F & EffectBit) { Out = Blend::Premul; Traits |= Trait::Effect; }
+        else if (F & GlassBit) { Out = Blend::Premul; Traits |= Trait::Glass; }
+        else Out = Blend::Blend;
+        return true;
+    }
+    if (F & Opaque)
+    {
+        Out = (F & DoubleSided) != 0 && (F & Occluder) == 0 ? Blend::AlphaTest : Blend::Opaque;
+        return true;
+    }
+    return false;
+}
+
+bool RenderMatches(Blend WantedBlend, uint32_t WantedTraits, const Techset& T)
+{
+    if (WantedBlend == Blend::Premul)
+    {
+        const bool Glass = (WantedTraits & Trait::Glass) != 0;
+        return T.Class == Blend::Premul && Glass == T.HasTrait(Trait::Glass) &&
+               (Glass || ((WantedTraits & Trait::Distortion) != 0) == T.HasTrait(Trait::Distortion));
+    }
+    return T.Class == WantedBlend;
+}
+
+namespace
+{
+    // One pass of the rules. UseRender false is HydraX's second pass with no render class (only lit techsets are candidates).
+    Choice Pick(const Data& D, const Request& R, bool UseRender)
+    {
+        Choice Out;
+        const auto Make = [&](const Techset* T, Rule Used, std::string Why) {
+            Out.Chosen = T;
+            Out.Used = Used;
+            Out.Reason = std::move(Why);
+            return Out;
+        };
+        const bool FromFlags = R.RenderFromFlags;                 // the game states its class in flag words (BO4): HydraX's render class
+        const bool HaveRender = FromFlags && R.HasRender && UseRender;
+        const auto Compatible = [&](const Techset& T) {
+            for (const auto& [Key, Intent] : R.Wanted)
+                if (const Slot* S = T.ByKey(Key); S != nullptr && !Accepts(*S, Intent)) return false;
+            return true;
+        };
+        const auto VegetationOk = [&](const std::string& N) {
+            return !IsVegetation(N) || (FromFlags ? HaveRender && R.RenderBlend == Blend::AlphaTest : R.Class == Blend::AlphaTest);
+        };
+        // HydraX Allowed: with a render class the techset must match it, without one only lit techsets are candidates
+        const auto ClassOk = [&](const Techset& T) {
+            // a material that does not glow never gets a glowing techset (emissive_decal for a plain decal), whether or not its class is known
+            // (lit_transition_emissive is a lit_ name); R.Emissive: the material has an emissive image
+            const bool Glows = (HaveRender && (R.RenderTraits & Trait::Emissive) != 0) || R.Emissive;
+            if (T.HasTrait(Trait::Emissive) && !Glows) return false;
+            if (!HaveRender) return IsLit(T.Name);
+            return VegetationOk(T.Name) && RenderMatches(R.RenderBlend, R.RenderTraits, T);
+        };
+        const auto NotCamo = [](const std::string& N) { return N.find("camo") == std::string::npos; };
+        const bool Named = UsableName(R.SourceTechset);
+        const std::string& Source = R.SourceTechset;
+        // the material's slot hashes that some catalog techset knows (HydraX: a BO4-only slot is ignored)
+        std::set<uint32_t> KnownMaterial;
+        for (const uint32_t H : R.SlotHashes)
+            if (D.KnownHash(H)) KnownMaterial.insert(H);
+        const bool ByHash = !R.SlotHashes.empty();
+        const auto TextureHashes = [](const Techset& T) {
+            std::set<uint32_t> Hashes;
+            for (const Slot& S : T.Slots) Hashes.insert(S.Hash);
+            return Hashes;
+        };
+        const std::string Family = Named ? FamilyOf(Source) : std::string();
+        const std::string Target = Family.empty() ? std::string() : FamilyTarget(D, Family);
+
+        // 1. Override
+        if (Named)
+            if (const std::string* To = D.OverrideFor(Source))
+                if (const Techset* T = D.Find(*To); T != nullptr && NotCamo(T->Name) && VegetationOk(T->Name) && Compatible(*T))
+                    return Make(T, Rule::Override, std::format("The rule table maps {} to {}.", Source, T->Name));
+
+        if (Named)
+        {
+            // 2. Exact name (HydraX keeps out the camo techsets only)
+            if (const Techset* T = D.Find(Source); T != nullptr && NotCamo(Source) && VegetationOk(Source) && Compatible(*T))
+                return Make(T, Rule::Name, std::format("Techset {} is in the Black Ops III catalog.", Source));
+            // 3. Normalized
+            if (Source.rfind("t8_", 0) == 0)
+            {
+                const std::string Bare = Source.substr(3);
+                if (const Techset* T = D.Find(Bare); T != nullptr && NotCamo(Bare) && VegetationOk(Bare) && Compatible(*T))
+                    return Make(T, Rule::Normalized, std::format("Techset {} is not in the Black Ops III catalog; {} is.", Source, Bare));
+            }
+            // 4. Sky
+            if (const std::string Sky = BareSky(Source); !Sky.empty())
+                if (const Techset* T = D.Find(Sky); T != nullptr && NotCamo(Sky) && Compatible(*T))
+                    return Make(T, Rule::Normalized, std::format("Techset {} is the Black Ops III sky techset {}.", Source, Sky));
+            // 5. Family (a BO4 name with its folder and variant hash): the type has a slot for every slot the material fills, and its class
+            if (!Target.empty())
+            {
+                const Techset* T = D.Find(Target);
+                // with the slot hashes (BO4, Cold War) the type needs a texture for every KNOWN hash of the material, as HydraX; else for every wanted key
+                const auto Covers = [&](const Techset& Type) {
+                    if (!KnownMaterial.empty())
+                        return std::all_of(KnownMaterial.begin(), KnownMaterial.end(), [&](uint32_t H) { return std::any_of(Type.Slots.begin(), Type.Slots.end(), [&](const Slot& S) { return S.Hash == H; }); });
+                    return std::all_of(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return Type.ByKey(W.first) != nullptr; });
+                };
+                if (T != nullptr && IsMappable(Target) && VegetationOk(Target) && (!HaveRender || RenderMatches(R.RenderBlend, R.RenderTraits, *T)) && Compatible(*T) && Covers(*T))
+                    return Make(T, Rule::Family, std::format("bo4 techset family: {} is of family {}, the Black Ops III type {}; it has a slot for each of the {} image slots.",
+                                                              Source, Family, Target, R.Wanted.size()));
+            }
+        }
+
+        // 6 to 8 work from the slots the description fills.
+        const auto Base = [](const std::string& Key) { return Key == "heatmap" || Key == "colorMap" || Key == "normalMap"; };
+        const auto Supports = [&](const Techset& T, const std::pair<std::string, std::string>& W) {
+            const Slot* S = T.ByKey(W.first);
+            return S != nullptr && Accepts(*S, W.second);
+        };
+        const auto Mismatch = [&](const Techset& T) {
+            // a colour specular map on a scalar slot (or the reverse) is the worse of two candidates
+            return R.HasColorSpec && T.HasTrait(Trait::SpecColorMap) && T.HasTrait(Trait::ColorSpec) != R.ColorSpec ? 1 : 0;
+        };
+        // 0 for the family's type, 1 for a variant of it, 2 otherwise (HydraX FamilyRank)
+        const auto FamilyRank = [&](const std::string& Name) {
+            if (Target.empty()) return 2;
+            if (Name == Target) return 0;
+            const std::string Stem = Family == "lit_micro_tile_mix" ? Target : Family;
+            return Name.rfind(Stem + "_", 0) == 0 ? 1 : 2;
+        };
+        const char* const LevelNote[] = { "", " The emissive trait was let go: no techset of the class has it with these slots.",
+                                          " The render class was let go: no techset of that class has these slots (lit techsets of any class)." };
+        const int Levels = FromFlags ? 1 : 3;
+        for (int Level = 0; Level < Levels; ++Level)
+        {
+            std::vector<const Techset*> Pool;
+            for (const Techset& T : D.All())
+            {
+                if (T.Traits & Trait::Camo) continue;
+                if (FromFlags)
+                {
+                    // HydraX keeps the _cc (Customize) techsets and so does this; camo ones stay out (the Mod Tools cannot register them).
+                    // Deviation from HydraX, which has no category test: techsets of the Weapons category (lit_paintshop) and distortion techsets
+                    // (lit_emissive_clone, Specialty) are weapon or special-effect only, so a material needs to ask for them.
+                    if (T.Category == "Weapons") continue;
+                    if (T.HasTrait(Trait::Distortion) && !(HaveRender && (R.RenderTraits & Trait::Distortion))) continue;
+                    if (!IsMappable(T.Name) || !ClassOk(T)) continue;
+                }
+                else
+                {
+                    // a surface techset: colour and normal slots (not emissive_passthrough or lit_emissive_clone, which a material with few images would reach)
+                    if (T.ByKey("colorMap") == nullptr || T.ByKey("normalMap") == nullptr) continue;
+                    if (Level < 2)
+                    {
+                        if (!IsMappable(T.Name) || T.Class != R.Class || !VegetationOk(T.Name)) continue;
+                        if (Level == 0 && T.HasTrait(Trait::Emissive) != R.Emissive) continue;
+                    }
+                    else if (!IsLit(T.Name)) continue;
+                }
+                Pool.push_back(&T);
+            }
+            const size_t Need = R.Wanted.size();
+            // 6. exact slot set. With the material's slot hashes (BO4): the hashes are exactly the texture names of the techset.
+            // Without them: every slot is there and the techset holds nothing else but the base slots.
+            {
+                std::vector<std::tuple<int, int, size_t, size_t, std::string, const Techset*>> Hit;
+                const std::set<uint32_t> Material(R.SlotHashes.begin(), R.SlotHashes.end());
+                for (const Techset* T : Pool)
+                {
+                    if (Material.empty() && R.Wanted.empty()) break;      // nothing is asked for: nothing is an exact set (Default)
+                    if (!Compatible(*T)) continue;
+                    if (!Material.empty())
+                    {
+                        std::set<uint32_t> Texture;
+                        for (const Slot& S : T->Slots) Texture.insert(S.Hash);
+                        if (Texture != Material) continue;
+                    }
+                    else
+                    {
+                        if (!std::all_of(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return Supports(*T, W); })) continue;
+                        bool Extra = false;
+                        for (const Slot& S : T->Slots)
+                            if (!S.Key.empty() && !Base(S.Key) && std::none_of(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return W.first == S.Key; })) Extra = true;
+                        if (Extra) continue;
+                    }
+                    Hit.emplace_back(Mismatch(*T), FamilyRank(T->Name), std::numeric_limits<size_t>::max() - T->KeyedCount(), T->Name.size(), T->Name, T);
+                }
+                if (!Hit.empty())
+                {
+                    std::sort(Hit.begin(), Hit.end());
+                    const Techset* T = std::get<5>(Hit.front());
+                    return Make(T, Rule::SlotSet, std::format("The material's image slots ({}) are exactly the slots of {}.{}{}", KeysText(R.Wanted), T->Name,
+                                                             Hit.size() > 1 ? std::format(" {} techsets share this set; the one with the most image slots, then the shortest name is taken.", Hit.size()) : "",
+                                                             LevelNote[Level]));
+                }
+            }
+            // 7. slot superset: every slot is there, the fewest extras
+            {
+                std::vector<std::tuple<int, int, size_t, size_t, std::string, const Techset*>> Hit;
+                for (const Techset* T : Pool)
+                {
+                    if (ByHash)
+                    {
+                        // every known hash is a texture of the techset; the extras are the textures beyond them (HydraX)
+                        if (KnownMaterial.empty() || !Compatible(*T)) continue;
+                        const std::set<uint32_t> Has = TextureHashes(*T);
+                        if (!std::all_of(KnownMaterial.begin(), KnownMaterial.end(), [&](uint32_t H) { return Has.count(H) != 0; })) continue;
+                        Hit.emplace_back(Mismatch(*T), FamilyRank(T->Name), Has.size() - KnownMaterial.size(), T->Name.size(), T->Name, T);
+                    }
+                    else if (!R.Wanted.empty() && std::all_of(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return Supports(*T, W); }))
+                        Hit.emplace_back(Mismatch(*T), FamilyRank(T->Name), T->KeyedCount() - Need, T->Name.size(), T->Name, T);
+                }
+                if (!Hit.empty())
+                {
+                    std::sort(Hit.begin(), Hit.end());
+                    const Techset* T = std::get<5>(Hit.front());
+                    return Make(T, Rule::SlotSuperset, std::format("{} covers the material's {} image slots ({}) with {} more.{}", T->Name, Need, KeysText(R.Wanted),
+                                                                   T->KeyedCount() - Need, LevelNote[Level]));
+                }
+            }
+            // 8. render-class overlap: the candidate that keeps the most of the slots (the rest are reported as unmapped).
+            // With a game-stated class this is only for a material that has one (HydraX).
+            if (!FromFlags || HaveRender)
+            {
+                std::vector<std::tuple<int, size_t, size_t, size_t, std::string, const Techset*>> Hit;
+                for (const Techset* T : Pool)
+                {
+                    if (ByHash)
+                    {
+                        const std::set<uint32_t> Has = TextureHashes(*T);
+                        const size_t Shared = static_cast<size_t>(std::count_if(KnownMaterial.begin(), KnownMaterial.end(), [&](uint32_t H) { return Has.count(H) != 0; }));
+                        if (Shared == 0) continue;
+                        Hit.emplace_back(Mismatch(*T), KnownMaterial.size() - Shared, Has.size() - Shared, T->Name.size(), T->Name, T);
+                        continue;
+                    }
+                    const size_t Shared = static_cast<size_t>(std::count_if(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return Supports(*T, W); }));
+                    if (Shared == 0) continue;
+                    Hit.emplace_back(Mismatch(*T), Need - Shared, T->KeyedCount() - Shared, T->Name.size(), T->Name, T);
+                }
+                if (!Hit.empty())
+                {
+                    std::sort(Hit.begin(), Hit.end());
+                    const Techset* T = std::get<5>(Hit.front());
+                    return Make(T, Rule::RenderClass, std::format("No techset of the class has all of the {} image slots ({}); {} keeps {} of them.{}", Need,
+                                                                  KeysText(R.Wanted), T->Name, Need - std::get<1>(Hit.front()), LevelNote[Level]));
+                }
+            }
+        }
+
+        // 9. Default: lit, which holds colour and normal only. Reached only when no catalog techset shares any of the slots.
+        if (const Techset* T = D.Find("lit"))
+            return Make(T, Rule::Default, std::format("No catalog techset has any of the image slots ({}); lit is the default.", KeysText(R.Wanted)));
+        return Out;
+    }
+}
+
+bool ClassFromName(const Data& D, const std::string& Name, Blend& Out, uint32_t& Traits)
+{
+    if (Name.empty()) return false;
+    const Techset* T = D.Find(Name);
+    if (T == nullptr && Name.rfind("t8_", 0) == 0) T = D.Find(Name.substr(3));
+    if (T == nullptr)
+        if (const std::string Sky = BareSky(Name); !Sky.empty()) T = D.Find(Sky);
+    if (T == nullptr)
+        if (const std::string Family = FamilyOf(Name); !Family.empty())
+            if (const std::string Target = FamilyTarget(D, Family); !Target.empty()) T = D.Find(Target);
+    if (T == nullptr || T->Class == Blend::Other) return false;
+    Out = T->Class;
+    constexpr uint32_t Kept = Trait::TwoSided | Trait::DecalState | Trait::Emissive | Trait::Distortion | Trait::Effect | Trait::Glass;
+    Traits = T->Traits & Kept;
+    return true;
+}
+
 Choice Choose(const Data& D, const Request& R)
 {
-    Choice Out;
-    if (!D.HasCatalog()) return Out;
-    const auto Make = [&](const Techset* T, Rule Used, std::string Why) {
-        Out.Chosen = T;
-        Out.Used = Used;
-        Out.Reason = std::move(Why);
-        return Out;
-    };
-    const auto Compatible = [&](const Techset& T) {
-        for (const auto& [Key, Intent] : R.Wanted)
-            if (const Slot* S = T.ByKey(Key); S != nullptr && !Accepts(*S, Intent)) return false;
-        return true;
-    };
-    const auto VegetationOk = [&](const std::string& N) { return !IsVegetation(N) || R.Class == Blend::AlphaTest; };
-    const bool Named = UsableName(R.SourceTechset);
-    const std::string& Source = R.SourceTechset;
-
-    // 1. Override
-    if (Named)
-        if (const std::string* To = D.OverrideFor(Source))
-            if (const Techset* T = D.Find(*To); T != nullptr && !Special(T->Name) && VegetationOk(T->Name) && Compatible(*T))
-                return Make(T, Rule::Override, std::format("The rule table maps {} to {}.", Source, T->Name));
-
-    if (Named)
-    {
-        // 2. Exact name
-        if (const Techset* T = D.Find(Source); T != nullptr && !Special(Source) && VegetationOk(Source) && Compatible(*T))
-            return Make(T, Rule::Name, std::format("Techset {} is in the Black Ops III catalog.", Source));
-        // 3. Normalized
-        if (Source.rfind("t8_", 0) == 0)
-        {
-            const std::string Bare = Source.substr(3);
-            if (const Techset* T = D.Find(Bare); T != nullptr && !Special(Bare) && VegetationOk(Bare) && Compatible(*T))
-                return Make(T, Rule::Normalized, std::format("Techset {} is not in the Black Ops III catalog; {} is.", Source, Bare));
-        }
-        // 4. Sky
-        if (const std::string Sky = BareSky(Source); !Sky.empty())
-            if (const Techset* T = D.Find(Sky); T != nullptr && !Special(Sky) && Compatible(*T))
-                return Make(T, Rule::Normalized, std::format("Techset {} is the Black Ops III sky techset {}.", Source, Sky));
-        // 5. Family (a BO4 name with its folder and variant hash)
-        if (const std::string Family = FamilyOf(Source); !Family.empty())
-        {
-            const std::string Target = FamilyTarget(D, Family);
-            const Techset* T = Target.empty() ? nullptr : D.Find(Target);
-            if (T != nullptr && IsMappable(Target) && VegetationOk(Target) && Compatible(*T) &&
-                std::all_of(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return T->ByKey(W.first) != nullptr; }))
-                return Make(T, Rule::Family, std::format("bo4 techset family: {} is of family {}, the Black Ops III type {}; it has a slot for each of the {} image slots.",
-                                                          Source, Family, Target, R.Wanted.size()));
-        }
-    }
-
-    // 6 to 8 work from the slots the description fills. The class (alpha, decal, emissive) narrows the candidates first; when
-    // nothing of the class has the slots the emissive trait, then the class itself is let go.
-    const auto Base = [](const std::string& Key) { return Key == "heatmap" || Key == "colorMap" || Key == "normalMap"; };
-    const auto Supports = [&](const Techset& T, const std::pair<std::string, std::string>& W) {
-        const Slot* S = T.ByKey(W.first);
-        return S != nullptr && Accepts(*S, W.second);
-    };
-    const auto Mismatch = [&](const Techset& T) {
-        // a colour specular map on a scalar slot (or the reverse) is the worse of two candidates
-        return R.HasColorSpec && T.HasTrait(Trait::SpecColorMap) && T.HasTrait(Trait::ColorSpec) != R.ColorSpec ? 1 : 0;
-    };
-    const char* const LevelNote[] = { "", " The emissive trait was let go: no techset of the class has it with these slots.",
-                                      " The render class was let go: no techset of that class has these slots (lit techsets of any class)." };
-    for (int Level = 0; Level < 3; ++Level)
-    {
-        std::vector<const Techset*> Pool;
-        for (const Techset& T : D.All())
-        {
-            if (T.Traits & (Trait::Camo | Trait::Customize)) continue;
-            // a surface techset: colour and normal slots (not emissive_passthrough or lit_emissive_clone, which a material with few images would reach)
-            if (T.ByKey("colorMap") == nullptr || T.ByKey("normalMap") == nullptr) continue;
-            if (Level < 2)
-            {
-                if (!IsMappable(T.Name) || T.Class != R.Class || !VegetationOk(T.Name)) continue;
-                if (Level == 0 && T.HasTrait(Trait::Emissive) != R.Emissive) continue;
-            }
-            else if (!IsLit(T.Name)) continue;
-            Pool.push_back(&T);
-        }
-        const size_t Need = R.Wanted.size();
-        // 6. exact slot set: every slot is there and the techset holds nothing else but the base slots
-        {
-            std::vector<std::tuple<int, size_t, size_t, std::string, const Techset*>> Hit;
-            for (const Techset* T : Pool)
-            {
-                if (!std::all_of(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return Supports(*T, W); })) continue;
-                bool Extra = false;
-                for (const Slot& S : T->Slots)
-                    if (!S.Key.empty() && !Base(S.Key) && std::none_of(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return W.first == S.Key; })) Extra = true;
-                if (!Extra) Hit.emplace_back(Mismatch(*T), std::numeric_limits<size_t>::max() - T->KeyedCount(), T->Name.size(), T->Name, T);
-            }
-            if (!Hit.empty())
-            {
-                std::sort(Hit.begin(), Hit.end());
-                const Techset* T = std::get<4>(Hit.front());
-                return Make(T, Rule::SlotSet, std::format("The material's image slots ({}) are exactly the slots of {}.{}{}", KeysText(R.Wanted), T->Name,
-                                                         Hit.size() > 1 ? std::format(" {} techsets share this set; the one with the most image slots, then the shortest name is taken.", Hit.size()) : "",
-                                                         LevelNote[Level]));
-            }
-        }
-        // 7. slot superset: every slot is there, the fewest extras
-        {
-            std::vector<std::tuple<int, size_t, size_t, std::string, const Techset*>> Hit;
-            for (const Techset* T : Pool)
-                if (std::all_of(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return Supports(*T, W); }))
-                    Hit.emplace_back(Mismatch(*T), T->KeyedCount() - Need, T->Name.size(), T->Name, T);
-            if (!Hit.empty())
-            {
-                std::sort(Hit.begin(), Hit.end());
-                const Techset* T = std::get<4>(Hit.front());
-                return Make(T, Rule::SlotSuperset, std::format("{} covers the material's {} image slots ({}) with {} more.{}", T->Name, Need, KeysText(R.Wanted),
-                                                               T->KeyedCount() - Need, LevelNote[Level]));
-            }
-        }
-        // 8. render-class overlap: the candidate that keeps the most of the slots (the rest are reported as unmapped)
-        {
-            std::vector<std::tuple<int, size_t, size_t, size_t, std::string, const Techset*>> Hit;
-            for (const Techset* T : Pool)
-            {
-                const size_t Shared = static_cast<size_t>(std::count_if(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return Supports(*T, W); }));
-                if (Shared == 0) continue;
-                Hit.emplace_back(Mismatch(*T), Need - Shared, T->KeyedCount() - Shared, T->Name.size(), T->Name, T);
-            }
-            if (!Hit.empty())
-            {
-                std::sort(Hit.begin(), Hit.end());
-                const Techset* T = std::get<5>(Hit.front());
-                return Make(T, Rule::RenderClass, std::format("No techset of the class has all of the {} image slots ({}); {} keeps {} of them.{}", Need,
-                                                              KeysText(R.Wanted), T->Name, Need - std::get<1>(Hit.front()), LevelNote[Level]));
-            }
-        }
-    }
-
-    // 9. Default: lit, which holds colour and normal only. Reached only when no catalog techset shares any of the slots.
-    if (const Techset* T = D.Find("lit"))
-        return Make(T, Rule::Default, std::format("No catalog techset has any of the image slots ({}); lit is the default.", KeysText(R.Wanted)));
-    return Out;
+    if (!D.HasCatalog()) return Choice();
+    Choice C = Pick(D, R, true);
+    // HydraX: the render class narrows the slot rules; when it leaves nothing the lit rules of old apply, so a misread flag word never costs a material its techset
+    if (R.RenderFromFlags && R.HasRender && C.Used == Rule::Default) return Pick(D, R, false);
+    return C;
 }
 
 int SelfTest(std::string& Failures)
@@ -579,6 +790,340 @@ int SelfTest(std::string& Failures)
         Rq.SourceTechset = "2ce22f911a30ce4";   // a hash is no name: slots decide
         const Choice H = Choose(M, Rq);
         Check(H.Chosen != nullptr && H.Chosen->Name == "lit_plus" && H.Used == Rule::SlotSet, "a hash goes straight to slot matching", H.Chosen ? std::string(RuleName(H.Used)) : "(null)");
+    }
+
+    // the rules of the mapper, one case each plus the near miss that must not take the rule (a small catalog, so the answers are known)
+    {
+        const auto Sl = [](const char* Name, const char* Key, const char* Semantic, const char* Default) {
+            return std::string("[\"") + Name + "\",\"" + Key + "\",\"" + Semantic + "\",\"" + Default + "\"]";
+        };
+        const std::string Col = Sl("colorMap", "colorMap", "diffuseMap", "$white_diffuse"), Nor = Sl("normalMap", "normalMap", "normalMap", "$identitynormalmap"),
+                          Heat = Sl("thermalHeatmap", "heatmap", "One Channel", "$gray_32_one_channel"), Ao = Sl("aoMap", "occMap", "occlusionMap", "$white_ao"),
+                          Gl = Sl("glossMap", "cosinePowerMap", "glossMap", "$white_gloss"), Sp = Sl("specColorMap", "specColorMap", "specularMap", "$specular");
+        const auto T = [&](const char* Name, const char* Blend, uint32_t Traits, std::initializer_list<const std::string*> Slots) {
+            std::string Out = std::string("{\"n\":\"") + Name + "\",\"c\":\"Geometry\",\"f\":\"\",\"b\":\"" + Blend + "\",\"t\":" + std::to_string(Traits) + ",\"s\":[";
+            bool First = true;
+            for (const std::string* S : Slots) { Out += (First ? "" : ",") + *S; First = false; }
+            return Out + "]}";
+        };
+        const std::string Json = "{\"version\":1,\"overrides\":{\"forcedname\":\"lit_plus\",\"forcedcamo\":\"lit_camo_x\"},\"techsets\":[" +
+            T("lit", "Opaque", 8192, { &Col, &Nor, &Heat }) + "," +
+            T("lit_plus", "Opaque", 8192, { &Col, &Nor, &Heat, &Ao, &Gl }) + "," +
+            T("lit_plus_extra", "Opaque", 8192, { &Col, &Nor, &Heat, &Ao, &Gl, &Sp }) + "," +
+            T("lit_zz", "Opaque", 8192, { &Col, &Nor, &Heat, &Ao, &Gl, &Sp }) + "," +
+            T("lit_decal", "Decal", 8194, { &Col, &Nor }) + "," +
+            T("lit_decal_plus", "Decal", 8194, { &Col, &Nor, &Ao }) + "," +
+            T("lit_alphatest", "AlphaTest", 8192, { &Col, &Nor }) + "," +
+            T("vegetation_a", "AlphaTest", 8192, { &Col, &Nor }) + "," +
+            T("glass_x", "Premul", 9216, { &Col, &Nor }) + "," +
+            T("lit_micro_tile_blend", "Opaque", 8192, { &Col, &Nor, &Ao }) + "," +
+            T("lit_camo_x", "Opaque", 8192 + 32768, { &Col, &Nor, &Ao }) + "," +
+            "{\"n\":\"sky_latlong_hdr\",\"c\":\"Sky\",\"f\":\"\",\"b\":\"Other\",\"t\":0,\"s\":[" + Col + "]}]}";
+        Data M;
+        Check(M.LoadCatalogText(Json) && M.HasCatalog(), "rules catalog loads", "");
+        const auto Pair = [](const char* K, const char* I) { return std::pair<std::string, std::string>(K, I); };
+        const auto Ask = [&](const char* Source, std::vector<std::pair<std::string, std::string>> Wanted) {
+            Request Rq;
+            Rq.SourceTechset = Source;
+            Rq.Wanted = std::move(Wanted);
+            return Rq;
+        };
+        const auto Nm = [](const Choice& C) { return C.Chosen ? C.Chosen->Name : std::string("(null)"); };
+        const auto Got = [&](const Choice& C) { return Nm(C) + "/" + RuleName(C.Used); };
+        const std::vector<std::pair<std::string, std::string>> CN = { Pair("colorMap", "diffuseMap"), Pair("normalMap", "normalMap") };
+        const auto With = [&](std::initializer_list<std::pair<std::string, std::string>> More) {
+            std::vector<std::pair<std::string, std::string>> W = CN;
+            W.insert(W.end(), More.begin(), More.end());
+            return W;
+        };
+        // 1. Override: first, and a camo target is refused
+        {
+            const Choice C = Choose(M, Ask("forcedname", CN));
+            Check(Nm(C) == "lit_plus" && C.Used == Rule::Override && !C.Exact(), "rule 1 override: the table wins over the slots, and is a fallback", Got(C));
+            const Choice K = Choose(M, Ask("forcedcamo", CN));
+            Check(K.Chosen != nullptr && Nm(K).find("camo") == std::string::npos && K.Used != Rule::Override, "rule 1 override: a camo target is never taken", Got(K));
+            Check(Choose(M, Ask("lit_plus", CN)).Used == Rule::Name, "rule 1 override: no table row, no override", "");
+        }
+        // 2. Exact name: taken whatever the slots, unless an image's meaning is refused; exact
+        {
+            const Choice C = Choose(M, Ask("lit_plus", CN));
+            Check(Nm(C) == "lit_plus" && C.Used == Rule::Name && C.Exact(), "rule 2 exact name: taken, counts as exact", Got(C));
+            const Choice R = Choose(M, Ask("lit_plus", { Pair("colorMap", "normalMap"), Pair("normalMap", "normalMap") }));
+            Check(R.Used != Rule::Name, "rule 2 exact name: an image of the wrong semantic in a slot refuses the name", Got(R));
+            const Choice Cam = Choose(M, Ask("lit_camo_x", CN));
+            Check(Nm(Cam).find("camo") == std::string::npos, "rule 2 exact name: a camo name is refused", Got(Cam));
+        }
+        // 3. Normalized: t8_ prefix
+        {
+            const Choice C = Choose(M, Ask("t8_lit_plus", CN));
+            Check(Nm(C) == "lit_plus" && C.Used == Rule::Normalized && !C.Exact(), "rule 3 normalized: t8_ prefix cut, a fallback", Got(C));
+            Check(Choose(M, Ask("t8_lit_nothing", CN)).Used != Rule::Normalized, "rule 3 normalized: a bare name the catalog lacks is not taken", "");
+        }
+        // 4. Sky: folder and variant hash cut, only sky_ names
+        {
+            const Choice C = Choose(M, Ask("mc/sky_latlong_hdr#99fe632f", { Pair("colorMap", "diffuseMap") }));
+            Check(Nm(C) == "sky_latlong_hdr" && C.Used == Rule::Normalized, "rule 4 sky: the bare sky techset", Got(C));
+            const Choice L = Choose(M, Ask("mc/lit_nothing#99fe632f", { Pair("colorMap", "diffuseMap") }));
+            Check(Nm(L) != "sky_latlong_hdr", "rule 4 sky: a lit name is never read as sky", Got(L));
+        }
+        // 5. Family: alias target, with a slot for every wanted key; exact
+        {
+            const Choice C = Choose(M, Ask("mc/lit_micro_tile_mix#4cce5c8c", With({ Pair("occMap", "occlusionMap") })));
+            Check(Nm(C) == "lit_micro_tile_blend" && C.Used == Rule::Family && C.Exact(), "rule 5 family: lit_micro_tile_mix is the blend, exact", Got(C));
+            const Choice L = Choose(M, Ask("mc/lit_micro_tile_mix#4cce5c8c", With({ Pair("occMap", "occlusionMap"), Pair("cosinePowerMap", "glossMap") })));
+            Check(L.Used != Rule::Family, "rule 5 family: a wanted key the type lacks refuses the family", Got(L));
+        }
+        // 6. Exact slot set by slot hash (BO4 and Cold War): the hashes are exactly the texture names
+        {
+            Request Rq = Ask("", With({ Pair("occMap", "occlusionMap"), Pair("cosinePowerMap", "glossMap") }));
+            Rq.RenderFromFlags = true;
+            Rq.HasRender = true;
+            Rq.RenderBlend = Blend::Opaque;
+            Rq.SlotHashes = { SlotHash("colorMap"), SlotHash("normalMap"), SlotHash("thermalHeatmap"), SlotHash("aoMap"), SlotHash("glossMap") };
+            const Choice C = Choose(M, Rq);
+            Check(Nm(C) == "lit_plus" && C.Used == Rule::SlotSet && C.Exact(), "rule 6 slot set: the hashes are the techset's texture names", Got(C));
+            Rq.SlotHashes.push_back(SlotHash("someBo4OnlyMap"));
+            const Choice X = Choose(M, Rq);
+            Check(X.Used != Rule::SlotSet, "rule 6 slot set: one hash the techset does not have is no exact set", Got(X));
+            Rq.SlotHashes.pop_back();
+            Rq.SlotHashes.pop_back();
+            const Choice Y = Choose(M, Rq);
+            Check(Y.Used != Rule::SlotSet || Nm(Y) != "lit_plus", "rule 6 slot set: a hash short of the techset's textures is no exact set", Got(Y));
+            // the tie goes to the family type, then the techset with more slots, then the shorter name
+            Request Tie = Ask("mc/lit_plus#1", With({ Pair("occMap", "occlusionMap"), Pair("cosinePowerMap", "glossMap"), Pair("specColorMap", "specularMap") }));
+            Tie.RenderFromFlags = true;
+            Tie.HasRender = true;
+            Tie.RenderBlend = Blend::Opaque;
+            Tie.SlotHashes = { SlotHash("colorMap"), SlotHash("normalMap"), SlotHash("thermalHeatmap"), SlotHash("aoMap"), SlotHash("glossMap"), SlotHash("specColorMap") };
+            const Choice T2 = Choose(M, Tie);
+            Check(Nm(T2) == "lit_plus_extra" && T2.Used == Rule::SlotSet, "rule 6 slot set: of two techsets with the set, the family's variant wins over the shorter name", Got(T2));
+            Tie.SourceTechset = "";
+            const Choice T3 = Choose(M, Tie);
+            Check(Nm(T3) == "lit_zz" && T3.Used == Rule::SlotSet, "rule 6 slot set: no family, the shorter name wins", Got(T3));
+        }
+        // 7. Superset: every slot, the fewest extras (no hashes)
+        {
+            const Choice C = Choose(M, Ask("", With({ Pair("cosinePowerMap", "glossMap") })));
+            Check(Nm(C) == "lit_plus" && C.Used == Rule::SlotSuperset && !C.Exact(), "rule 7 superset: the fewest extra slots, a fallback", Got(C));
+        }
+        // 8. Render class: nothing has every slot, the class keeps the most of them
+        {
+            Request Rq = Ask("", With({ Pair("occMap", "occlusionMap"), Pair("cosinePowerMap", "glossMap") }));
+            Rq.RenderFromFlags = true;
+            Rq.HasRender = true;
+            Rq.RenderBlend = Blend::Decal;
+            Rq.RenderTraits = Trait::DecalState;
+            const Choice C = Choose(M, Rq);
+            Check(Nm(C) == "lit_decal_plus" && C.Used == Rule::RenderClass && !C.Exact(), "rule 8 render class: a decal keeps the most slots among the decal techsets", Got(C));
+        }
+        // 9. Default
+        {
+            const Choice C = Choose(M, Ask("", { Pair("noSuchKey", "diffuseMap") }));
+            Check(Nm(C) == "lit" && C.Used == Rule::Default && !C.Exact(), "rule 9 default: lit when nothing shares a slot", Got(C));
+        }
+        // the order: a name beats the slots; the render class is a filter on the slot rules, and unread means lit techsets only
+        {
+            Request Rq = Ask("lit_plus", CN);
+            Rq.RenderFromFlags = true;
+            Rq.HasRender = true;
+            Rq.RenderBlend = Blend::Decal;
+            Rq.SlotHashes = { SlotHash("colorMap"), SlotHash("normalMap") };
+            Check(Choose(M, Rq).Used == Rule::Name, "order: the exact name beats the slot set", Got(Choose(M, Rq)));
+            Request Dec = Ask("", CN);
+            Dec.RenderFromFlags = true;
+            Dec.HasRender = true;
+            Dec.RenderBlend = Blend::Decal;
+            Dec.SlotHashes = { SlotHash("colorMap"), SlotHash("normalMap") };
+            Check(Nm(Choose(M, Dec)) == "lit_decal", "render class: a decal gets the decal techset with its slot set", Got(Choose(M, Dec)));
+            Request Cut = Dec;
+            Cut.RenderBlend = Blend::AlphaTest;
+            Check(Nm(Choose(M, Cut)) == "lit_alphatest" || Nm(Choose(M, Cut)) == "vegetation_a", "render class: alpha test gets an alpha-test techset", Got(Choose(M, Cut)));
+            Request Veg = Dec;
+            Veg.RenderBlend = Blend::Opaque;
+            Check(Nm(Choose(M, Veg)).rfind("vegetation", 0) != 0 && Nm(Choose(M, Veg)) != "lit_decal", "render class: an opaque material never gets vegetation or a decal", Got(Choose(M, Veg)));
+            Request Gla = Dec;
+            Gla.RenderBlend = Blend::Premul;
+            Gla.RenderTraits = Trait::Glass;
+            Check(Nm(Choose(M, Gla)) == "glass_x", "render class: glass gets the glass techset", Got(Choose(M, Gla)));
+            Request Unread = Dec;
+            Unread.HasRender = false;
+            const Choice U = Choose(M, Unread);
+            Check(U.Chosen != nullptr && IsLit(U.Chosen->Name) && Nm(U) != "vegetation_a" && Nm(U) != "glass_x" && Nm(U) != "lit_alphatest" && U.Used != Rule::RenderClass,
+                  "unread class is no class: lit techsets only, never glass or vegetation, and no render-class rule", Got(U));
+        }
+        // ClassifyRender: HydraX's table
+        {
+            Blend B = Blend::Other;
+            uint32_t Tr = 0;
+            Check(!ClassifyRender(0, B, Tr) && !ClassifyRender(-1, B, Tr) && !ClassifyRender(0x2, B, Tr), "classify: 0, -1 and a word with no class bit say nothing", "");
+            Check(ClassifyRender(0x80000a, B, Tr) && B == Blend::Decal && (Tr & Trait::DecalState), "classify: 0x80000a is a decal", BlendName(B));
+            Check(ClassifyRender(0x800048, B, Tr) && B == Blend::Add && (Tr & Trait::Emissive), "classify: 0x800048 is an emissive decal (add)", BlendName(B));
+            Check(ClassifyRender(0x4, B, Tr) && B == Blend::Opaque, "classify: opaque", BlendName(B));
+            Check(ClassifyRender(0x14, B, Tr) && B == Blend::AlphaTest, "classify: opaque and double sided, no occluder, is alpha test", BlendName(B));
+            Check(ClassifyRender(0x10014, B, Tr) && B == Blend::Opaque, "classify: with the occluder bit it is opaque", BlendName(B));
+            Check(ClassifyRender(0x20, B, Tr) && B == Blend::Blend, "classify: transparent is blend", BlendName(B));
+            Check(ClassifyRender(0x1020, B, Tr) && B == Blend::Premul && (Tr & Trait::Glass), "classify: transparent glass is premul glass", BlendName(B));
+            Check(ClassifyRender(0x4020, B, Tr) && B == Blend::Premul && (Tr & Trait::Effect) && !(Tr & Trait::Glass), "classify: transparent effect is premul effect", BlendName(B));
+            Check(ClassifyRender(0x8020, B, Tr) && (Tr & Trait::Distortion), "classify: transparent distortion", BlendName(B));
+            Techset G;
+            G.Class = Blend::Premul;
+            G.Traits = Trait::Glass;
+            Techset E;
+            E.Class = Blend::Premul;
+            Check(RenderMatches(Blend::Premul, Trait::Glass, G) && !RenderMatches(Blend::Premul, Trait::Glass, E) && RenderMatches(Blend::Premul, 0, E) && !RenderMatches(Blend::Premul, 0, G) &&
+                  !RenderMatches(Blend::Premul, Trait::Distortion, E) && RenderMatches(Blend::Decal, 0, [] { Techset D; D.Class = Blend::Decal; return D; }()),
+                  "matches: glass wants glass, effect wants effect, distortion is told apart, a decal wants a decal", "");
+        }
+    }
+
+
+        // a code image is what the catalog slots that default to it say it is
+        {
+            Data CodeData;
+            CodeData.LoadCatalogText(R"({"techsets":[
+                {"n":"a","c":"G","f":"","b":"Opaque","t":0,"s":[["specColorMap","specColorMap","specularMask","$white_specular"]]},
+                {"n":"b","c":"G","f":"","b":"Opaque","t":0,"s":[["specColorMap","specColorMap","specularMask","$white_specular"]]},
+                {"n":"c","c":"G","f":"","b":"Opaque","t":0,"s":[["colorMap","colorMap","diffuseMap","$white_specular"]]},
+                {"n":"d","c":"G","f":"","b":"Opaque","t":0,"s":[["colorMap","colorMap","diffuseMap","$white_diffuse"]]}]})");
+            const auto* Own = CodeData.CodeImageSemantics("$White_Specular");
+            Check(Own != nullptr && Own->size() == 2 && Own->at("specularMask") == 2 && Own->at("diffuseMap") == 1 && CodeData.DominantCodeSemantic("$white_specular") == "specularMask",
+                  "code image: semantics and counts come from the slots that default to it; the dominant one wins", Own ? std::to_string(Own->size()) : "(none)");
+            Check(CodeData.CodeImageSemantics("$never_a_default") == nullptr && CodeData.DominantCodeSemantic("$never_a_default").empty() && CodeData.CodeImageSemantics("i_stock") == nullptr,
+                  "code image: one no slot defaults to has no semantic here (never guessed); a stock name is no code image", "");
+        }
+
+
+    // names, the candidate pool, emissive, an empty request (B1 follow-up)
+    {
+        const auto Sl = [](const char* Name, const char* Key, const char* Semantic, const char* Default) {
+            return std::string("[\"") + Name + "\",\"" + Key + "\",\"" + Semantic + "\",\"" + Default + "\"]";
+        };
+        const std::string Col = Sl("colorMap", "colorMap", "diffuseMap", "$white_diffuse"), Nor = Sl("normalMap", "normalMap", "normalMap", "$identitynormalmap"),
+                          Ao = Sl("aoMap", "occMap", "occlusionMap", "$white_ao");
+        const auto T = [&](const char* Name, const char* Category, const char* Blend, uint32_t Traits, std::initializer_list<const std::string*> Slots) {
+            std::string Out = std::string("{\"n\":\"") + Name + "\",\"c\":\"" + Category + "\",\"f\":\"\",\"b\":\"" + Blend + "\",\"t\":" + std::to_string(Traits) + ",\"s\":[";
+            bool First = true;
+            for (const std::string* S : Slots) { Out += (First ? "" : ",") + *S; First = false; }
+            return Out + "]}";
+        };
+        const std::string Json = "{\"version\":1,\"techsets\":[" +
+            T("lit_decal", "Decal", "Decal", 2, { &Col, &Nor }) + "," +
+            T("lit_pd", "Weapons", "Decal", 2, { &Col, &Nor }) + "," +                                    // shorter name, Weapons category
+            T("emissive_decal", "Geometry", "Decal", 130, { &Col, &Nor }) + "," +                         // emissive decal, same textures
+            T("lit_a", "Geometry", "Opaque", 8192, { &Col, &Nor, &Ao }) + "," +
+            T("lit_emissive_clone", "Specialty", "Opaque", 8192 + 256, { &Col, &Nor, &Ao }) + "," +      // distortion, shorter than lit_a_cc
+            T("lit_a_cc", "Character Customization", "Opaque", 8192 + 65536, { &Col, &Nor, &Ao }) + "," + // _cc: HydraX keeps it
+            T("lit_a_camo", "Geometry", "Opaque", 8192 + 32768, { &Col, &Nor, &Ao }) + "," +
+            T("lit", "Geometry", "Opaque", 8192, { &Col, &Nor }) + "]}";
+        Data M;
+        Check(M.LoadCatalogText(Json), "pool catalog loads", "");
+        const auto Nm = [](const Choice& C) { return C.Chosen ? C.Chosen->Name : std::string("(null)"); };
+        const auto Got = [&](const Choice& C) { return Nm(C) + "/" + RuleName(C.Used); };
+        const auto Hashes = [](std::initializer_list<const char*> Names) {
+            std::vector<uint32_t> H;
+            for (const char* N : Names) H.push_back(SlotHash(N));
+            return H;
+        };
+        const auto Base = [&](Blend B, uint32_t Traits) {
+            Request Rq;
+            Rq.RenderFromFlags = true;
+            Rq.HasRender = true;
+            Rq.RenderBlend = B;
+            Rq.RenderTraits = Traits;
+            Rq.Wanted = { { "colorMap", "diffuseMap" }, { "normalMap", "normalMap" } };
+            Rq.SlotHashes = Hashes({ "colorMap", "normalMap" });
+            return Rq;
+        };
+        // the pool: a Weapons-category techset is not taken for a decal that fits it exactly; the plain decal is
+        Check(Nm(Choose(M, Base(Blend::Decal, Trait::DecalState))) == "lit_decal", "pool: lit_pd (Weapons) is never taken although shorter", Got(Choose(M, Base(Blend::Decal, Trait::DecalState))));
+        // emissive: a plain decal does not get the emissive decal; one that glows may
+        Check(Nm(Choose(M, Base(Blend::Decal, Trait::DecalState))) != "emissive_decal", "emissive: a non-emissive decal never gets emissive_decal", "");
+        {
+            Request Glow = Base(Blend::Decal, Trait::DecalState | Trait::Emissive);
+            Glow.RenderBlend = Blend::Decal;
+            const Choice C = Choose(M, Glow);
+            Check(Nm(C) == "emissive_decal" || Nm(C) == "lit_decal", "emissive: a glowing decal may take the emissive decal", Got(C));
+            Request Image = Base(Blend::Decal, Trait::DecalState);
+            Image.Emissive = true;       // flags say no glow but the material has an emissive image: an emissive techset is not refused
+            Image.SlotHashes = Hashes({ "colorMap", "normalMap" });
+            Check(Choose(M, Image).Chosen != nullptr, "emissive: a material with an emissive image still gets a techset", Got(Choose(M, Image)));
+        }
+        // distortion: a distortion techset needs a distortion request; _cc stays a candidate (HydraX), camo does not
+        {
+            Request Rq = Base(Blend::Opaque, 0);
+            Rq.Wanted.emplace_back("occMap", "occlusionMap");
+            Rq.SlotHashes = Hashes({ "colorMap", "normalMap", "aoMap" });
+            const Choice C = Choose(M, Rq);
+            Check(Nm(C) == "lit_a" && C.Used == Rule::SlotSet, "pool: lit_emissive_clone (distortion) is not taken for an opaque material", Got(C));
+            Request Cc = Rq;
+            Cc.HasRender = false;      // an unread class: every lit_ techset is a candidate, the shortest name wins among equals
+            const Choice D = Choose(M, Cc);
+            Check(Nm(D) != "lit_emissive_clone" && Nm(D) != "lit_a_camo" && !D.Chosen->HasTrait(Trait::Camo), "pool: neither distortion nor camo is taken without a class", Got(D));
+            // lit_a_cc is a candidate: remove the plain one and it is taken
+            Data Only;
+            std::string Cut = Json;
+            const size_t At = Cut.find("{\"n\":\"lit_a\"");
+            Cut.erase(At, Cut.find("},", At) - At + 2);
+            Only.LoadCatalogText(Cut);
+            const Choice E = Choose(Only, Rq);
+            Check(Nm(E) == "lit_a_cc", "pool: a _cc (Customize) techset is a candidate as in HydraX", Got(E));
+        }
+        // no class: an emissive lit_ techset is still refused for a material that does not glow
+        {
+            std::string Cut = Json;
+            const size_t At = Cut.find("{\"n\":\"lit\"");
+            Cut.insert(At, "{\"n\":\"lit_em\",\"c\":\"Geometry\",\"f\":\"\",\"b\":\"Opaque\",\"t\":8320,\"s\":[" + Col + "," + Nor + "]},");
+            const size_t Plain = Cut.find("{\"n\":\"lit\"", At + 10);
+            Cut.replace(Plain + 6, 3, "other");      // the plain lit is no candidate any more (shorter than anything else with these textures): only the guard keeps lit_em away
+            Data WithEm;
+            WithEm.LoadCatalogText(Cut);
+            Request Rq;
+            Rq.RenderFromFlags = true;
+            Rq.HasRender = false;
+            Rq.Wanted = { { "colorMap", "diffuseMap" }, { "normalMap", "normalMap" } };
+            Rq.SlotHashes = Hashes({ "colorMap", "normalMap" });
+            const Choice C = Choose(WithEm, Rq);
+            Check(C.Chosen != nullptr && C.Chosen->Name == "lit_decal", "emissive: with no class an emissive lit_ techset is still refused for a plain material", Got(C));
+        }
+        // an empty request is Default, not "every techset has all of nothing"
+        {
+            Request Nothing;
+            Nothing.RenderFromFlags = true;
+            const Choice C = Choose(M, Nothing);
+            Check(C.Used == Rule::Default && Nm(C) == "lit", "empty request: Default", Got(C));
+            Request Legacy;
+            const Choice L = Choose(M, Legacy);
+            Check(L.Used == Rule::Default, "empty request (no hashes, no keys): Default", Got(L));
+            Request Unknown = Nothing;
+            Unknown.SlotHashes = { SlotHash("aBo4OnlySlot") };
+            Check(Choose(M, Unknown).Used == Rule::Default, "a material whose hashes no techset knows: Default", Got(Choose(M, Unknown)));
+        }
+        // the name list: 60-bit key, xtechset_ form, no index
+        {
+            Data Names;
+            Check(Names.NameOfSource("33832cd9511a3ad").empty() && !Names.HasNames(), "names: no index, no name", "");
+            Names.SetNameForTest(0x7C74CCEC2904CEE4ull, "mc/lit#f840f400");      // a 63-bit key of the name list
+            Check(Names.NameOfSource("c74ccec2904cee4") == "mc/lit#f840f400", "names: the key is masked to 60 bits", Names.NameOfSource("c74ccec2904cee4"));
+            Check(Names.NameOfSource("xtechset_7c74ccec2904cee4") == "mc/lit#f840f400" && Names.NameOfSource("xtechset_c74ccec2904cee4") == "mc/lit#f840f400", "names: the Cold War xtechset_ form resolves", "");
+            Check(Names.NameOfSource("1234").empty() && Names.NameOfSource("lit").empty() && Names.NameOfSource("").empty() && Names.NameOfSource("zz").empty(), "names: an unknown hash or a plain name resolves to nothing", "");
+            Blend B = Blend::Other;
+            uint32_t Tr = 0;
+            Check(ClassFromName(M, "mc/lit_decal#12345678", B, Tr) && B == Blend::Decal && (Tr & Trait::DecalState), "class from name: the family's catalog techset gives the class", BlendName(B));
+            Check(ClassFromName(M, "t8_lit_a", B, Tr) && B == Blend::Opaque && !ClassFromName(M, "mc/not_a_techset#1", B, Tr) && !ClassFromName(M, "", B, Tr), "class from name: t8_ cut; an unknown name has no class", "");
+            Request Named;
+            Named.SourceTechset = "mc/lit_a#99";
+            Named.Wanted = { { "colorMap", "diffuseMap" }, { "normalMap", "normalMap" }, { "occMap", "occlusionMap" } };
+            Named.RenderFromFlags = true;
+            Named.SlotHashes = Hashes({ "colorMap", "normalMap", "aoMap" });
+            ClassFromName(M, Named.SourceTechset, Named.RenderBlend, Named.RenderTraits);
+            Named.HasRender = true;
+            const Choice C = Choose(M, Named);
+            Check(Nm(C) == "lit_a" && C.Used == Rule::Family && C.Exact(), "names: a resolved family name runs the family rule (exact)", Got(C));
+        }
+        // $specular_mask: one rule in the catalog data, a hypothesis
+        {
+            Check(M.DominantCodeSemantic("$specular_mask") == "specularMask" && M.CodeImageSemantics("$specular_mask") != nullptr, "code image: $specular_mask is a specularMask entry of the catalog data (hypothesis), for the writer and the gate alike", M.DominantCodeSemantic("$specular_mask"));
+        }
     }
 
     // missing data: nothing loads, nothing is chosen, the caller falls back
