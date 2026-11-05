@@ -530,6 +530,7 @@ namespace Bo3Target::Publish
         }
         const MaterialGdt::Builder::Resolved Resolved = B.Resolve();
         for (const auto& [K, N] : B.Counters()) C["publish_builder_" + K.substr(2)] += N;
+        C["publish_image_name_collisions"] += Resolved.NameCollisions;      // images whose name another image had (they were numbered; before this check one of them was dropped)
         // the data of the BO3 techset rules is read at run time: when a file is missing the old rules ran, and that is said once
         for (const std::string& Missing : Techsets::Shared().Problems())
             Approxes.push_back({ "material.techset_data_missing", "", "file=" + Missing, "the BO3 techset data was not found: materials were written with the fixed techset rules and the few keys of old" });

@@ -29,6 +29,13 @@ namespace MaterialGdt
     // A function of the name alone, so a model file written on its own names what the GDT defines.
     std::string AssetName(const std::string& Source);
 
+    // True for a source image name an engine decorated (Infinity Ward): a "&" or "~" form marker ("_c&", "_s~"), a "packed_" prefix, or an 8-hex
+    // token with a digit and a letter ("..._482cf5df_c"). Such an image is named from its material and slot ("i_<material>_<c|n|g|s|o|m|t|e>").
+    // Decided from the source file name alone. Limit: a plain word that reads as a hash ("decade00", "facade12", "a1b2c3d4") is taken for one and is
+    // renamed too (stock has 0 such names in 23,218; the result is a legal material-and-slot name). Any other stem, including "-", space, "." and
+    // "@" ("warning@col"), is not decorated and is cleaned by AssetName as before. Clean BO4 and Cold War names keep their stem: stock does so in 74%.
+    bool IsDecoratedImageName(const std::string& Stem);
+
     // The number in a `_lodNNNN` suffix's digits; INT_MAX when they do not fit an int (never throws).
     int LodNumber(const std::string& Digits);
 
@@ -116,6 +123,7 @@ namespace MaterialGdt
         {
             std::vector<ResolvedMaterial> Materials;    // by name
             std::vector<ResolvedImage> ImagesOut;       // by name
+            size_t NameCollisions = 0;                  // images whose name another image already had (they got _2, _3 ...; none is dropped)
         };
         Resolved Resolve() const;
         // { "materials": { asset: source }, "collisions": { asset: [other sources] } }

@@ -7,6 +7,7 @@
 #include "Bo3Target.Awi.h"
 #include "Bo3Target.GdtDb.h"
 #include "Bo3Target.Output.h"
+#include "XAnimBinReader.h"
 
 #include <algorithm>
 #include <cmath>
@@ -127,6 +128,8 @@ namespace Bo3Target::Verify
             std::map<std::string, std::shared_ptr<Thumb>> Thumbs;
             std::set<std::string> Unjudged;     // counters for the notes
             size_t UnresolvedNoDb = 0, SlotImageNotInOutput = 0, UnjudgedRange = 0, SlotImageRead = 0;
+            size_t ClosureBins = 0, ClosureUnparsed = 0, ClosureNoDb = 0;      // model.material_closure: files read, files not parsed, names that could not be looked up
+            std::vector<std::string> ClosureUnparsedExamples, ClosureNoDbExamples;
             bool HaveAwi = false;
             // material asset (lower case) -> the reason its surfaceType is <none>, from graywolf_approximations.tsv
             std::map<std::string, std::string> SurfaceWhy;
@@ -720,6 +723,36 @@ namespace Bo3Target::Verify
             return Output::IsUnder(Root, Out);
         }
 
+        // Do two files hold the same bytes? Sizes first, then a block-wise compare. False with Why when either cannot be read.
+        bool SameBytes(const fs::path& A, const fs::path& B, bool& Same, std::string& Why)
+        {
+            std::error_code Ec;
+            const auto SizeA = fs::file_size(A, Ec);
+            if (Ec) { Why = "cannot size " + A.filename().string(); return false; }
+            const auto SizeB = fs::file_size(B, Ec);
+            if (Ec) { Why = "cannot size " + B.filename().string(); return false; }
+            if (SizeA != SizeB) { Same = false; return true; }
+            std::ifstream FA(A, std::ios::binary), FB(B, std::ios::binary);
+            if (!FA || !FB) { Why = "cannot open " + (FA ? B : A).filename().string(); return false; }
+            std::vector<char> BA(1 << 16), BB(1 << 16);
+            std::uintmax_t Total = 0;
+            for (;;)
+            {
+                FA.read(BA.data(), static_cast<std::streamsize>(BA.size()));
+                FB.read(BB.data(), static_cast<std::streamsize>(BB.size()));
+                const auto NA = static_cast<size_t>(FA.gcount()), NB = static_cast<size_t>(FB.gcount());
+                if (FA.bad() || FB.bad()) { Why = "a read failed"; return false; }
+                // the sizes are equal, so a short read on one side only is a failed read, not a difference
+                if (NA != NB) { Why = "a read stopped early on one file"; return false; }
+                if (std::memcmp(BA.data(), BB.data(), NA) != 0) { Same = false; return true; }
+                Total += NA;
+                if (NA == 0 || !FA || !FB) break;
+            }
+            if (Total != SizeA) { Why = std::format("only {} of {} bytes were read", Total, SizeA); return false; }
+            Same = true;
+            return true;
+        }
+
         void CheckSchema(Context& C, const Entry& E, const std::string& RootText)
         {
             if (E.Name.size() > kNameLimit)
@@ -912,6 +945,35 @@ namespace Bo3Target::Verify
                 C.Fail("image.source", E, "baseImage does not resolve under the layout root (an absolute path or a .. that leaves it does not count): " + Base);
                 return;
             }
+            // a copy of this output into the Mod Tools root would overwrite an installed file of the same path with other bytes (read-only here)
+            if (!C.In.ModToolsRoot.empty())
+            {
+                // absent (no such file) is told from could-not-inspect (a path that cannot be placed, an error, not a regular file, an unreadable file): the second is incomplete
+                const auto Unknown = [&](const std::string& Why) { C.Incomplete("install.image_overwrite (part)", "an output baseImage could not be checked against the Mod Tools root (e.g. " + Base + "): " + Why); };
+                fs::path Installed;
+                if (!UnderRoot(C.In.ModToolsRoot, "", Base, Installed)) Unknown("the path cannot be placed under the Mod Tools root");
+                else
+                {
+                    std::error_code E2;
+                    const fs::file_status St = fs::status(Installed, E2);
+                    if (St.type() == fs::file_type::not_found) {}      // nothing installed there: no collision
+                    else if (E2 || St.type() == fs::file_type::none) Unknown("the installed path could not be inspected: " + E2.message());
+                    else if (St.type() != fs::file_type::regular) Unknown("the installed path exists and is not a regular file");
+                    else
+                    {
+                        const bool Equivalent = fs::equivalent(Installed, File, E2);
+                        if (E2) Unknown("the installed file could not be compared with the output file: " + E2.message());
+                        else if (!Equivalent)
+                        {
+                            C.Judged("install.image_overwrite");
+                            bool Same = true;
+                            std::string Why;
+                            if (!SameBytes(Installed, File, Same, Why)) Unknown("the bytes could not be compared (" + Why + ")");
+                            else if (!Same) C.Warn("install.image_overwrite", E, "baseImage " + Base + " already exists in the Mod Tools root with different bytes: copying this output there would replace it");
+                        }
+                    }
+                }
+            }
             const ImageInfo Info = ReadImageHeaderFile(File);
             C.Judged("image.format");
             if (!Info.Ok)
@@ -1061,14 +1123,14 @@ namespace Bo3Target::Verify
                         {
                             std::string List;
                             for (const std::string& S : Semantics) List += (List.empty() ? "" : "/") + S;
-                            C.Fail("material.slot_semantic", E, std::format("{} takes {} but the Mod Tools' image \"{}\" has semantic {}", Key, Slot->Semantic, Value, List));
+                            C.Fail("material.slot_semantic", E, std::format("{} (linker slot {}) takes {} but the Mod Tools' image \"{}\" has semantic {}; the linker rejects this as a mismatched usage", Key, Slot->Name, Slot->Semantic, Value, List));
                         }
                         continue;
                     }
                     C.Judged("material.slot_semantic");
                     const std::string Semantic = Img->Value("semantic");
                     if (!Tc::Accepts(*Slot, Semantic))
-                        C.Fail("material.slot_semantic", E, std::format("{} takes {} but image \"{}\" has semantic {}", Key, Slot->Semantic, Value, Semantic));
+                        C.Fail("material.slot_semantic", E, std::format("{} (linker slot {}) takes {} but image \"{}\" has semantic {}; the linker rejects this as a mismatched usage", Key, Slot->Name, Slot->Semantic, Value, Semantic));
                 }
             }
 
@@ -1457,6 +1519,110 @@ namespace Bo3Target::Verify
         return true;
     }
 
+    bool ReadXModelBinMaterials(const fs::path& File, std::vector<std::string>& Names, std::string& Why)
+    {
+        Names.clear();
+        std::vector<XAnimBinRecord> Records;
+        if (!ReadXAnimBinRecords(File.string(), Records))
+        {
+            Why = "the file is not a readable .xmodel_bin (bad container, LZ4 block or an unknown token)";
+            return false;
+        }
+        // Only a whole model is judged: a MODEL marker and a VERSION (an animation stream has neither), and a NUMMATERIALS that agrees with the
+        // MATERIAL records read (a stream cut short, or one that was never a model, must not read as "no materials").
+        bool Model = false, Version = false, Declared = false;
+        uint16_t Count = 0;
+        for (const XAnimBinRecord& R : Records)
+        {
+            if (R.Keyword == "MODEL") Model = true;
+            else if (R.Keyword == "VERSION") Version = true;
+            else if (R.Keyword == "NUMMATERIALS" && !Declared && R.Raw.size() >= 2)
+            {
+                Declared = true;
+                std::memcpy(&Count, R.Raw.data(), 2);
+            }
+            else if (R.Keyword == "MATERIAL" && !R.Strings.empty()) Names.push_back(R.Strings.front());
+        }
+        if (!Model || !Version)
+        {
+            Names.clear();
+            Why = "the stream has no MODEL and VERSION header, so it is not a model";
+            return false;
+        }
+        if (!Declared)
+        {
+            Names.clear();
+            Why = "the model declares no NUMMATERIALS";
+            return false;
+        }
+        if (Names.size() != Count)
+        {
+            Why = std::format("NUMMATERIALS declares {} but {} MATERIAL record(s) were read", Count, Names.size());
+            Names.clear();
+            return false;
+        }
+        return true;
+    }
+
+    namespace
+    {
+        // model.material_closure: the linker looks every material a model names up by name in the gdt.db and in the GDTs of the build
+        // ("Material X was not found in gdtDB"). A model's own GDT does not hold them all, so the names are read from each .xmodel_bin.
+        void CheckModelClosure(Context& C)
+        {
+            if (C.R.Mode == "listed")
+            {
+                C.Incomplete("model.material_closure", "the gate was given a list of GDT files (not a folder): the .xmodel_bin files of the output are not enumerated, so no model's materials were checked");
+                return;
+            }
+            for (size_t R = 0; R < C.In.Roots.size(); R++)
+            {
+                std::error_code Ec;
+                if (!fs::is_directory(C.In.Roots[R], Ec)) continue;
+                std::vector<fs::path> Bins;
+                fs::recursive_directory_iterator It(C.In.Roots[R], fs::directory_options::skip_permission_denied, Ec), End;
+                for (; !Ec && It != End; It.increment(Ec))
+                {
+                    std::error_code E2;
+                    if (It->is_regular_file(E2) && Lower(It->path().extension().string()) == ".xmodel_bin") Bins.push_back(It->path());
+                }
+                if (Ec) C.Incomplete("model.material_closure (part)", "a folder under the layout could not be listed, so some .xmodel_bin files may be missing: " + Ec.message());
+                std::sort(Bins.begin(), Bins.end());
+                for (const fs::path& Bin : Bins)
+                {
+                    const std::string Asset = "xmodel_bin:" + fs::relative(Bin, C.In.Roots[R], Ec).generic_string();
+                    C.ClosureBins++;
+                    std::vector<std::string> Names;
+                    std::string Why;
+                    if (!ReadXModelBinMaterials(Bin, Names, Why))
+                    {
+                        C.ClosureUnparsed++;
+                        if (C.ClosureUnparsedExamples.size() < 3) C.ClosureUnparsedExamples.push_back(Asset + " (" + Why + ")");
+                        continue;
+                    }
+                    C.Judged("model.material_closure");
+                    std::set<std::string> Seen;
+                    for (const std::string& N : Names)
+                    {
+                        if (N.empty() || !Seen.insert(Lower(N)).second) continue;
+                        std::string Key = Lower(N);
+                        if (const size_t Slash = Key.rfind('/'); Slash != std::string::npos) Key = Key.substr(Slash + 1);
+                        if (C.ByGdfName.count({ "material", Key })) continue;
+                        if (C.In.Held == nullptr)
+                        {
+                            C.ClosureNoDb++;
+                            if (C.ClosureNoDbExamples.size() < 3) C.ClosureNoDbExamples.push_back(N + " in " + Asset);
+                            continue;
+                        }
+                        if (C.In.Held->Contains("material", Key) || C.In.Held->Contains("material.gdf", Key)) continue;
+                        C.Add("model.material_closure", Asset, Severity::Failure,
+                              "the model names material \"" + N + "\", which is in no GDT of this output and not in the Mod Tools gdt.db: the linker stops with \"Material " + N + " was not found in gdtDB\"");
+                    }
+                }
+            }
+        }
+    }
+
     Result Run(const Inputs& In)
     {
         Context C(In);
@@ -1547,6 +1713,12 @@ namespace Bo3Target::Verify
                     const Entry& E = C.Entries[Idx.front()];
                     if (In.Held->Contains(E.Gdf + ".gdf", E.Name) || In.Held->Contains(E.Gdf, E.Name))
                         C.Fail("gdt.stock_pair", E, "the Mod Tools gdt.db already holds this name as " + E.Gdf + " (a stock pair is never written)");
+                    else if (In.Held->ContainsName(E.Name))
+                    {
+                        C.Judged("install.name_collision");
+                        const std::vector<std::string> Types = In.Held->TypesOf(E.Name);
+                        C.Warn("install.name_collision", E, "the Mod Tools gdt.db already holds an entity of this name" + (Types.empty() ? std::string() : " as " + Types.front()) + ": a link that sees both reports a duplicate asset");
+                    }
                 }
             }
 
@@ -1560,6 +1732,7 @@ namespace Bo3Target::Verify
             }
             for (const Entry& E : C.Entries)
                 if (Lower(E.Gdf) == "material") CheckBareMetal(C, E);
+            CheckModelClosure(C);
         }
         catch (const std::exception& Ex)
         {
@@ -1586,6 +1759,18 @@ namespace Bo3Target::Verify
             std::string Examples;
             for (const std::string& X : C.SlotImageUnread) Examples += (Examples.empty() ? "" : "; ") + X;
             C.Incomplete("material.slot_semantic (part)", std::format("{} filled slot(s) name an image outside this output whose semantic the Mod Tools data could not give ({} others were read and judged); e.g. {}", C.SlotImageNotInOutput, C.SlotImageRead, Examples));
+        }
+        if (C.ClosureUnparsed > 0)
+        {
+            std::string Examples;
+            for (const std::string& X : C.ClosureUnparsedExamples) Examples += (Examples.empty() ? "" : "; ") + X;
+            C.Incomplete("model.material_closure (unparsed)", std::format("{} of {} .xmodel_bin file(s) could not be parsed, so the materials they name were not checked; e.g. {}", C.ClosureUnparsed, C.ClosureBins, Examples));
+        }
+        if (C.ClosureNoDb > 0)
+        {
+            std::string Examples;
+            for (const std::string& X : C.ClosureNoDbExamples) Examples += (Examples.empty() ? "" : "; ") + X;
+            C.Incomplete("model.material_closure (no gdt.db)", std::format("{} material name(s) in .xmodel_bin files are in no GDT of this output and the Mod Tools gdt.db was not read (no Mod Tools root, or unreadable), so they could not be looked up; e.g. {}", C.ClosureNoDb, Examples));
         }
         if (C.UnjudgedRange > 0) C.Incomplete("awi.range (part)", std::format("{} value(s) of keys whose min or max the awi gives as an expression this reader cannot resolve were not range-checked", C.UnjudgedRange));
         R.NotRun.emplace_back("sound (check 6)", "not built this round");
@@ -2055,6 +2240,281 @@ void GenerateUI( asset Asset )
         return Failed;
     }
 
+    // ---- self-test: the linker's slot table, the material closure of a model, the install collisions
+
+    namespace
+    {
+        // A .xmodel_bin holding only MATERIAL records: "*LZ4*", the size, one literal-only LZ4 block.
+        // Declared: NUMMATERIALS value, -1 none, -2 the number of materials. Header false: no MODEL and VERSION records (like an animation stream).
+        std::string XModelBin(const std::vector<std::string>& Materials, int Declared = -2, bool Header = true)
+        {
+            std::string Payload;
+            const auto P16 = [&](uint32_t V) { Payload += static_cast<char>(V & 255); Payload += static_cast<char>((V >> 8) & 255); };
+            const auto Str = [&](const std::string& T) {
+                Payload += T;
+                Payload.append(((T.size() + 1 + 3) & ~size_t(3)) - T.size(), '\0');
+            };
+            // CRC16-CCITT of the keyword, seeded with its value type (MATERIAL UInt16String3 = 0xf, MODEL Marker = 1, UInt16 = 3)
+            const auto Tag = [](const char* Name, uint32_t Type) {
+                uint32_t Crc = Type;
+                for (const char Ch : std::string_view(Name))
+                {
+                    Crc ^= static_cast<uint32_t>(static_cast<unsigned char>(Ch)) << 8;
+                    for (int B = 0; B < 8; B++) Crc = (Crc & 0x8000) ? ((Crc << 1) ^ 0x1021) : (Crc << 1);
+                }
+                return Crc & 0xFFFF;
+            };
+            if (Header)
+            {
+                P16(Tag("MODEL", 1));
+                P16(0);
+                P16(Tag("VERSION", 3));
+                P16(7);
+            }
+            if (Declared != -1)
+            {
+                P16(Tag("NUMMATERIALS", 3));
+                P16(Declared == -2 ? static_cast<uint32_t>(Materials.size()) : static_cast<uint32_t>(Declared));
+            }
+            for (size_t I = 0; I < Materials.size(); I++)
+            {
+                P16(Tag("MATERIAL", 0xf));
+                P16(static_cast<uint32_t>(I));
+                Str(Materials[I]);
+                Str("lambert");
+                Str("color:x.tif");
+            }
+            std::string Block;
+            if (Payload.size() < 15) Block += static_cast<char>(Payload.size() << 4);
+            else
+            {
+                Block += '\xF0';
+                size_t Rest = Payload.size() - 15;
+                while (Rest >= 255) { Block += '\xFF'; Rest -= 255; }
+                Block += static_cast<char>(Rest);
+            }
+            Block += Payload;
+            std::string Out = "*LZ4*";
+            const uint32_t N = static_cast<uint32_t>(Payload.size());
+            for (int S = 0; S < 32; S += 8) Out += static_cast<char>((N >> S) & 255);
+            return Out + Block;
+        }
+    }
+
+    int LinkerTests(std::string& Failures)
+    {
+        int Failed = 0;
+        const auto Check = [&](bool Condition, const char* Name, const std::string& Got = std::string()) {
+            if (Condition) return;
+            ++Failed;
+            Failures += std::format("FAIL Verify(linker) {} (got '{}')\n", Name, Got);
+        };
+        std::error_code Ec;
+        const fs::path Base = fs::temp_directory_path(Ec) / std::format("gw_verify_linker_{}", static_cast<unsigned long>(::GetCurrentProcessId()));
+        fs::remove_all(Base, Ec);
+        const fs::path Mod = Base / "modtools";
+        Put(Mod / "deffiles" / "image.awi", R"AWI(
+void GenerateUI( asset Asset )
+{
+    Asset.AddEntry_Combo( "semantic", "diffuseMap | normalMap | glossMap | specularMap | specularMask | occlusionMap | thicknessMap | revealMap" );
+    Asset.AddEntry_Combo( "compressionMethod", "compressed | uncompressed | compressed high color{compressed high color}" );
+    Asset.AddEntry_Texture( "baseImage", "" );
+    Asset.AddEntry_String( "coreSemantic", "" );
+    Asset.AddEntry_Combo( "type", "image | composite" );
+}
+)AWI");
+        Put(Mod / "deffiles" / "material.awi", R"AWI(
+void GenerateUI( asset Asset )
+{
+    Asset.AddEntry_Combo( "materialType", Asset.GetTechsetdefTypes( "" ) );
+    Asset.AddEntry_Combo( "surfaceType", "<error> | <none> | concrete | metal" );
+    Asset.AddEntry_Combo( "usage", "<not in editor> | floor" );
+    Asset.AddEntry_AssetCombo( "colorMap", "image" );
+}
+)AWI");
+        // the linker's own technique texture names (aoMap, glossMap, thicknessMap, revealMap) and GDT keys, as the shipped catalog has them
+        Tc::Data Catalog;
+        Check(Catalog.LoadCatalogText(R"({"techsets":[
+            {"n":"lit_advanced","c":"Geometry Advanced","f":"none","b":"Opaque","t":0,"s":[["colorMap","colorMap","diffuseMap","$white_diffuse"],["normalMap","normalMap","normalMap","$identitynormalmap"],
+              ["aoMap","occMap","occlusionMap","$white_ao"],["glossMap","cosinePowerMap","glossMap","$white_gloss"],["specColorMap","specColorMap","specularMask","$white_specular"]]},
+            {"n":"lit_backlit","c":"Geometry","f":"none","b":"Opaque","t":0,"s":[["colorMap","colorMap","diffuseMap","$white_diffuse"],["thicknessMap","alphaRevealMap","thicknessMap","$thickness"]]},
+            {"n":"lit_decal_reveal","c":"Geometry","f":"none","b":"Decal","t":0,"s":[["colorMap","colorMap","diffuseMap","$white_diffuse"],["revealMap","alphaRevealMap","revealMap","$white_reveal"]]}]})"), "linker: the synthetic catalog loads");
+
+        const auto Image = [&](const char* Name, const char* Sem, const char* Core, const char* Comp) {
+            return Ent(Name, "image", Img("x.tif", Sem, Core, Comp));
+        };
+        const std::string Out = (Base / "out" / "bo3").string();
+        Put(Base / "out" / "bo3" / "texture_assets" / "t" / "x.tif", Tiff(8, 8, 3, { 100, 100, 100 }));
+        Put(Base / "out" / "bo3" / "texture_assets" / "t" / "same.tif", Tiff(8, 8, 3, { 100, 100, 100 }));
+        Put(Base / "out" / "bo3" / "texture_assets" / "t" / "diff.tif", Tiff(8, 8, 3, { 101, 100, 100 }));
+        Put(Mod / "texture_assets" / "t" / "same.tif", Tiff(8, 8, 3, { 100, 100, 100 }));      // installed, identical bytes: no warning
+        Put(Mod / "texture_assets" / "t" / "diff.tif", Tiff(8, 8, 3, { 7, 7, 7 }));            // installed, other bytes: a warning
+        Put(Base / "out" / "bo3" / "texture_assets" / "t" / "dirimg.tif", Tiff(8, 8, 3, { 100, 100, 100 }));
+        fs::create_directories(Mod / "texture_assets" / "t" / "dirimg.tif", Ec);              // installed path is a directory: cannot be compared, incomplete
+        Put(Base / "out" / "bo3" / "texture_assets" / "t" / "locked.tif", Tiff(8, 8, 3, { 100, 100, 100 }));
+        Put(Mod / "texture_assets" / "t" / "locked.tif", Tiff(8, 8, 3, { 100, 100, 100 }));   // installed, held open exclusively below: cannot be read, incomplete
+        const std::vector<std::string> Entries = {
+            Image("i_c", "diffuseMap", "sRGB3chAlpha", "compressed high color"), Image("i_n", "normalMap", "Normal", "compressed"),
+            Image("i_gloss", "glossMap", "Linear1ch", "compressed"), Image("i_occ", "occlusionMap", "Linear1ch", "compressed"),
+            Image("i_thick", "thicknessMap", "Linear1ch", "compressed"), Image("i_specmask", "specularMask", "Linear1ch", "compressed"),
+            Image("i_reveal", "revealMap", "Linear1ch", "compressed"),
+            // the five rows of the negative control, every slot on lit_advanced bound to the wrong semantic
+            Ent("mtl_mis", "material", { { "colorMap", "i_gloss" }, { "cosinePowerMap", "i_specmask" }, { "materialType", "lit_advanced" }, { "normalMap", "i_occ" },
+                                         { "occMap", "i_thick" }, { "specColorMap", "i_gloss" }, { "surfaceType", "metal" }, { "usage", "<not in editor>" } }),
+            // the same slots bound correctly
+            Ent("mtl_right", "material", { { "colorMap", "i_c" }, { "cosinePowerMap", "i_gloss" }, { "materialType", "lit_advanced" }, { "normalMap", "i_n" },
+                                           { "occMap", "i_occ" }, { "specColorMap", "i_specmask" }, { "surfaceType", "metal" }, { "usage", "<not in editor>" } }),
+            Ent("mtl_bl_ok", "material", { { "alphaRevealMap", "i_thick" }, { "colorMap", "i_c" }, { "materialType", "lit_backlit" }, { "surfaceType", "metal" }, { "usage", "<not in editor>" } }),
+            Ent("mtl_bl_bad", "material", { { "alphaRevealMap", "i_reveal" }, { "colorMap", "i_c" }, { "materialType", "lit_backlit" }, { "surfaceType", "metal" }, { "usage", "<not in editor>" } }),
+            Ent("mtl_dr_ok", "material", { { "alphaRevealMap", "i_reveal" }, { "colorMap", "i_c" }, { "materialType", "lit_decal_reveal" }, { "surfaceType", "metal" }, { "usage", "<not in editor>" } }),
+            Ent("mtl_dr_bad", "material", { { "alphaRevealMap", "i_thick" }, { "colorMap", "i_c" }, { "materialType", "lit_decal_reveal" }, { "surfaceType", "metal" }, { "usage", "<not in editor>" } }),
+            // install collisions: two images of the output (same.tif is installed with the same bytes, diff.tif with other bytes)
+            Ent("i_same", "image", Img("same.tif", "diffuseMap", "sRGB3chAlpha", "compressed high color")),
+            Ent("i_diff", "image", Img("diff.tif", "diffuseMap", "sRGB3chAlpha", "compressed high color")),
+            Ent("i_dirimg", "image", Img("dirimg.tif", "diffuseMap", "sRGB3chAlpha", "compressed high color")),
+            Ent("i_locked", "image", Img("locked.tif", "diffuseMap", "sRGB3chAlpha", "compressed high color")),
+            Ent("mtl_in_db_as_image", "material", { { "colorMap", "i_c" }, { "materialType", "lit_backlit" }, { "surfaceType", "metal" }, { "usage", "<not in editor>" } }),
+            Ent("mtl_in_db_same_type", "material", { { "colorMap", "i_c" }, { "materialType", "lit_backlit" }, { "surfaceType", "metal" }, { "usage", "<not in editor>" } }),
+        };
+        Put(Base / "out" / "bo3" / "texture_assets" / "t.gdt", Gdt(Entries));
+        Put(Base / "out" / "bo3" / "model_export" / "m" / "ok_lod0.xmodel_bin", XModelBin({ "mtl_right", "MTL_Mis", "mtl_stock_only" }));
+        Put(Base / "out" / "bo3" / "model_export" / "m" / "bad_lod0.xmodel_bin", XModelBin({ "mtl_right", "mtl_nowhere", "mtl_nowhere" }));
+        Put(Base / "out" / "bo3" / "model_export" / "m" / "junk_lod0.xmodel_bin", "this is not an xmodel_bin");
+        Put(Base / "out" / "bo3" / "model_export" / "m" / "short_lod0.xmodel_bin", XModelBin({ "mtl_right" }, 2));         // declares 2, holds 1: cut short
+        Put(Base / "out" / "bo3" / "model_export" / "m" / "nodecl_lod0.xmodel_bin", XModelBin({ "mtl_nowhere" }, -1));    // no NUMMATERIALS
+        Put(Base / "out" / "bo3" / "model_export" / "m" / "anim_lod0.xmodel_bin", XModelBin({}, 0, false));               // a stream with no model header (an animation renamed)
+        Put(Base / "out" / "bo3" / "model_export" / "m" / "zero_lod0.xmodel_bin", XModelBin({}, 0));                      // a real header and a declared zero: passes
+        GdtDb::Catalog Held;
+        GdtDb::Row Stock;
+        Stock.Name = "mtl_stock_only";
+        Stock.Gdf = "material";
+        Held.Add(Stock);
+        Stock.Name = "mtl_in_db_as_image";
+        Stock.Gdf = "image";
+        Held.Add(Stock);
+        Stock.Name = "mtl_in_db_same_type";
+        Stock.Gdf = "material";
+        Held.Add(Stock);
+
+        Inputs In;
+        In.Roots = { Base / "out" / "bo3" };
+        In.ModToolsRoot = Mod;
+        In.Catalog = &Catalog;
+        In.Held = &Held;
+        // hold the installed file open with no sharing, so the gate cannot read it
+        const HANDLE Lock = ::CreateFileW((Mod / "texture_assets" / "t" / "locked.tif").c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        const Result R = Run(In);
+        if (Lock != INVALID_HANDLE_VALUE) ::CloseHandle(Lock);
+        const auto Count = [&](const char* Check1, const char* Asset, Severity S = Severity::Failure) {
+            size_t N = 0;
+            for (const Finding& F : R.Findings)
+                if (F.Check == Check1 && F.Level == S && F.Asset == Asset) N++;
+            return N;
+        };
+        const auto Describe = [&] {
+            std::string L;
+            for (const Finding& F : R.Findings)
+                if (F.Check.rfind("material.slot", 0) == 0 || F.Check.rfind("model.", 0) == 0 || F.Check.rfind("install.", 0) == 0) L += F.Check + "@" + F.Asset + ":" + F.Detail.substr(0, 60) + "; ";
+            return L;
+        };
+
+        // 5. the linker's slot table: one case per row of the negative control, then the correct binding and the two techsets with a special slot
+        Check(Count("material.slot_semantic", "material:mtl_mis") == 5, "linker: the five wrong slots of the negative control each fail", Describe());
+        bool Named = false;
+        for (const Finding& F : R.Findings)
+            if (F.Check == "material.slot_semantic" && F.Asset == "material:mtl_mis" && F.Detail.find("colorMap (linker slot colorMap) takes diffuseMap but image \"i_gloss\" has semantic glossMap") != std::string::npos) Named = true;
+        Check(Named, "linker: the message gives the linker's slot name and the semantic it wants", Describe());
+        bool Ao = false, Gl = false, Sp = false;
+        for (const Finding& F : R.Findings)
+        {
+            if (F.Check != "material.slot_semantic" || F.Asset != "material:mtl_mis") continue;
+            Ao = Ao || F.Detail.find("occMap (linker slot aoMap) takes occlusionMap but image \"i_thick\" has semantic thicknessMap") != std::string::npos;
+            Gl = Gl || F.Detail.find("cosinePowerMap (linker slot glossMap) takes glossMap but image \"i_specmask\" has semantic specularMask") != std::string::npos;
+            Sp = Sp || F.Detail.find("specColorMap (linker slot specColorMap) takes specularMask but image \"i_gloss\" has semantic glossMap") != std::string::npos;
+        }
+        Check(Ao && Gl && Sp, "linker: occMap is aoMap (occlusionMap), cosinePowerMap is glossMap, specColorMap wants specularMask", Describe());
+        Check(Count("material.slot_semantic", "material:mtl_right") == 0, "linker: the right semantic in every lit_advanced slot passes", Describe());
+        Check(Count("material.slot_semantic", "material:mtl_bl_ok") == 0 && Count("material.slot_semantic", "material:mtl_bl_bad") == 1, "linker: lit_backlit takes thickness in alphaRevealMap, a reveal map fails", Describe());
+        Check(Count("material.slot_semantic", "material:mtl_dr_ok") == 0 && Count("material.slot_semantic", "material:mtl_dr_bad") == 1, "linker: lit_decal_reveal takes reveal in alphaRevealMap, a thickness map fails", Describe());
+
+        // 3. model.material_closure
+        Check(Count("model.material_closure", "xmodel_bin:model_export/m/ok_lod0.xmodel_bin") == 0, "closure: output materials (any case) and a gdt.db material pass", Describe());
+        Check(Count("model.material_closure", "xmodel_bin:model_export/m/bad_lod0.xmodel_bin") == 1, "closure: a material in no GDT and not in the gdt.db fails once", Describe());
+        bool Unparsed = false, JunkFailed = Count("model.material_closure", "xmodel_bin:model_export/m/junk_lod0.xmodel_bin") != 0;
+        for (const auto& [Name, Why] : R.Incomplete) Unparsed = Unparsed || (Name == "model.material_closure (unparsed)" && Why.find("junk_lod0") != std::string::npos);
+        {
+            std::string Text;
+            for (const auto& [Name, Why] : R.Incomplete) if (Name == "model.material_closure (unparsed)") Text = Why;
+            Check(Text.find("4 of 7") != std::string::npos,
+                  "closure: a cut-short stream, one with no NUMMATERIALS, and one with no model header are not judged (incomplete)", Text);
+            Check(Count("model.material_closure", "xmodel_bin:model_export/m/zero_lod0.xmodel_bin") == 0 && Text.find("zero_lod0") == std::string::npos, "closure: a real header with a declared zero passes", Text);
+        }
+        Check(Unparsed && !JunkFailed && R.ExitCode() == 2, "closure: a .xmodel_bin that cannot be parsed is incomplete, not a pass and not a made-up failure", Describe());
+        {
+            Inputs NoDb = In;
+            NoDb.Held = nullptr;
+            const Result N = Run(NoDb);
+            bool Inc = false, Failed1 = false;
+            for (const auto& [Name, Why] : N.Incomplete) Inc = Inc || Name == "model.material_closure (no gdt.db)";
+            for (const Finding& F : N.Findings) Failed1 = Failed1 || F.Check == "model.material_closure";
+            Check(Inc && !Failed1, "closure: without a gdt.db the unresolved names are incomplete, not a pass and not a failure");
+        }
+
+        // 4. install collisions
+        Check(Count("install.image_overwrite", "image:i_diff", Severity::Warning) == 1, "install: an output baseImage that exists with other bytes warns", Describe());
+        Check(Count("install.image_overwrite", "image:i_same", Severity::Warning) == 0 && Count("install.image_overwrite", "image:i_c", Severity::Warning) == 0, "install: identical bytes and a path not installed give no warning", Describe());
+        {
+            std::string Why;
+            for (const auto& [Name, W] : R.Incomplete) if (Name == "install.image_overwrite (part)") Why = W;
+            Check(Lock != INVALID_HANDLE_VALUE && !Why.empty() && Count("install.image_overwrite", "image:i_dirimg", Severity::Warning) == 0 && Count("install.image_overwrite", "image:i_locked", Severity::Warning) == 0,
+                  "install: a directory or an unreadable file at the installed path is incomplete, never 'same' and never a warning", Why);
+        }
+        Check(Count("install.name_collision", "material:mtl_in_db_as_image", Severity::Warning) == 1, "install: a name the gdt.db holds as another type warns", Describe());
+        Check(Count("install.name_collision", "material:mtl_in_db_same_type", Severity::Warning) == 0 && Count("gdt.stock_pair", "material:mtl_in_db_same_type") == 1, "install: the same name and type is the existing gdt.stock_pair failure, not a second finding", Describe());
+        {
+            Inputs NoRoot = In;
+            NoRoot.ModToolsRoot.clear();
+            const Result N = Run(NoRoot);
+            bool Any = false;
+            for (const Finding& F : N.Findings) Any = Any || F.Check == "install.image_overwrite";
+            Check(!Any, "install: no Mod Tools root, no install comparison");
+        }
+        {
+            std::vector<std::string> Names;
+            std::string Why;
+            Check(ReadXModelBinMaterials(Base / "out" / "bo3" / "model_export" / "m" / "ok_lod0.xmodel_bin", Names, Why) && Names.size() == 3 && Names[1] == "MTL_Mis", "closure: the MATERIAL names are read from the bin", Why);
+            Check(!ReadXModelBinMaterials(Base / "out" / "bo3" / "model_export" / "m" / "junk_lod0.xmodel_bin", Names, Why), "closure: a non-bin is refused");
+        }
+        // Optional: real bins. GRAYWOLF_REAL_XMODEL_DIR names a folder of a GrayWolf export (outside the repo); every .xmodel_bin under it must parse
+        // and agree with its own NUMMATERIALS, and the gate must have judged every one of them (all LODs). Skipped when the variable is not set.
+        std::string RealDirText;
+        RealDirText.resize(GetEnvironmentVariableA("GRAYWOLF_REAL_XMODEL_DIR", nullptr, 0));
+        if (!RealDirText.empty()) RealDirText.resize(GetEnvironmentVariableA("GRAYWOLF_REAL_XMODEL_DIR", RealDirText.data(), (DWORD)RealDirText.size()));
+        if (const char* RealDir = RealDirText.c_str(); !RealDirText.empty())
+        {
+            size_t Bins = 0, Parsed = 0;
+            std::string FirstBad;
+            std::error_code E3;
+            for (fs::recursive_directory_iterator It(RealDir, fs::directory_options::skip_permission_denied, E3), End; !E3 && It != End; It.increment(E3))
+                if (It->is_regular_file() && Lower(It->path().extension().string()) == ".xmodel_bin")
+                {
+                    Bins++;
+                    std::vector<std::string> Names;
+                    std::string Why;
+                    if (ReadXModelBinMaterials(It->path(), Names, Why)) Parsed++;
+                    else if (FirstBad.empty()) FirstBad = It->path().filename().string() + ": " + Why;
+                }
+            Check(Bins > 0 && Parsed == Bins, "closure: every real .xmodel_bin of the export parses and agrees with its NUMMATERIALS", std::to_string(Parsed) + " of " + std::to_string(Bins) + " " + FirstBad);
+            Inputs RealIn;
+            RealIn.Roots = { fs::path(RealDir) };
+            const Result RR = Run(RealIn);
+            const auto J = RR.Checks.find("model.material_closure");
+            Check(J != RR.Checks.end() && J->second.Judged == Bins, "closure: the gate judged every real .xmodel_bin (all LODs)", std::to_string(J == RR.Checks.end() ? 0 : J->second.Judged) + " of " + std::to_string(Bins));
+        }
+        fs::remove_all(Base, Ec);
+        return Failed;
+    }
+
     int SelfTest(std::string& Failures)
     {
         int Failed = 0;
@@ -2356,6 +2816,7 @@ void GenerateUI( asset Asset )
         Check(AwiNotRun && CatalogNotRun && Blind.Checks.count("awi.unknown_key") == 0, "without the Mod Tools or the catalog those checks are listed as incomplete");
 
         Failed += ReviewTests(Failures);
+        Failed += LinkerTests(Failures);
         fs::remove_all(Base, Ec);
         return Failed;
     }

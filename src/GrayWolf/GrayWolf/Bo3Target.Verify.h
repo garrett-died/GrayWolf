@@ -15,6 +15,8 @@
 //                  surfaceType, usage, tint k/255
 //   4  rules.*     the hard rules that can be judged from these files
 //   5  image.*     baseImage resolves, bit depth, channels, no .dds, colorSRGB, coreSemantic/compression, normal Z, multiple of 4
+//   +  model.*     every material a .xmodel_bin names is a material of the output or of the Mod Tools gdt.db (model.material_closure)
+//   +  install.*   with a Mod Tools root: output images whose path exists there with other bytes, entity names the gdt.db already holds (warnings)
 // Checks 6 (sound), 7 (weapon, anim) and 8 (stock oracle) are listed as not run.
 
 #include "Bo3Target.GdtDb.h"
@@ -141,6 +143,9 @@ namespace Bo3Target::Verify
     SpecStat SpecularMode(const Thumb& T);
     struct MetalStat { size_t MetalPixels = 0, NotBlack = 0; };
     MetalStat BareMetal(const Thumb& Diffuse, const Thumb& Specular);
+
+    // The material names inside a .xmodel_bin (its MATERIAL records), in file order. False with Why when the file cannot be parsed.
+    bool ReadXModelBinMaterials(const std::filesystem::path& File, std::vector<std::string>& Names, std::string& Why);
 
     int SelfTest(std::string& Failures);
 }

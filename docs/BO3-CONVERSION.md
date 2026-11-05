@@ -126,25 +126,32 @@ not proof Black Ops III accepts the asset. `pool-coverage` puts each pool in one
 its zones are the zones walked, and a gate only if its GDT hash still holds. `converted` counts are per GDF in that run, not
 per asset of a zone.
 
-Checked on the Black Ops 4 zone `mp_frenetic` (25 models): 0 failures and 11 warnings, all `rules.diffuse_range`. `surfaceType <none>` passes only with a
+Checked on the Black Ops 4 zone `mp_frenetic` (25 models): 0 failures and 47 warnings: 11 `rules.diffuse_range` and 36 `install.image_overwrite`. `surfaceType <none>` passes only with a
 report row showing the flag word was read and names no surface type; with no such row it is a failure. Compared with t7kb
 `gdt_check` on the same files. Not built: sound, weapon, animation and stock comparison checks. A slot bound to a stock
 image is judged from the stock GDT. A code image with no Mod Tools semantic stays incomplete, so that output does not reach exit 0. `--target modtools` has not been run.
 
 ## Known limits
 
-- Not loaded in the Asset Property Editor, not linked, not seen in game.
+- First link test: two Black Ops 4 models and six test materials linked with 0 errors, and 8-bit single-channel PNG and TIFF
+  were accepted. That covers a small sample. Nothing has been loaded in the Asset Property Editor or Radiant, or seen in game.
+- A model's GDT is not self-contained: its materials can sit in the `texture_assets` GDTs, so copy the whole output.
 - `--target modtools` has never run on a real install.
 - Black Ops 4 has run end to end. Black Ops III, Black Ops 4, Cold War and WWII have run through the normal map fix
   below; WWII also through `--target` on a real map zone, which worked. Black Ops 6 and Black Ops 7 data was not
   installed here, so those two games are untested.
 - Gloss, occlusion, reveal, thickness and mask specular images that are exactly grey are written as 8-bit single-channel
-  files in the target layout. Whether the Mod Tools accept a single-channel PNG has not been tested.
+  files in the target layout.
 - The non-metal specular level 56/255 applies only to the fused colour and metal split. In that split it is correct at metal 0
   and 1 and an approximation in between. Black Ops III, Black Ops 4 and Cold War specular images are copied as authored.
 - `rules.specular_level` and `rules.bare_metal` are warnings, since stock Black Ops III art breaks both guidelines too.
 - Gloss range: Black Ops 4 uses its own constants. A material without a usable range keeps the default and gets a
   `material.gloss_range_default` row. Black Ops 1 and World at War gloss is unverified.
+- Decorated source names (`packed_*`, `&`, `~`, or a hash token) become `i_<material>_<suffix>`: `c`, `n`, `g`, `s`, `o`, `m`, `t`, `e`.
+  An image several materials share takes the first material by name in that run, so a later run with an earlier name can rename
+  it and leave the old file in a reused output folder. A clean name that looks like a hash, such as `decade00`, is renamed the same way.
+- `bo3-verify` also runs `model.material_closure` (every material a model names must exist), `install.image_overwrite` and
+  `install.name_collision` (both warnings, read-only, and only with a Mod Tools root).
 - `surfaceType` comes from the material flags in Black Ops III, Black Ops 4 and Cold War. Cold War rests on measurement only
   (165 of 173 stock names on one map). Other games write `<none>` and a `material.surface_unknown` row: GrayWolf does not read
   their flag word yet.

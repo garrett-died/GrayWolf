@@ -11,6 +11,7 @@
 #include "SurfaceTypes.h"
 #include "Bo3Target.Awi.h"
 #include "Bo3Target.Output.h"
+#include "Bo3Target.Placement.h"
 
 #include <nlohmann/json.hpp>
 
@@ -59,6 +60,23 @@ namespace
         return It == Tags.end() ? Semantic : It->second;
     }
 
+    // The suffix BO3 gives the image of a material slot ("i_<material>_<suffix>": measured on stock, bo3-stock-naming.md section 1):
+    // c, n, g, s, o as stock writes them; m for a reveal map (stock: m 3,505 against r 1,406, so m is the majority; it is also the name of
+    // some multipleMask and thicknessMap images, the semantic field is what tells them apart); t for a thickness map; e for the emissive
+    // colour of colorMap00 (stock 448); any other slot is named by its key.
+    std::string SlotTag(const std::string& Key, const std::string& Semantic)
+    {
+        if (Key == "colorMap") return "c";
+        if (Key == "normalMap") return "n";
+        if (Key == "cosinePowerMap") return "g";
+        if (Key == "specColorMap") return "s";
+        if (Key == "occMap") return "o";
+        if (Key == "alphaRevealMap") return Semantic == "thicknessMap" ? "t" : "m";
+        if (Key == "colorMap00" && Semantic == "diffuseMap") return "e";
+        const std::string K = AssetName(Key);
+        return K.empty() ? Tag(Semantic) : K;
+    }
+
     // The code images BO3's own materials name ("$normal"): what the stock GDTs of its mod tools put
     // in a material's image slots
     const char* const StockCodeImages[] = { "$black_color", "$black_gloss", "$black_reveal", "$black_thickness",
@@ -92,6 +110,35 @@ std::string AssetName(const std::string& Source)
     const size_t First = Out.find_first_not_of('_');
     if (First == std::string::npos) return std::string();
     return Out.substr(First, Out.find_last_not_of('_') - First + 1);
+}
+
+bool IsDecoratedImageName(const std::string& Stem)
+{
+    std::string L;
+    for (const char C : Stem) L += (char)std::tolower((unsigned char)C);
+    if (L.rfind("packed_", 0) == 0) return true;
+    size_t Start = 0;
+    for (size_t I = 0; I <= L.size(); I++)
+    {
+        const bool End = I == L.size();
+        const char C = End ? '_' : L[I];
+        if (!End && (C == '&' || C == '~')) return true;       // the Infinity Ward form markers (_c&, _s~); any other odd character is left to AssetName
+        if (std::isalnum((unsigned char)C)) continue;
+        const size_t Len = I - Start;
+        if (Len == 8)
+        {
+            bool Digit = false, Letter = false, Hex = true;
+            for (size_t K = Start; K < I; K++)
+            {
+                if (L[K] >= '0' && L[K] <= '9') Digit = true;
+                else if (L[K] >= 'a' && L[K] <= 'f') Letter = true;
+                else Hex = false;
+            }
+            if (Hex && Digit && Letter) return true;
+        }
+        Start = I + 1;
+    }
+    return false;
 }
 
 bool Builder::Image::operator<(const Image& O) const
@@ -799,29 +846,60 @@ Builder::Resolved Builder::Resolve() const
     std::map<std::string, Material> Work = Defined;
     std::map<std::string, std::vector<Note>> Late;       // by material: what was decided again
     std::map<Image, std::string> ImageNames;
+    size_t NameCollisions = 0;      // images whose name was taken by another image and so got a number (before this check one of them was dropped)
     const auto NameImages = [&] {
         ImageNames.clear();
+        NameCollisions = 0;
         std::map<std::string, std::vector<Image>> ByStem;
+        // A decorated source name is replaced by BO3's own: i_<material>_<slot suffix>. A file several materials share is named from the first of
+        // them (material name, then slot key, in sorted order), so the name is the same wherever the image is used. "Decorated" is read from the
+        // source file name alone: a stock decision about the new name must not move an image back to its raw stem (the two would alternate).
+        std::map<Image, std::pair<std::string, std::string>> Owner;
+        std::set<Image> Seen;
         for (const auto& [Name, M] : Work)
             for (const auto& [Key, I] : M.Slots)
-                if (I.Builtin.empty() && !ImageNames.count(I))
+                if (I.Builtin.empty() && Seen.insert(I).second)
                 {
-                    ImageNames[I];
+                    const std::string Raw = I.File.stem().string();
+                    if (IsDecoratedImageName(Raw))
+                    {
+                        Owner.emplace(I, std::make_pair(Name, Key));
+                        continue;
+                    }
                     // BO3's own convention, "i_<name>" (a name that has it already keeps it)
-                    const std::string Stem = AssetName(I.File.stem().string());
+                    const std::string Stem = AssetName(Raw);
                     ByStem[Stem.rfind("i_", 0) == 0 ? Stem : "i_" + Stem].push_back(I);
                 }
+        std::map<Image, std::string> Candidate;
         for (auto& [Stem, List] : ByStem)
         {
             std::sort(List.begin(), List.end());
-            std::map<std::string, size_t> Seen;
+            std::map<std::string, size_t> Same;
             for (const Image& I : List)
             {
                 std::string Name = Stem;
                 if (List.size() > 1) Name += "_" + Tag(I.Semantic) + (I.FromAlpha ? "a" : "");
-                if (const size_t N = Seen[Name]++) Name += "_" + std::to_string(N + 1);
-                ImageNames[I] = Name;
+                if (const size_t N = Same[Name]++) Name += "_" + std::to_string(N + 1);
+                Candidate[I] = Name;
             }
+        }
+        for (const auto& [I, From] : Owner) Candidate[I] = "i_" + From.first + "_" + SlotTag(From.second, I.Semantic);
+        // One name for one source image and semantic, across clean, decorated and shortened names (Publish shortens a name over 63 characters;
+        // two long names can meet there). A reference to a stock image (a clean stem the stock database holds) may be shared: nothing is written
+        // for it. Every other image that finds its name taken gets _2, _3, ... in Image order, which does not depend on the order materials were added.
+        std::set<std::string> Taken;
+        for (const auto& [I, Name] : Candidate)
+            if (!I.StockSemantic.empty() && !Owner.count(I)) { ImageNames[I] = Name; Taken.insert(Bo3Target::Placement::Shorten(Name)); }
+        for (const auto& [I, Name] : Candidate)
+        {
+            if (ImageNames.count(I)) continue;
+            std::string Final = Name;
+            for (size_t N = 2; !Taken.insert(Bo3Target::Placement::Shorten(Final)).second; N++)
+            {
+                Final = Name + "_" + std::to_string(N);
+                if (N == 2) NameCollisions++;
+            }
+            ImageNames[I] = Final;
         }
     };
     NameImages();
@@ -873,6 +951,7 @@ Builder::Resolved Builder::Resolve() const
     }
 
     Resolved Out;
+    Out.NameCollisions = NameCollisions;
     for (const auto& [Name, M] : Work)
     {
         const auto Used = Usage.find(M.Source);
@@ -1532,6 +1611,157 @@ int SelfTest(std::string& Failures)
                 if (Value(R.Materials[0], S) != "(no key)" && Value(R.Materials[0], S) != "" && T->ByKey(S) == nullptr) { ++Bad; First = T->Name + " has no " + S; }
         }
         Check(Bad == 0, "every slot written exists on the chosen techset", First);
+    }
+    // image names from the material and the slot (decorated Infinity Ward names), clean names kept
+    {
+        Check(IsDecoratedImageName("csub_mtl_aac_crate_col_sub_482cf5df_c") && IsDecoratedImageName("i_x_c&") && IsDecoratedImageName("i_x_s~") &&
+              IsDecoratedImageName("packed_foo_bar") && IsDecoratedImageName("nsub_mtl_x_a296bca2"), "decorated forms are told", "");
+        Check(!IsDecoratedImageName("i_p8_col_rocks_sm_beach_03_muddy_c") && !IsDecoratedImageName("i_feedbabe_c") && !IsDecoratedImageName("i_12345678_c") && !IsDecoratedImageName("i_t8_micro_metal_rust_01_c") && !IsDecoratedImageName("$occlusion_black"),
+              "clean BO3 style names are not decorated", "");
+        for (const char* Name : { "csub_mtl_x_482cf5df_c.png", "csub_mtl_x_482cf5df_s.png", "csub_mtl_x_de28a1e1_g.png", "nsub_mtl_x_a296bca2.png", "i_clean_c.png", "i_one_c&.png", "i_two_s~.png", "packed_pk.png" })
+        {
+            std::ofstream F(Dir / Name, std::ios::binary);
+            F << "x";
+        }
+        const auto Deco = [&](const char* Mat, const char* C, const char* N, const char* G, const char* S) {
+            Materials::Description D;
+            D.Name = Mat;
+            D.Albedo = Map(C);
+            D.Normal = Map(N);
+            if (G != nullptr) D.Roughness = Map(G, true);
+            if (S != nullptr) D.Specular = Map(S);
+            return D;
+        };
+        Builder B(Base, "t_");
+        B.TechsetData(&Data);
+        Materials::Source Src;
+        Materials::Description A = Deco("mtl_x_a", "csub_mtl_x_482cf5df_c.png", "nsub_mtl_x_a296bca2.png", "csub_mtl_x_de28a1e1_g.png", "csub_mtl_x_482cf5df_s.png");
+        Materials::Description Z = Deco("mtl_x_b", "csub_mtl_x_482cf5df_c.png", "nsub_mtl_x_a296bca2.png", nullptr, nullptr);     // shares two images with mtl_x_a
+        Materials::Description K = Deco("mtl_clean", "i_clean_c.png", "i_one_c&.png", nullptr, nullptr);
+        Materials::Description P = Deco("mtl_pk", "packed_pk.png", "i_two_s~.png", nullptr, nullptr);
+        for (const Materials::Description* D : { &Z, &A, &K, &P })      // the order of Add must not matter
+        {
+            Src.Name = D->Name;
+            B.Add(*D, Dir, &Src, "ww2");
+        }
+        const Builder::Resolved R = B.Resolve();
+        std::map<std::string, std::string> Img;
+        for (const auto& M : R.Materials)
+            for (const auto& [Key, V] : M.Fields)
+                if (!V.empty() && (Key == "colorMap" || Key == "normalMap" || Key == "cosinePowerMap" || Key == "specColorMap")) Img[M.Name + "." + Key] = V;
+        Check(Img["mtl_x_a.colorMap"] == "i_mtl_x_a_c" && Img["mtl_x_a.normalMap"] == "i_mtl_x_a_n" && Img["mtl_x_a.cosinePowerMap"] == "i_mtl_x_a_g" && Img["mtl_x_a.specColorMap"] == "i_mtl_x_a_s",
+              "a decorated image is named i_<material>_<c|n|g|s>", Img["mtl_x_a.colorMap"] + "," + Img["mtl_x_a.normalMap"] + "," + Img["mtl_x_a.cosinePowerMap"] + "," + Img["mtl_x_a.specColorMap"]);
+        Check(Img["mtl_x_b.colorMap"] == "i_mtl_x_a_c" && Img["mtl_x_b.normalMap"] == "i_mtl_x_a_n", "a shared image has one name, the first material's", Img["mtl_x_b.colorMap"]);
+        Check(Img["mtl_clean.colorMap"] == "i_clean_c", "a clean name keeps its stem", Img["mtl_clean.colorMap"]);
+        Check(Img["mtl_clean.normalMap"] == "i_mtl_clean_n" && Img["mtl_pk.colorMap"] == "i_mtl_pk_c" && Img["mtl_pk.normalMap"] == "i_mtl_pk_n", "the c& s~ and packed_ forms are named from material and slot",
+              Img["mtl_clean.normalMap"] + "," + Img["mtl_pk.colorMap"] + "," + Img["mtl_pk.normalMap"]);
+        std::set<std::string> Names;
+        for (const auto& I : R.ImagesOut) Names.insert(I.Name);
+        Check(Names.size() == R.ImagesOut.size(), "every image entity name is unique", std::to_string(Names.size()) + " of " + std::to_string(R.ImagesOut.size()));
+        bool Legal = true;
+        for (const std::string& N : Names)
+            for (const char C : N) Legal = Legal && ((C >= 'a' && C <= 'z') || (C >= '0' && C <= '9') || C == '_');
+        Check(Legal, "image names are lower case letters, digits and underscore", "");
+    }
+    // one name per source image: the clean, the tagged and the shortened name never meet, and no source is dropped
+    {
+        for (const char* D : { "a", "b", "c" }) fs::create_directories(Dir / D, Ec);
+        for (const char* Name : { "a/foo.png", "b/foo.png", "c/foo_c.png", "dec/x_482cf5df_c.png", "dec/y_482cf5df_c.png" })
+        {
+            fs::create_directories((Dir / Name).parent_path(), Ec);
+            std::ofstream F(Dir / Name, std::ios::binary);
+            F << "x";
+        }
+        const auto Mat = [&](const char* Name, const std::string& Colour) {
+            Materials::Description D;
+            D.Name = Name;
+            D.Albedo = Map(Colour.c_str());
+            D.Normal = Map("n.png");
+            return D;
+        };
+        const auto ColourOf = [&](const Builder::Resolved& R, const char* Material) {
+            for (const auto& M : R.Materials)
+                if (M.Name == Material)
+                    for (const auto& [K, V] : M.Fields)
+                        if (K == "colorMap") return V;
+            return std::string("(none)");
+        };
+        const auto Fill = [&](Builder& B, const std::vector<Materials::Description>& List) {
+            Materials::Source Src;
+            for (const auto& D : List)
+            {
+                Src.Name = D.Name;
+                B.Add(D, Dir, &Src, "ww2");
+            }
+        };
+        // 1. a/foo.png and b/foo.png share the stem foo (tagged _c and _c_2), c/foo_c.png is named foo_c on its own: three images, three names
+        {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            Fill(B, { Mat("m_a", "a/foo.png"), Mat("m_b", "b/foo.png"), Mat("m_c", "c/foo_c.png") });
+            const Builder::Resolved R = B.Resolve();
+            const std::set<std::string> Names = { ColourOf(R, "m_a"), ColourOf(R, "m_b"), ColourOf(R, "m_c") };
+            std::set<std::string> Files;
+            for (const auto& I : R.ImagesOut)
+                if (I.File.stem().string().rfind("foo", 0) == 0) Files.insert(I.File.generic_string());
+            Check(Names.size() == 3 && Files.size() == 3 && R.NameCollisions >= 1, "three source images with a clean, a tagged and a repeated name keep three names and three entities",
+                  ColourOf(R, "m_a") + "," + ColourOf(R, "m_b") + "," + ColourOf(R, "m_c") + " files " + std::to_string(Files.size()) + " collisions " + std::to_string(R.NameCollisions));
+        }
+        // 2. two long names that meet after Bo3Target::Placement::Shorten: the second stem is the first one's shortened name
+        {
+            const std::string LongStem(70, 'x');
+            const std::string Short = Bo3Target::Placement::Shorten("i_" + LongStem);
+            for (const std::string& Stem : { LongStem, Short })
+            {
+                std::ofstream F(Dir / (Stem + ".png"), std::ios::binary);
+                F << "x";
+            }
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            Fill(B, { Mat("m_long", LongStem + ".png"), Mat("m_short", Short + ".png") });
+            const Builder::Resolved R = B.Resolve();
+            const std::string A = ColourOf(R, "m_long"), S = ColourOf(R, "m_short");
+            std::set<std::string> Files;
+            for (const auto& I : R.ImagesOut)
+                if (I.File.stem().string().rfind("i_xx", 0) == 0 || I.File.stem().string().rfind("xxx", 0) == 0) Files.insert(I.File.generic_string());
+            Check(Short.size() == 63 && Bo3Target::Placement::Shorten(A) != Bo3Target::Placement::Shorten(S) && Files.size() == 2, "names that meet after Shorten stay two images",
+                  A + " | " + S + " files " + std::to_string(Files.size()));
+        }
+        // 3. a stock name for the material-and-slot name must not flip a decorated image back to its raw stem
+        {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            B.SetStockImages([](const std::string& Name) { return Name == "i_mtl_a_c" ? std::string("diffuseMap") : std::string(); });
+            Fill(B, { Mat("mtl_a", "dec/x_482cf5df_c.png") });
+            const Builder::Resolved R = B.Resolve();
+            size_t Late = 0;
+            for (const auto& M : R.Materials)
+                for (const auto& N : M.Notes)
+                    if (N.Code == "material.stock_semantic_late") Late++;
+            const Builder::Resolved R2 = B.Resolve();
+            Check(ColourOf(R, "mtl_a") == "i_mtl_a_c" && ColourOf(R2, "mtl_a") == "i_mtl_a_c" && Late <= 1,
+                  "a decorated image whose material-and-slot name is a stock image stays on that name (one decision, no alternating rounds)", ColourOf(R, "mtl_a") + " late " + std::to_string(Late));
+        }
+        // 4. the same inputs give the same names in any order (the owner of a shared image is the first material by name, not the first added)
+        {
+            std::vector<Materials::Description> List = { Mat("mtl_x_b", "dec/x_482cf5df_c.png"), Mat("mtl_x_a", "dec/x_482cf5df_c.png"), Mat("mtl_y", "dec/y_482cf5df_c.png"),
+                                                         Mat("m_a", "a/foo.png"), Mat("m_b", "b/foo.png"), Mat("m_c", "c/foo_c.png") };
+            Builder One(Base, "t_"), Two(Base, "t_");
+            One.TechsetData(&Data);
+            Two.TechsetData(&Data);
+            Fill(One, List);
+            std::reverse(List.begin(), List.end());
+            Fill(Two, List);
+            const auto E1 = One.Entries("\n"), E2 = Two.Entries("\n");
+            Check(E1 == E2 && !E1.empty() && ColourOf(One.Resolve(), "mtl_x_b") == "i_mtl_x_a_c", "the same materials added in any order give the same entries; a shared image is named from the first material by name",
+                  ColourOf(One.Resolve(), "mtl_x_b"));
+        }
+        // 5. the decorated rule on real-looking and look-alike names (the documented limit: hash look-alikes are taken for hashes)
+        Check(IsDecoratedImageName("decade00") && IsDecoratedImageName("facade12") && IsDecoratedImageName("a1b2c3d4") && IsDecoratedImageName("cfoo_c&") && IsDecoratedImageName("~&-cger_camo_rope_col&$white2~97cb0cbd"),
+              "hash look-alikes and the & and ~ forms are decorated", "");
+        Check(!IsDecoratedImageName("warning@col") && !IsDecoratedImageName("a-b c.d") && !IsDecoratedImageName("feedbabe") && !IsDecoratedImageName("12345678") && !IsDecoratedImageName("decade0") && !IsDecoratedImageName("$occlusion_black"),
+              "@ - space . $ and non-hash tokens do not make a name decorated", "");
+        Check(AssetName("warning@col") == "warning_col", "warning@col is cleaned to warning_col as before", AssetName("warning@col"));
     }
     fs::remove_all(Dir, Ec);
     return Failed;
