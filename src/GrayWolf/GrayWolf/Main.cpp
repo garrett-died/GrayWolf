@@ -351,7 +351,7 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
     {
         // (the project targets an older _WIN32_WINNT than combaseapi.h's declaration needs: resolved by name)
         using IncrementMtaUsage = HRESULT(WINAPI*)(void**);
-        static void* MtaUsage = nullptr;
+        void* MtaUsage = nullptr;   // the cookie is never used again, so it needs no static storage
         if (const HMODULE Combase = LoadLibraryW(L"combase.dll"))
             if (const auto Increment = reinterpret_cast<IncrementMtaUsage>(GetProcAddress(Combase, "CoIncrementMTAUsage"))) Increment(&MtaUsage);
     }

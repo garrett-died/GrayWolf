@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <span>
 
 namespace
 {
@@ -44,7 +45,7 @@ namespace
 
     ImagePixel ReadPixel(const Rgba8Image& Image, size_t Index)
     {
-        const uint8_t* P = &Image.Pixels[Index * 4];
+        const std::span<const uint8_t, 4> P(&Image.Pixels[Index * 4], 4);
         ImagePixel Pixel;
         Pixel.R = ToFloat(P[0]);
         Pixel.G = ToFloat(P[1]);
@@ -55,7 +56,7 @@ namespace
 
     void WritePixel(Rgba8Image& Image, size_t Index, const ImagePixel& Pixel)
     {
-        uint8_t* P = &Image.Pixels[Index * 4];
+        const std::span<uint8_t, 4> P(&Image.Pixels[Index * 4], 4);
         P[0] = ToByte(Pixel.R);
         P[1] = ToByte(Pixel.G);
         P[2] = ToByte(Pixel.B);

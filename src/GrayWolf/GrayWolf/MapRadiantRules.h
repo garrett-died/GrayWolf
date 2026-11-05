@@ -50,7 +50,7 @@ namespace Maps
     // Without render data: the running coordinate, 16 per unit along the grid, V negated.
     std::string PatchRunningTexture(double RunU, double RunV);
     // A patch vertex line ("\tv X Y Z[ c R G B A] ..."), the colour only when it is not white
-    std::string PatchColour(const uint8_t Colour[4]);
+    std::string PatchColour(const uint8_t (&Colour)[4]);
 
     // ---- brush hulls
 
@@ -109,7 +109,7 @@ namespace Maps
     std::string LightEntityKeys(const Light& L, const std::string& Prefix);
     // A static model's "angles" (pitch yaw roll) from the rows of its axis: at pitch +-90 (the
     // forward vector's horizontal part under 1e-4) roll is 0 and yaw comes from the left vector.
-    std::string StaticModelAngles(const float Axis[9]);
+    std::string StaticModelAngles(const float (&Axis)[9]);
     // A key Radiant cannot take (it names an effect or asset the Mod Tools lack): the key it is kept
     // under so the data stays and Radiant ignores it
     std::string UnresolvedKey(const std::string& Key);

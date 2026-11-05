@@ -15,11 +15,12 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <string_view>
 
 namespace Materials
 {
 // While set (a --target is on), sidecars also keep the first block of each material's constant bytes
-static std::atomic<bool> KeepConstants{ false };
+static std::atomic<bool> KeepConstants{ false };   // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): a run-wide switch set once by the CLI, read by the export threads
 void KeepConstantsInSidecar(bool On)
 {
     KeepConstants.store(On);
@@ -536,7 +537,7 @@ std::string SidecarText(const Sidecar& S)
             // --target is set: a run with no target writes the sidecar it always did.
             if (KeepConstants.load() && !Src.Constants.empty() && !Src.Constants.front().empty())
             {
-                static const char* const Digits = "0123456789abcdef";
+                static constexpr std::string_view Digits = "0123456789abcdef";
                 const std::vector<uint8_t>& Block = Src.Constants.front();
                 std::string Hex;
                 for (size_t b = 0; b < Block.size() && b < 0x100; b++)

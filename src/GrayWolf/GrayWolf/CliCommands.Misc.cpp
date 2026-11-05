@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <vector>
 #include <iterator>
+#include <span>
 #include <functional>
 #include <string>
 #include <format>
@@ -616,7 +617,8 @@ static int SelfTest(std::string& Failures)
             Dds.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, 4, 4, 1, 1);
             for (size_t P = 0; P < 16; P++)
             {
-                uint8_t* Pix = Dds.GetImage(0, 0, 0)->pixels + P * 4;
+                const DirectX::Image* Whole = Dds.GetImage(0, 0, 0);
+                const std::span<uint8_t> Pix = std::span<uint8_t>(Whole->pixels, Whole->slicePitch).subspan(P * 4, 4);
                 Pix[0] = 90; Pix[1] = 150; Pix[2] = 200; Pix[3] = 255;
             }
             const bool Raw = SUCCEEDED(DirectX::SaveToDDSFile(*Dds.GetImage(0, 0, 0), DirectX::DDS_FLAGS_NONE, (Dir / "raw.dds").c_str()));

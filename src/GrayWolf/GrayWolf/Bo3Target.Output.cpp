@@ -43,10 +43,11 @@ namespace Bo3Target::Output
             static const char Digits[] = "0123456789abcdef";
             std::string Out;
             Out.reserve(Count * 2);
+            const std::span<const uint8_t> View(Bytes, Count);
             for (size_t I = 0; I < Count; ++I)
             {
-                Out += Digits[Bytes[I] >> 4];
-                Out += Digits[Bytes[I] & 15];
+                Out += Digits[View[I] >> 4];
+                Out += Digits[View[I] & 15];
             }
             return Out;
         }
@@ -80,7 +81,7 @@ namespace Bo3Target::Output
                 {
                     const ULONG Piece = static_cast<ULONG>((std::min<size_t>)(Size, 1u << 30));
                     if (BCryptHashData(Handle, const_cast<PUCHAR>(Bytes), Piece, 0) != 0) Failed = true;
-                    Bytes += Piece;
+                    Bytes = std::next(Bytes, static_cast<std::ptrdiff_t>(Piece));
                     Size -= Piece;
                 }
             }

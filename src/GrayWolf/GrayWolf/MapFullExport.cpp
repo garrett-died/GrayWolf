@@ -172,7 +172,7 @@ bool ParseDependencyList(const std::string& Text, MapDependencyList& List)
 
 namespace
 {
-    std::mutex RunFilesLock;
+    std::mutex RunFilesLock;   // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the lock of the run's file table, shared by the export threads
     // maps folder (lower case) -> the (kind, file) rows made this run
     std::map<std::string, std::set<std::pair<std::string, std::string>>>& RunFiles()
     {

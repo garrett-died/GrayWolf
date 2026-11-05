@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <fstream>
+#include <iterator>
 #include <span>
 #include <objbase.h>
 
@@ -105,9 +106,9 @@ namespace Bo3Target
         const bool Grey = IsOneChannel(Format);
         for (size_t Y = 0; Y < Image->height; Y++)
         {
-            const uint8_t* Row = Image->pixels + Y * Image->rowPitch;
-            uint8_t* To = &Out.Pixels[Y * Out.Width * 4];
-            std::memcpy(To, Row, (size_t)Out.Width * 4);
+            const uint8_t* Row = std::next(Image->pixels, static_cast<std::ptrdiff_t>(Y * Image->rowPitch));
+            const std::span<uint8_t> To(&Out.Pixels[Y * Out.Width * 4], (size_t)Out.Width * 4);
+            std::memcpy(To.data(), Row, (size_t)Out.Width * 4);
             if (Grey)
                 for (uint32_t X = 0; X < Out.Width; X++)
                 {
@@ -178,7 +179,7 @@ namespace Bo3Target
         }
         const DirectX::Image* To = Scratch->GetImage(0, 0, 0);
         for (uint32_t Y = 0; Y < Pixels.Height; Y++)
-            std::memcpy(To->pixels + (size_t)Y * To->rowPitch, &Pixels.Pixels[(size_t)Y * Pixels.Width * 4], (size_t)Pixels.Width * 4);
+            std::memcpy(std::next(To->pixels, static_cast<std::ptrdiff_t>((size_t)Y * To->rowPitch)), &Pixels.Pixels[(size_t)Y * Pixels.Width * 4], (size_t)Pixels.Width * 4);
 
         std::error_code Ec;
         fs::create_directories(File.parent_path(), Ec);

@@ -18,6 +18,7 @@
 #include <format>
 #include <mutex>
 #include <set>
+#include <span>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -148,13 +149,13 @@ namespace ImageRoles
         size_t Fit = 0;
         for (size_t I = 0; I < Count; I++)
         {
-            const uint8_t* P = &Image.Pixels[I * 4];
+            const std::span<const uint8_t, 4> P(&Image.Pixels[I * 4], 4);
             if (std::abs((int)P[2] - (int)ZByte(P[0], P[1])) <= 12) Fit++;
         }
         if ((double)Fit >= 0.97 * (double)Count) return false;
         for (size_t I = 0; I < Count; I++)
         {
-            uint8_t* P = &Image.Pixels[I * 4];
+            const std::span<uint8_t, 4> P(&Image.Pixels[I * 4], 4);
             P[2] = ZByte(P[0], P[1]);
         }
         return true;

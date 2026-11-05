@@ -190,7 +190,7 @@ namespace PoolCoverage
                 }
             }
             if (Eq == std::string::npos || Eq == 0 || Eq + 1 >= Line.size() || Line[Eq + 1] < '0' || Line[Eq + 1] > '9') continue;
-            R.Counters[Line.substr(0, Eq)] = static_cast<size_t>(std::strtoull(Line.c_str() + Eq + 1, nullptr, 10));
+            R.Counters[Line.substr(0, Eq)] = static_cast<size_t>(std::strtoull(&Line[Eq + 1], nullptr, 10));
         }
         if (const auto It = R.Counters.find("zones"); It != R.Counters.end()) R.Zones = It->second;
         return R;
@@ -286,7 +286,7 @@ namespace PoolCoverage
                 size_t Entries = 0, Failed = 0;
                 const auto Number = [&](const char* Key, size_t& Into) {
                     const size_t At = Cell[3].find(Key);
-                    if (At != std::string::npos) Into = static_cast<size_t>(std::strtoull(Cell[3].c_str() + At + std::strlen(Key), nullptr, 10));
+                    if (At != std::string::npos) Into = static_cast<size_t>(std::strtoull(&Cell[3][At + std::strlen(Key)], nullptr, 10));
                 };
                 Number("entries=", Entries);
                 Number("failed=", Failed);
@@ -309,7 +309,7 @@ namespace PoolCoverage
             else if (Cell[0] == "gate.file")
             {
                 size_t Root = 0;
-                if (const size_t At = Cell[3].find("root="); At != std::string::npos) Root = static_cast<size_t>(std::strtoull(Cell[3].c_str() + At + 5, nullptr, 10));
+                if (const size_t At = Cell[3].find("root="); At != std::string::npos) Root = static_cast<size_t>(std::strtoull(&Cell[3][At + 5], nullptr, 10));
                 G.Files.emplace_back(Root, Cell[1]);
             }
             else if (Cell[2] == "incomplete") G.Incomplete++;

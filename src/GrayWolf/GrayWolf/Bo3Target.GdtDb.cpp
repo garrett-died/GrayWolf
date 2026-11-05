@@ -956,7 +956,7 @@ namespace Bo3Target::GdtDb
                 const bool First = CopyForReading(Src / "gdt.db", C1, F1, Error);
                 const std::wstring Name = F1.filename().wstring();
                 const size_t Cut = Name.rfind(L'_');
-                const unsigned long N = First && Cut != std::wstring::npos ? std::wcstoul(Name.c_str() + Cut + 1, nullptr, 10) : 0;
+                const unsigned long N = First && Cut != std::wstring::npos ? std::wcstoul(&Name[Cut + 1], nullptr, 10) : 0;
                 const fs::path Taken = F1.parent_path() / (Name.substr(0, Cut + 1) + std::to_wstring(N + 1));
                 const fs::path Taken2 = F1.parent_path() / (Name.substr(0, Cut + 1) + std::to_wstring(N + 2));
                 fs::create_directories(Taken, Ec);

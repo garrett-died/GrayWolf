@@ -15,13 +15,15 @@ Usage:
     python tools/safety_gate.py --diff master    # the branch's changes since master (merge base)
     python tools/safety_gate.py --files a.cpp b.h --all-lines   # whole files: the debt they hold
     options: --jobs N, --no-query, --tidy <clang-tidy.exe>, --report <file>
-Exit code 1 when a finding is left, 0 otherwise, 2 on a setup error.
+Exit code 1 when a finding is left, 2 on a setup error, a tool failure or a unit clang could not parse
+(the analysis is then incomplete), 0 otherwise.
 """
 
 import fnmatch
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -84,7 +86,7 @@ def units_for(rel):
 
 def compile_command(src, vcpkg):
     inst = Path(vcpkg) / "installed" / "x64-windows-static-md" / "include"
-    common = ("/nologo /W3 /Od /D CODE_ANALYSIS /D _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS /D FLAC__NO_DLL "
+    common = ("/nologo /W3 /Od /D CODE_ANALYSIS /D _CRT_USE_BUILTIN_OFFSETOF /D _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS /D FLAC__NO_DLL "
               "/EHa /MD /GS /fp:precise /std:c++20 /Gd /TP --target=amd64-pc-windows-msvc /utf-8 ")
     if CORE in src.parents:
         return (f'"CL.exe" /c /I"{CORE}" /I"{inst}" /I"{inst / "opus"}" '
@@ -131,6 +133,12 @@ def main():
         return 2
     tidy = opt("--tidy", str(LLVM / "clang-tidy.exe"))
     query = str(LLVM / "clang-query.exe")
+    if "--no-query" not in args and not Path(query).exists():
+        query = shutil.which("clang-query") or ""
+        if not query:
+            print("safety-gate: clang-query not found beside clang-tidy or on PATH (use --no-query to skip the query half)",
+                  file=sys.stderr)
+            return 2
     exempt = json.loads((REPO / "tools" / "safety-gate.json").read_text(encoding="utf-8"))["exempt"]
 
     units = sorted({u for f in files for u in units_for(f)})
@@ -154,19 +162,23 @@ def main():
         if not all_lines:
             cmd.insert(3, f"--line-filter={line_filter}")
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-        outs.append(("tidy", r.stdout + r.stderr))
+        outs.append(("tidy", r.stdout + r.stderr, r.returncode))
         if "--no-query" not in args:
             r = subprocess.run([query, f"-p={db}", "-f", str(REPO / "tools" / "safety-gate.query"), entry["file"]],
                                capture_output=True, text=True, encoding="utf-8", errors="replace")
-            outs.append(("query", r.stdout + r.stderr))
+            outs.append(("query", r.stdout + r.stderr, r.returncode))
         return entry["file"], outs
 
     findings = {}
     parse_errors = []
+    tool_failures = []
     with ThreadPoolExecutor(int(opt("--jobs", "8"))) as ex:
         for unit, outs in ex.map(run, entries):
-            for kind, text in outs:
+            for kind, text, code in outs:
                 lines = text.splitlines()
+                # clang-tidy also exits non-zero on plain diagnostics, so only a run that printed none failed
+                if code != 0 and (kind == "query" or not any(DIAG.match(line) for line in lines)):
+                    tool_failures.append(f"{kind} exit {code} on {Path(unit).name}: {text.strip()[:200]}")
                 for i, line in enumerate(lines):
                     m = DIAG.match(line) if kind == "tidy" else BIND.match(line)
                     if not m:
@@ -199,10 +211,14 @@ def main():
     if parse_errors:
         text += "\n\nclang could not parse part of a unit (findings past the error may be missing):\n  " + \
                 "\n  ".join(sorted(set(parse_errors))[:10])
+    if tool_failures:
+        text += "\n\nan analyzer failed, so this result is incomplete:\n  " + "\n  ".join(sorted(set(tool_failures))[:10])
     if opt("--report"):
         Path(opt("--report")).write_text(text + "\n", encoding="utf-8")
     print(text if text.strip() else "safety-gate: no finding on the changed lines.")
-    return 1 if findings else 0
+    if findings:
+        return 1
+    return 2 if parse_errors or tool_failures else 0
 
 
 if __name__ == "__main__":

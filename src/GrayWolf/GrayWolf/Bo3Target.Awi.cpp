@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <format>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <sstream>
 
@@ -204,7 +205,7 @@ namespace Bo3Target::Awi
             char* End = nullptr;
             Out = std::strtod(T.c_str(), &End);
             // "0.25f" style suffixes
-            return End != T.c_str() && (*End == '\0' || ((*End == 'f') && End[1] == '\0'));
+            return End != T.c_str() && (*End == '\0' || ((*End == 'f') && *std::next(End) == '\0'));
         }
 
         void ParseOptions(const std::string& Text, Entry& E)

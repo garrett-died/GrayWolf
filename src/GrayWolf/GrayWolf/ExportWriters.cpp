@@ -111,7 +111,7 @@ namespace ExportWriters
 
     namespace
     {
-        std::mutex WrittenImagesLock;
+        std::mutex WrittenImagesLock;   // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the lock of the written-images set, shared by the export threads
         std::unordered_set<std::wstring>& WrittenImages()
         {
             static std::unordered_set<std::wstring> All;

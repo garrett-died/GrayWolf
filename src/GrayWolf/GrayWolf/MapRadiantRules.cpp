@@ -62,7 +62,7 @@ StaticBoundsResult StaticModelBounds(const std::vector<StaticPlacementBox>& Plac
 
 std::string PatchTexture(double U, double V) { return "t " + RadiantNumber(U * 1024.0) + " " + RadiantNumber(V * 1024.0); }
 std::string PatchRunningTexture(double RunU, double RunV) { return "t " + RadiantNumber(RunU) + " " + RadiantNumber(-RunV); }
-std::string PatchColour(const uint8_t C[4])
+std::string PatchColour(const uint8_t (&C)[4])
 {
     if (C[0] == 255 && C[1] == 255 && C[2] == 255 && C[3] == 255) return std::string();
     return " c " + std::to_string(C[0]) + " " + std::to_string(C[1]) + " " + std::to_string(C[2]) + " " + std::to_string(C[3]);
@@ -334,7 +334,7 @@ std::string ContentsKeywords(uint32_t Contents)
 namespace
 {
     std::string Pair(const std::string& Key, const std::string& Value) { return "\"" + Key + "\" \"" + Value + "\"\n"; }
-    std::string Three(const float V[3]) { return RadiantNumber(V[0]) + " " + RadiantNumber(V[1]) + " " + RadiantNumber(V[2]); }
+    std::string Three(const float (&V)[3]) { return RadiantNumber(V[0]) + " " + RadiantNumber(V[1]) + " " + RadiantNumber(V[2]); }
 }
 
 namespace
@@ -401,7 +401,7 @@ std::string LightEntityKeys(const Light& L, const std::string& Prefix)
     return S;
 }
 
-std::string StaticModelAngles(const float Axis[9])
+std::string StaticModelAngles(const float (&Axis)[9])
 {
     constexpr double Deg = 180.0 / 3.14159265358979323846;
     const double Fx = Axis[0], Fy = Axis[1], Fz = Axis[2], Lx = Axis[3], Ly = Axis[4], Lz = Axis[5], Uz = Axis[8];

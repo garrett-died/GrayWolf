@@ -28,6 +28,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <span>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
@@ -364,19 +365,20 @@ namespace
                     const std::string& Only, RadiantStats& Stats, const Texturing& Tex = {})
     {
         Brush Moved = B;
+        const std::span<const float> Ax(Axis, Axis ? 9 : 0), Or(Origin, Origin ? 3 : 0);
         if (Origin)
         {
             for (auto& S : Moved.Sides)
             {
                 // a plane N . p = D moved by p' = Axis^T p + O: N' = Axis^T N, D' = D + N' . O
                 const float N[3] = { S.Normal[0], S.Normal[1], S.Normal[2] };
-                for (int K = 0; K < 3; K++) S.Normal[K] = N[0] * Axis[K] + N[1] * Axis[3 + K] + N[2] * Axis[6 + K];
-                S.Dist += S.Normal[0] * Origin[0] + S.Normal[1] * Origin[1] + S.Normal[2] * Origin[2];
+                for (int K = 0; K < 3; K++) S.Normal[K] = N[0] * Ax[K] + N[1] * Ax[3 + K] + N[2] * Ax[6 + K];
+                S.Dist += S.Normal[0] * Or[0] + S.Normal[1] * Or[1] + S.Normal[2] * Or[2];
             }
             for (size_t K = 0; K + 2 < Moved.Vertices.size(); K += 3)
             {
                 const float P[3] = { Moved.Vertices[K], Moved.Vertices[K + 1], Moved.Vertices[K + 2] };
-                for (int J = 0; J < 3; J++) Moved.Vertices[K + J] = P[0] * Axis[J] + P[1] * Axis[3 + J] + P[2] * Axis[6 + J] + Origin[J];
+                for (int J = 0; J < 3; J++) Moved.Vertices[K + J] = P[0] * Ax[J] + P[1] * Ax[3 + J] + P[2] * Ax[6 + J] + Or[J];
             }
         }
         const std::string Keywords = Tools.Keywords && Only.empty() ? ContentsKeywords(Moved.Contents) : std::string();
@@ -1665,7 +1667,7 @@ int RadiantWriterSelfTest(std::string& Failures)
         Brush B;
         B.Contents = 0x2081;   // solid, weaponClip, detail
         const float C[8][3] = { { X0, Y0, Z0 }, { X1, Y0, Z0 }, { X1, Y1, Z0 }, { X0, Y1, Z0 }, { X0, Y0, Z1 }, { X1, Y0, Z1 }, { X1, Y1, Z1 }, { X0, Y1, Z1 } };
-        for (const auto& P : C) B.Vertices.insert(B.Vertices.end(), P, P + 3);
+        for (const auto& P : C) B.Vertices.insert(B.Vertices.end(), std::begin(P), std::end(P));
         // only three of the six sides: the hull's other faces lie on none
         const auto Side = [&B](float Nx, float Ny, float Nz, float D) {
             BrushSide S;
@@ -1753,14 +1755,14 @@ int RadiantWriterSelfTest(std::string& Failures)
         for (size_t At = Text.find("\n ( "); At != std::string::npos; At = Text.find("\n ( ", At + 1))
         {
             double V[9];
-            const char* P = Text.c_str() + At + 1;
+            size_t P = At + 1;
             int Got = 0;
-            for (; *P && *P != '\n' && Got < 9; P++)
+            for (; P < Text.size() && Text[P] != '\n' && Got < 9; P++)
             {
-                if (*P == '(' || *P == ')' || *P == ' ') continue;
+                if (Text[P] == '(' || Text[P] == ')' || Text[P] == ' ') continue;
                 char* End = nullptr;
-                V[Got++] = std::strtod(P, &End);
-                P = End - 1;
+                V[Got++] = std::strtod(&Text[P], &End);
+                P = static_cast<size_t>(End - Text.c_str()) - 1;
             }
             if (Got != 9) continue;
             Faces++;
@@ -1780,7 +1782,7 @@ int RadiantWriterSelfTest(std::string& Failures)
             {
                 const double A = 2 * 3.14159265358979323846 * K / 32, R = Z == 1 ? 300.0 : 256.0;
                 const float P[3] = { (float)(R * std::cos(A)), (float)(R * std::sin(A)), (float)(Z * 64.0) };
-                B.Vertices.insert(B.Vertices.end(), P, P + 3);
+                B.Vertices.insert(B.Vertices.end(), std::begin(P), std::end(P));
             }
         Scene.Collision.Brushes.push_back(B);
         RadiantStats Stats;
@@ -1845,7 +1847,7 @@ int RadiantWriterSelfTest(std::string& Failures)
         Scene.Collision.Models.resize(2);
         Scene.Collision.Models[1].push_back(Box(0, 0, 0, 32, 32, 32));
         const float Tri[9] = { 0, 0, 900, 64, 0, 900, 0, 64, 900 };
-        Scene.Collision.Vertices.assign(Tri, Tri + 9);
+        Scene.Collision.Vertices.assign(std::begin(Tri), std::end(Tri));
         Scene.Collision.Triangles = { 0, 1, 2 };
         Mesh World;
         World.Name = "world";
