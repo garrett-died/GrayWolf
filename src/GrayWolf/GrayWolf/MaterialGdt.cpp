@@ -1,6 +1,10 @@
 #include "stdafx.h"
 
 #include "MaterialGdt.h"
+#include "WraithModel.h"
+#include "XMEExport.h"
+#include <stdexcept>
+#include <thread>
 
 #include "DiskGame.h"
 #include <optional>
@@ -33,7 +37,7 @@ namespace MaterialGdt
 {
 namespace
 {
-    std::atomic<bool> UseAssetNames{ false };
+    thread_local bool UseAssetNames = false;     // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): per-thread run state, not shared;     // per thread: the run that sets it is the thread that reads it (as LiveExport's ModelFiles); two runs at once do not share it
 
     // APE writes an entry's keys sorted, case aside
     bool KeyLess(const std::string& A, const std::string& B)
@@ -110,6 +114,36 @@ std::string AssetName(const std::string& Source)
     const size_t First = Out.find_first_not_of('_');
     if (First == std::string::npos) return std::string();
     return Out.substr(First, Out.find_last_not_of('_') - First + 1);
+}
+
+std::string EntryName(const std::string& Source)
+{
+    return Bo3Target::Placement::Shorten(AssetName(Source));
+}
+
+void NameModelMaterials(WraithModel& Model, std::vector<std::string>& Saved)
+{
+    Saved.clear();
+    for (WraithMaterial& Material : Model.Materials)
+    {
+        Saved.push_back(Material.MaterialName);
+        Material.MaterialName = EntryName(Material.MaterialName);
+    }
+}
+
+void RestoreModelMaterialNames(WraithModel& Model, const std::vector<std::string>& Saved)
+{
+    for (size_t I = 0; I < Saved.size() && I < Model.Materials.size(); ++I) Model.Materials[I].MaterialName = Saved[I];
+}
+
+ScopedModelMaterialNames::ScopedModelMaterialNames(WraithModel& Model, bool On) : Model(Model), On(On)
+{
+    if (On) NameModelMaterials(Model, Saved);
+}
+
+ScopedModelMaterialNames::~ScopedModelMaterialNames()
+{
+    if (On) RestoreModelMaterialNames(Model, Saved);
 }
 
 bool IsDecoratedImageName(const std::string& Stem)
@@ -258,6 +292,16 @@ void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Ma
 {
     AddDir = Dir;
     const std::string Name = AssetName(D.Name);
+    const std::string& SkipWhy = D.SkipWhy;
+    if (!SkipWhy.empty())
+    {
+        // the game's adapter said this material is not exported (BO3 *_combo images, HydraX D-13): no entry, no image, a row in the report
+        Counter("skipped_by_game_rule")++;
+        const size_t Colon = SkipWhy.find(':');
+        SkippedMaterials.push_back({ Name, { "material.skipped_" + SkipWhy.substr(0, Colon), "game=" + Game + ", " + (Colon == std::string::npos ? std::string() : SkipWhy.substr(Colon + 1)),
+                                             "the game's own rule says this material is not exported (HydraX D-13: an image named *_combo makes it an unusable duplicate)" } });
+        return;
+    }
     if (Name.empty())
     {
         Counter("unnamed")++;
@@ -293,6 +337,13 @@ void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Ma
         // positive evidence: a word was read and names no surface. Every <none> carries a row, so the gate can tell this from a word never read.
         Counter("surface_none_in_source")++;
         M.Notes.push_back({ "material.surface_none_in_source", "game=" + Game, "the source's surface word was read and names no surface type: <none> is the source's own value" });
+    }
+    else if (D.SurfaceWhy.rfind("no_bo3_use:", 0) == 0)
+    {
+        // the game names a surface type that no stock BO3 material uses (HydraX writes <none> for BO4 player and riotshield): <none>, said in a row
+        Counter("surface_no_bo3_use")++;
+        M.Notes.push_back({ "material.surface_no_bo3_use", "game=" + Game + ", source_surface=" + D.SurfaceWhy.substr(11),
+                            "no stock BO3 material entry uses this surface type: <none>, as HydraX writes it" });
     }
     else
     {
@@ -634,7 +685,28 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
         }
         if (!Rq.HasRender) Counter("techset_render_class_unread")++;
     }
-    const Tc::Choice C = Tc::Choose(*Targets, Rq);
+    Tc::Choice C;
+    // Why the game's own techset name was not used (BO3): no techset, a name the reader did not get, or a name the catalog lacks
+    std::string NameFallback;
+    if (!D.TechsetWhy.empty()) NameFallback = D.TechsetWhy;
+    else if (!D.TechsetName.empty() && Targets->Find(D.TechsetName) == nullptr) NameFallback = "not_in_catalog";
+    const Tc::Techset* Own = D.TechsetName.empty() ? nullptr : Targets->Find(D.TechsetName);
+    // the weapon camo techsets are never written, whatever the game names (the Mod Tools cannot register them; the same exclusion as the name rules)
+    if (Own != nullptr && (Own->HasTrait(Tc::Trait::Camo) || Own->Name.find("camo") != std::string::npos))
+    {
+        NameFallback = "camo_excluded";
+        Own = nullptr;
+    }
+    if (Own != nullptr)
+    {
+        // the game names its techset in the catalog's terms (BO3): materialType is that techset, as HydraX takes it; no rule decides
+        C.Chosen = Own;
+        C.Used = Tc::Rule::Name;
+        C.Reason = "The material's own techset " + Own->Name + " (the source name cut at #) is in the catalog; the game states it, so it is taken as it is.";
+        Counter("techset_from_source_name")++;
+    }
+    else
+        C = Tc::Choose(*Targets, Rq);
     if (C.Chosen == nullptr)
     {
         M.Type = "lit";
@@ -647,7 +719,15 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
     Counter(std::string("techset_rule_") + Tc::RuleName(C.Used))++;
     // every chosen techset states its rule (graywolf_techset_rules.tsv), so Exact% can be counted
     M.Notes.push_back({ "material.techset_rule", std::string("rule=") + Tc::RuleName(C.Used) + ", exact=" + (C.Exact() ? "1" : "0") + ", source_techset=" + Rq.SourceTechset + ", result=" + T.Name, C.Reason });
-    if (!C.Exact())
+    if (!NameFallback.empty())
+    {
+        // the model that names this material still links: it is written by the slot rules, and the row says why and from which source name
+        Counter("techset_fallback")++;
+        Counter("techset_fallback_" + NameFallback)++;
+        M.Notes.push_back({ "material.techset_fallback", "reason=" + NameFallback + ", source_name=" + (Source != nullptr && !Source->Techset.empty() ? Source->Techset : D.TechsetName.empty() ? std::string("(none)") : D.TechsetName) +
+                            ", rule=" + Tc::RuleName(C.Used) + ", result=" + T.Name, C.Reason });
+    }
+    else if (!C.Exact())
     {
         Counter("techset_fallback")++;
         M.Notes.push_back({ "material.techset_fallback", std::string("rule=") + Tc::RuleName(C.Used) + ", source_techset=" + Rq.SourceTechset + ", result=" + T.Name, C.Reason });
@@ -952,6 +1032,7 @@ Builder::Resolved Builder::Resolve() const
 
     Resolved Out;
     Out.NameCollisions = NameCollisions;
+    Out.Skipped = SkippedMaterials;
     for (const auto& [Name, M] : Work)
     {
         const auto Used = Usage.find(M.Source);
@@ -1008,13 +1089,23 @@ std::vector<std::string> Builder::Entries(const char* Eol) const
 {
     const Resolved R = Resolve();
     std::vector<std::string> Out;
-    for (const auto& M : R.Materials) Out.push_back(Gdt::Entry(M.Name, "material.gdf", M.Fields, Eol));
+    // an image over 63 characters is named by EntryName and the material slots that name it follow (the publish step does the same)
+    std::map<std::string, std::string> Renamed;
+    for (const auto& I : R.ImagesOut)
+        if (EntryName(I.Name) != I.Name) Renamed[I.Name] = EntryName(I.Name);
+    for (const auto& M : R.Materials)
+    {
+        Gdt::Fields F = M.Fields;
+        for (auto& [Key, Value] : F)
+            if (const auto Hit = Renamed.find(Value); Hit != Renamed.end()) Value = Hit->second;
+        Out.push_back(Gdt::Entry(EntryName(M.Name), "material.gdf", F, Eol));
+    }
     for (const auto& I : R.ImagesOut)
     {
         Gdt::Fields F = I.Fields;
         for (auto& [Key, Value] : F)
             if (Key == "baseImage") Value = Gdt::Path(Value);
-        Out.push_back(Gdt::Entry(I.Name, "image.gdf", F, Eol));
+        Out.push_back(Gdt::Entry(EntryName(I.Name), "image.gdf", F, Eol));
     }
     return Out;
 }
@@ -1154,7 +1245,7 @@ void WriteForModels(const DiskGame::Context& C, DiskGame::Totals& T)
 
 bool ModelFilesUseAssetNames()
 {
-    return UseAssetNames.load();
+    return UseAssetNames;
 }
 
 int SelfTest(std::string& Failures)
@@ -1285,6 +1376,101 @@ int SelfTest(std::string& Failures)
         // a word never read is unknown, and gets no positive row
         Check(SurfaceOf("", "table_missing", Options, Note, Counters) == "<none>" && Note == "material.surface_unknown" && Counters["t_surface_unknown_table_missing"] == 1, "table_missing is unknown with a surface_unknown row", Note);
         Check(SurfaceOf("", "", Options, Note, Counters) == "<none>" && Counters["t_surface_unknown_not_read"] == 1, "a reader that gives nothing counts as not_read", "");
+        Check(SurfaceOf("", "no_bo3_use:player", Options, Note, Counters) == "<none>" && Note == "material.surface_no_bo3_use" && Counters["t_surface_no_bo3_use"] == 1,
+              "a surface no stock BO3 material uses is <none> with its own row, not unknown", Note);
+    }
+    // HydraX D-13: the BO3 adapter says a material with a *_combo image is not exported; the builder writes no entry and no image and reports it
+    {
+        Materials::Source Src;
+        Src.Name = "mtl_dup";
+        Src.Techset = ",mc/lit#e6142445";
+        Src.Images.push_back({ "../images/i_mtl_dup_combo.png", Materials::Role::Unknown, 0, 0 });
+        const Materials::Description Skipped = Materials::AdapterFor("T7").Describe(Src);
+        Materials::Source Plain;
+        Plain.Name = "mtl_ok";
+        Plain.Techset = ",mc/lit#e6142445";
+        Plain.Images.push_back({ "../images/i_mtl_ok_combo_not.png", Materials::Role::Unknown, 0, 0 });
+        Plain.Images.push_back({ "../images/I_MTL_OK_c.png", Materials::Role::Unknown, 0, 0 });
+        Plain.Images.push_back({ "../images/I_MTL_OK_COMBO.png", Materials::Role::Unknown, 0, 0 });     // the test is ordinal: another case is not _combo
+        const Materials::Description Kept = Materials::AdapterFor("T7").Describe(Plain);
+        Check(Skipped.SkipWhy.rfind("combo_image:", 0) == 0 && Kept.SkipWhy.empty(), "the BO3 adapter skips a material whose image name ends in _combo (ordinal, as HydraX), and no other", Skipped.SkipWhy + " | " + Kept.SkipWhy);
+        Check(Materials::AdapterFor("bo4").Describe(Src).SkipWhy.empty(), "the rule is the BO3 adapter's: another game's adapter does not skip", "");
+        Builder B(Base, "t_");
+        B.TechsetData(&Data);
+        Materials::Description D = Make("mtl_dup", 0);
+        D.SkipWhy = Skipped.SkipWhy;
+        B.Add(D, Dir, &Src, "bo3");
+        const auto R = B.Resolve();
+        Check(R.Materials.empty() && R.ImagesOut.empty() && R.Skipped.size() == 1 && R.Skipped[0].second.Code == "material.skipped_combo_image" && B.Counters().at("t_skipped_by_game_rule") == 1,
+              "a skipped material has no entry, no image, one report row and a counter", std::to_string(R.Materials.size()) + "/" + std::to_string(R.Skipped.size()));
+    }
+    // BO3 takes materialType from the source techset's name; a name the catalog lacks, or no techset, is written by the slot rules with a
+    // material.techset_fallback row (a published model names the material, so it is not skipped)
+    {
+        Materials::Source Src;
+        Src.Name = "mtl_named";
+        Src.Techset = ",mc/lit_advanced#e6142445";
+        Src.Images.push_back({ "../images/i_mtl_named_c.png", Materials::Role::Unknown, 0xA0AB1041u, 0 });
+        const Materials::Description Named = Materials::AdapterFor("T7").Describe(Src);
+        Src.Techset = "mc/no_such_techset_zz#1";
+        const Materials::Description Unknown = Materials::AdapterFor("T7").Describe(Src);
+        Src.Techset.clear();
+        const Materials::Description None = Materials::AdapterFor("T7").Describe(Src);
+        Src.Techset = "<unreadable>";
+        const Materials::Description Unread = Materials::AdapterFor("T7").Describe(Src);
+        Check(Named.TechsetName == "lit_advanced" && Named.SkipWhy.empty() && Named.TechsetWhy.empty() && None.SkipWhy.empty() && None.TechsetName.empty() && None.TechsetWhy == "no_techset" &&
+              Unread.SkipWhy.empty() && Unread.TechsetName.empty() && Unread.TechsetWhy == "name_unread",
+              "the BO3 adapter names the techset (folder, # and the leading comma cut); no techset and an unread name stay apart and neither skips the material", Named.TechsetName + " | " + None.TechsetWhy + " | " + Unread.TechsetWhy);
+        Check(Materials::AdapterFor("bo4").Describe(Src).TechsetName.empty(), "another game's adapter sets no techset name", "");
+        const auto Run = [&](const Materials::Description& Described, Builder::Resolved& R) {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            Materials::Description D = Make("mtl_named", 0);
+            D.TechsetName = Described.TechsetName;
+            D.TechsetWhy = Described.TechsetWhy;
+            D.SkipWhy = Described.SkipWhy;
+            B.Add(D, Dir, nullptr, "bo3");
+            R = B.Resolve();
+        };
+        {
+            // the game rules ride in the sidecar: the publish step builds from the file, not from the adapter
+            Materials::Sidecar Side, Back;
+            Side.Game = "BO3";
+            Side.Adapter = "bo3";
+            Side.Materials.push_back(Named);
+            Side.Materials.back().SkipWhy = "combo_image:image=x";
+            Side.Materials.back().TechsetWhy = "no_techset";
+            const std::string SidePath = (Dir / "rules.materials.json").string();
+            const bool Wrote = Materials::WriteSidecar(SidePath, Side), Read = Materials::ReadSidecar(SidePath, Back);
+            Check(Wrote && Read && Back.Materials.size() == 1 && Back.Materials[0].TechsetName == "lit_advanced" && Back.Materials[0].SkipWhy == "combo_image:image=x" && Back.Materials[0].TechsetWhy == "no_techset",
+                  "the sidecar keeps a game's techset name and skip reason", std::format("{} {}", Wrote, Read));
+        }
+        Builder::Resolved Rn, Ru, Rz, Rr;
+        Run(Named, Rn);
+        Run(Unknown, Ru);
+        Run(None, Rz);
+        Run(Unread, Rr);
+        const auto FallbackRow = [](const Builder::Resolved& R) {
+            if (R.Materials.size() == 1)
+                for (const auto& N : R.Materials[0].Notes)
+                    if (N.Code == "material.techset_fallback" && N.Detail.rfind("reason=", 0) == 0) return N.Detail;
+            return std::string();
+        };
+        Check(Rn.Materials.size() == 1 && Value(Rn.Materials[0], "materialType") == "lit_advanced", "a named BO3 techset is the materialType whatever the slots would pick", Rn.Materials.empty() ? "" : Value(Rn.Materials[0], "materialType"));
+        Check(Ru.Materials.size() == 1 && Ru.Skipped.empty() && FallbackRow(Ru).find("reason=not_in_catalog") != std::string::npos && FallbackRow(Ru).find("no_such_techset_zz") != std::string::npos,
+              "a BO3 techset the catalog lacks is not skipped: slot rules and a techset_fallback row naming the source", FallbackRow(Ru));
+        Check(Rz.Materials.size() == 1 && FallbackRow(Rz).find("reason=no_techset") != std::string::npos && Rr.Materials.size() == 1 && FallbackRow(Rr).find("reason=name_unread") != std::string::npos,
+              "no techset and an unread name are not skipped either, and the rows tell them apart", FallbackRow(Rz) + " | " + FallbackRow(Rr));
+        {
+            // a camo techset named by the game is never written: slot rules, a fallback row (",mc/lit_weapon_camo#..." cuts to lit_weapon_camo)
+            Src.Techset = ",mc/lit_weapon_camo#e6142445";
+            const Materials::Description Camo = Materials::AdapterFor("T7").Describe(Src);
+            Builder::Resolved Rc;
+            Run(Camo, Rc);
+            Check(Camo.TechsetName == "lit_weapon_camo" && Rc.Materials.size() == 1 && Value(Rc.Materials[0], "materialType").find("camo") == std::string::npos &&
+                  FallbackRow(Rc).find("reason=camo_excluded") != std::string::npos,
+                  "a camo techset named by the game is not written: slot rules and a techset_fallback row", Rc.Materials.empty() ? "" : Value(Rc.Materials[0], "materialType") + " | " + FallbackRow(Rc));
+        }
     }
     // colour plus normal: lit; every key of the techset and the stock defaults are written
     {
@@ -1762,17 +1948,101 @@ int SelfTest(std::string& Failures)
         Check(!IsDecoratedImageName("warning@col") && !IsDecoratedImageName("a-b c.d") && !IsDecoratedImageName("feedbabe") && !IsDecoratedImageName("12345678") && !IsDecoratedImageName("decade0") && !IsDecoratedImageName("$occlusion_black"),
               "@ - space . $ and non-hash tokens do not make a name decorated", "");
         Check(AssetName("warning@col") == "warning_col", "warning@col is cleaned to warning_col as before", AssetName("warning@col"));
+        {
+            // The real model writer (XME, after the step LiveExport takes while a material GDT is written) and the real GDT writer (Builder::Entries) on one
+            // 70-character source name: the MATERIAL line of the model and the material entry of the GDT must be the same shortened name.
+            const std::string LongName = "Mtl_P8_Zm_Some_Really_Long_Material_Name_For_A_Dirty_Decal_Past_63_Yes";
+            WraithModel Model;
+            WraithMaterial& Mat = Model.AddMaterial();
+            Mat.MaterialName = LongName;
+            WraithSubmesh& Sub = Model.AddSubmesh();      // the writer lists the materials its submeshes use
+            Sub.AddMaterial(0);
+            for (int V = 0; V < 3; V++)
+            {
+                WraithVertex& Vert = Sub.AddVertex();
+                Vert.Position = Vector3(static_cast<float>(V), 0.0f, 0.0f);
+                Vert.Normal = Vector3(0, 0, 1);
+                Vert.AddUVLayer(0.0f, 0.0f);
+            }
+            Sub.AddFace(0, 1, 2);
+            std::vector<std::string> Saved;
+            NameModelMaterials(Model, Saved);
+            const fs::path XmePath = Dir / "long_name.XMODEL_EXPORT";
+            CodXME::ExportXME(Model, XmePath.string());
+            std::ifstream XmeIn(XmePath, std::ios::binary);
+            const std::string XmeText((std::istreambuf_iterator<char>(XmeIn)), std::istreambuf_iterator<char>());
+            std::string OnModel;
+            const std::string Marker = "MATERIAL 0 \"";
+            if (const size_t At = XmeText.find(Marker); At != std::string::npos)
+                OnModel = XmeText.substr(At + Marker.size(), XmeText.find('"', At + Marker.size()) - (At + Marker.size()));
+            Builder Long(Base, "t_");
+            Long.TechsetData(&Data);
+            Long.Add(Make(LongName.c_str(), 0), Dir, nullptr, "bo4");
+            std::string OnEntry;
+            for (const std::string& E : Long.Entries("\n"))
+                if (E.find("material.gdf") != std::string::npos)
+                {
+                    const size_t Open = E.find('"');
+                    OnEntry = E.substr(Open + 1, E.find('"', Open + 1) - Open - 1);
+                }
+            Check(LongName.size() == 70 && OnModel.size() == 63 && OnModel == OnEntry && OnModel.rfind("mtl_p8_zm_some_really_long", 0) == 0,
+                  "a 70-character material name is the same 63-character name in the model file and in the GDT entry", OnModel + " | " + OnEntry);
+            RestoreModelMaterialNames(Model, Saved);
+            Check(Model.Materials[0].MaterialName == LongName, "the model's own name is put back after the files are written", "");
+            // a writer that throws still leaves the caller's model with its own names
+            bool Threw = false;
+            try
+            {
+                const ScopedModelMaterialNames Scoped(Model, true);
+                Check(Model.Materials[0].MaterialName.size() == 63, "inside the scope the model carries the GDT names", Model.Materials[0].MaterialName);
+                throw std::runtime_error("writer failed");
+            }
+            catch (const std::runtime_error&)
+            {
+                Threw = true;
+            }
+            Check(Threw && Model.Materials[0].MaterialName == LongName, "an exception from a writer does not leave the model renamed", Model.Materials[0].MaterialName);
+            {
+                const ScopedModelMaterialNames Off(Model, false);
+                Check(Model.Materials[0].MaterialName == LongName, "a scope that is off changes nothing", "");
+            }
+            // two exports at once: each thread has its own naming mode
+            std::atomic<int> Ready{ 0 }, Done{ 0 };
+            bool SeenOn = false, SeenOff = true;
+            std::thread A([&] {
+                const AssetNamesInModelFiles On(true);
+                Ready++;
+                while (Ready.load() < 2) std::this_thread::yield();
+                SeenOn = ModelFilesUseAssetNames();
+                Done++;
+                while (Done.load() < 2) std::this_thread::yield();
+                SeenOn = SeenOn && ModelFilesUseAssetNames();
+            });
+            std::thread B([&] {
+                const AssetNamesInModelFiles Off(false);
+                Ready++;
+                while (Ready.load() < 2) std::this_thread::yield();
+                SeenOff = ModelFilesUseAssetNames();
+                Done++;
+                while (Done.load() < 2) std::this_thread::yield();
+                SeenOff = SeenOff || ModelFilesUseAssetNames();
+            });
+            A.join();
+            B.join();
+            Check(SeenOn && !SeenOff && !ModelFilesUseAssetNames(), "two exports at once keep their own naming mode, and the caller's is untouched", std::format("{} {}", SeenOn, SeenOff));
+        }
     }
     fs::remove_all(Dir, Ec);
     return Failed;
 }
 
-AssetNamesInModelFiles::AssetNamesInModelFiles(bool On) : Was(UseAssetNames.exchange(On))
+AssetNamesInModelFiles::AssetNamesInModelFiles(bool On) : Was(UseAssetNames)
 {
+    UseAssetNames = On;
 }
 
 AssetNamesInModelFiles::~AssetNamesInModelFiles()
 {
-    UseAssetNames.store(Was);
+    UseAssetNames = Was;
 }
 }

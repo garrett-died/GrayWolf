@@ -126,7 +126,7 @@ namespace Bo4DiskExport
     struct AssetRef { std::string OwnerType; int64_t Owner = 0; std::string TargetType; int64_t Target = 0; };
     std::vector<AssetRef> AssetRefs(const ZoneAssets& Assets);
 
-    struct MaterialImage { uint64_t Material = 0; uint32_t Slot = 0, Semantic = 0; uint64_t Image = 0; };
+    struct MaterialImage { uint64_t Material = 0; uint32_t Slot = 0, Semantic = 0; uint64_t Image = 0; uint32_t Format = 0; /* DXGI format of the image header (+0x64) when this zone holds the header, else 0 */ };
     std::vector<MaterialImage> MaterialImages(ByteView Zone, const ZoneAssets& Assets);
 
     // A zone's materials: name hash -> its images (image name hash, semantic hash) in slot order,
@@ -134,6 +134,7 @@ namespace Bo4DiskExport
     struct BookMaterial
     {
         std::vector<std::pair<uint64_t, uint32_t>> Images;
+        std::vector<uint32_t> Formats;                 // the DXGI format of each image (parallel to Images), 0 when the zone holds only a stub header of it
         uint64_t Techset = 0;
         std::vector<uint8_t> Constants;
         int64_t SurfaceFlags = -1, RenderFlags = -1;   // the material's surface flags (+0x28), its techset's renderFlags (+0x20); -1 when the zone does not hold them

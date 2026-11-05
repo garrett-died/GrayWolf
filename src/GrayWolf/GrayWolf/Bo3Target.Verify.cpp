@@ -133,6 +133,7 @@ namespace Bo3Target::Verify
             bool HaveAwi = false;
             // material asset (lower case) -> the reason its surfaceType is <none>, from graywolf_approximations.tsv
             std::map<std::string, std::string> SurfaceWhy;
+            std::map<std::string, std::string> SkippedWhy;      // asset (lower case) -> "code detail" of a material.skipped_* row: the exporter left this material out on purpose
             bool HaveApproximations = false;
 
             explicit Context(const Inputs& I) : In(I)
@@ -148,10 +149,10 @@ namespace Bo3Target::Verify
                     std::vector<std::string> Cells;
                     std::istringstream Row(Line);
                     for (std::string Cell; std::getline(Row, Cell, '\t');) Cells.push_back(Cell);
-                    if (Cells.size() < 3 || Cells[0].rfind("material.surface_", 0) != 0) continue;
+                    if (Cells.size() < 3 || (Cells[0].rfind("material.surface_", 0) != 0 && Cells[0].rfind("material.skipped_", 0) != 0)) continue;
                     std::string Asset = Cells[1];
                     for (char& Ch : Asset) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
-                    SurfaceWhy[Asset] = Cells[0] + " " + Cells[2];
+                    (Cells[0].rfind("material.skipped_", 0) == 0 ? SkippedWhy : SurfaceWhy)[Asset] = Cells[0] + " " + Cells[2];
                 }
             }
 
@@ -1148,7 +1149,7 @@ namespace Bo3Target::Verify
                         const auto Why = C.SurfaceWhy.find(Key);
                         // positive evidence only: a <none> passes (Info) only with a material.surface_none_in_source row, written when the word was read and names none.
                         // A reported unknown or unmapped is a failure with its reason; no row (no file, a truncated file, a file of an older build) is a failure.
-                        if (Why != C.SurfaceWhy.end() && Why->second.rfind("material.surface_none_in_source", 0) == 0)
+                        if (Why != C.SurfaceWhy.end() && (Why->second.rfind("material.surface_none_in_source", 0) == 0 || Why->second.rfind("material.surface_no_bo3_use", 0) == 0))
                             C.Add("material.surface_type", E.Id(), Severity::Info, "surfaceType is <none> and the export states why: " + Why->second);
                         else if (Why != C.SurfaceWhy.end())
                             C.Fail("material.surface_type", E, "surfaceType is <none> and the export reports why: " + Why->second);
@@ -1615,8 +1616,12 @@ namespace Bo3Target::Verify
                             continue;
                         }
                         if (C.In.Held->Contains("material", Key) || C.In.Held->Contains("material.gdf", Key)) continue;
-                        C.Add("model.material_closure", Asset, Severity::Failure,
-                              "the model names material \"" + N + "\", which is in no GDT of this output and not in the Mod Tools gdt.db: the linker stops with \"Material " + N + " was not found in gdtDB\"");
+                        if (const auto Left = C.SkippedWhy.find(Key); Left != C.SkippedWhy.end())
+                            C.Add("model.material_closure", Asset, Severity::Failure,
+                                  "the model names material \"" + N + "\", which the exporter skipped on purpose (" + Left->second + ") and which is in no GDT of this output and not in the Mod Tools gdt.db: the linker stops with \"Material " + N + " was not found in gdtDB\"");
+                        else
+                            C.Add("model.material_closure", Asset, Severity::Failure,
+                                  "the model names material \"" + N + "\", which is in no GDT of this output and not in the Mod Tools gdt.db: the linker stops with \"Material " + N + " was not found in gdtDB\"");
                     }
                 }
             }
@@ -1712,7 +1717,12 @@ namespace Bo3Target::Verify
                     C.Judged("gdt.stock_pair");
                     const Entry& E = C.Entries[Idx.front()];
                     if (In.Held->Contains(E.Gdf + ".gdf", E.Name) || In.Held->Contains(E.Gdf, E.Name))
-                        C.Fail("gdt.stock_pair", E, "the Mod Tools gdt.db already holds this name as " + E.Gdf + " (a stock pair is never written)");
+                    {
+                        // The row blocks the name either way (the unfiltered catalog: a user's asset blocks a name too); only a stock row is called a stock pair.
+                        const bool Stock = In.Stock == nullptr || In.Stock->HoldsStockPair(E.Gdf, E.Name);
+                        C.Fail("gdt.stock_pair", E, Stock ? "the Mod Tools gdt.db already holds this name as " + E.Gdf + " (a stock pair is never written)"
+                                                          : "the Mod Tools gdt.db already holds this name as " + E.Gdf + " in a GDT that is not Treyarch's own (the owner's content or a re-saved library GDT): the name is taken, a second one is a duplicate asset");
+                    }
                     else if (In.Held->ContainsName(E.Name))
                     {
                         C.Judged("install.name_collision");
@@ -2401,6 +2411,9 @@ void GenerateUI( asset Asset )
         In.ModToolsRoot = Mod;
         In.Catalog = &Catalog;
         In.Held = &Held;
+        // the exporter says it left mtl_nowhere out on purpose: the closure failure must name that reason
+        Put(Base / "out" / "graywolf_approximations.tsv", "code\tasset\tdetail\tmessage\nmaterial.skipped_combo_image\tmtl_nowhere\tgame=bo3, image=i_x_combo\tleft out\n");
+        In.Approximations = Base / "out" / "graywolf_approximations.tsv";
         // hold the installed file open with no sharing, so the gate cannot read it
         const HANDLE Lock = ::CreateFileW((Mod / "texture_assets" / "t" / "locked.tif").c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         const Result R = Run(In);
@@ -2440,6 +2453,12 @@ void GenerateUI( asset Asset )
         // 3. model.material_closure
         Check(Count("model.material_closure", "xmodel_bin:model_export/m/ok_lod0.xmodel_bin") == 0, "closure: output materials (any case) and a gdt.db material pass", Describe());
         Check(Count("model.material_closure", "xmodel_bin:model_export/m/bad_lod0.xmodel_bin") == 1, "closure: a material in no GDT and not in the gdt.db fails once", Describe());
+        {
+            bool Named = false;
+            for (const Finding& F : R.Findings)
+                if (F.Check == "model.material_closure" && F.Asset == "xmodel_bin:model_export/m/bad_lod0.xmodel_bin" && F.Detail.find("skipped on purpose (material.skipped_combo_image") != std::string::npos) Named = true;
+            Check(Named, "closure: a model naming a material the exporter skipped says so and gives the reason", Describe());
+        }
         bool Unparsed = false, JunkFailed = Count("model.material_closure", "xmodel_bin:model_export/m/junk_lod0.xmodel_bin") != 0;
         for (const auto& [Name, Why] : R.Incomplete) Unparsed = Unparsed || (Name == "model.material_closure (unparsed)" && Why.find("junk_lod0") != std::string::npos);
         {

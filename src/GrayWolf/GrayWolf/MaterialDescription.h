@@ -133,6 +133,14 @@ namespace Materials
         // The surface type the game's own flags give, as a BO3 surfaceType combo name ("metal"); empty when it states none.
         // SurfaceWhy then says why (SurfaceTypes.h): "no_table", "not_read", "none_in_source", "unnamed:0x..."; empty with a type.
         std::string SurfaceType, SurfaceWhy;
+        // A game's rule that the material is not exported at all (HydraX D-13: a BO3 material with an image named *_combo is an unusable
+        // duplicate). Set by the game's adapter, never by shared code; the reason is a code:detail string for the report row.
+        std::string SkipWhy;
+        // A game whose materials name their techset in the catalog's own terms (BO3, HydraX Bo3MaterialDecoder.Export) sets this to the techset's name
+        // (cut at #, without folder or extension): materialType is then that techset, and a name the catalog lacks is an error (no fallback).
+        std::string TechsetName;
+        // Why the game's rule left TechsetName empty: "no_techset" (the material names none) or "name_unread" (the reader gave no name). Empty: a name is set.
+        std::string TechsetWhy;
     };
 
     // What an exporter or a model file knows about one material: the input of an adapter.

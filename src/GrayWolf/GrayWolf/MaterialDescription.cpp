@@ -499,6 +499,9 @@ std::string SidecarText(const Sidecar& S)
         if (D.Roughness.Empty()) J["roughness_value"] = Rounded(D.RoughnessValue);
         if (!D.SurfaceType.empty()) J["surface_type"] = D.SurfaceType;
         if (!D.SurfaceWhy.empty()) J["surface_why"] = D.SurfaceWhy;
+        if (!D.SkipWhy.empty()) J["skip_why"] = D.SkipWhy;
+        if (!D.TechsetName.empty()) J["techset_name"] = D.TechsetName;
+        if (!D.TechsetWhy.empty()) J["techset_why"] = D.TechsetWhy;
         if (!D.Color.Empty())
         {
             nlohmann::json C = nlohmann::json::object();
@@ -605,6 +608,9 @@ bool ReadSidecar(const std::string& Path, Sidecar& S)
             D.MetalnessValue = J.value("metalness_value", D.MetalnessValue);
             D.SurfaceType = J.value("surface_type", std::string());
             D.SurfaceWhy = J.value("surface_why", std::string());
+            D.SkipWhy = J.value("skip_why", std::string());
+            D.TechsetName = J.value("techset_name", std::string());
+            D.TechsetWhy = J.value("techset_why", std::string());
             if (J.contains("tint") && J["tint"].is_object()) TintFromJson(J["tint"], D.Tint);
             if (J.contains("color_tint") && J["color_tint"].is_object())
             {

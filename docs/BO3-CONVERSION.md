@@ -30,6 +30,10 @@ choice other than an exact one is listed as `material.techset_fallback`. Camo te
 chosen: the Mod Tools cannot register `lit_weapon_camo`. Weapons-category and distortion techsets such as `lit_paintshop` are
 not candidates either.
 
+Black Ops III needs no mapping: `materialType` is the source techset name. A Black Ops III material with no techset, or a
+name the catalog lacks, falls to the slot rules with a `material.techset_fallback` row. A material with a `_combo` image is
+skipped, as HydraX does, with a `material.skipped_combo_image` row.
+
 Black Ops 4 and Cold War hash their techset names. `update-name-db` fetches cod-name-db's `cod_techsets` list into
 `package_index`, and the name rules run on the names it knows: 630 of 869 techsets on `mp_frenetic`. Without the list the
 slot rules still run, and the run writes a `material.techset_names_missing` row. The rule behind each choice is in
@@ -152,6 +156,9 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
   it and leave the old file in a reused output folder. A clean name that looks like a hash, such as `decade00`, is renamed the same way.
 - `bo3-verify` also runs `model.material_closure` (every material a model names must exist), `install.image_overwrite` and
   `install.name_collision` (both warnings, read-only, and only with a Mod Tools root).
+- "Stock" means a GDT saved within a day of the linker, or a row at or below an id bound computed from those GDTs. The owner's
+  own content does not teach placement, but it still blocks a name. A new file aimed at any GDT this tool does not own goes to
+  a `graywolf_` file in the same folder. `bo3-gdtdb-info` prints the numbers.
 - `surfaceType` comes from the material flags in Black Ops III, Black Ops 4 and Cold War. Cold War rests on measurement only
   (165 of 173 stock names on one map). Other games write `<none>` and a `material.surface_unknown` row: GrayWolf does not read
   their flag word yet.

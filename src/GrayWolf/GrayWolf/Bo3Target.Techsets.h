@@ -104,6 +104,9 @@ namespace Bo3Target::Techsets
         bool IsDefaultImage(const std::string& Key, const std::string& Image) const;
         // Whether some catalog techset has a texture of this slot hash (HydraX's known slots: a BO4-only slot is not known and is ignored)
         bool KnownHash(uint32_t Hash) const { return KnownHashes.count(Hash) != 0; }
+        // The material key most catalog slots of this texture hash carry ("colorMap" for the colorMap texture; a few techsets key it otherwise):
+        // what a material's image in that texture is, before a techset is chosen. Empty for an unknown or unkeyed hash.
+        std::string DefaultKeyOfHash(uint32_t Hash) const;
         // The image semantics a code image ("$white_specular") stands for, read off the catalog: the semantics of the slots that
         // name it as their default (the Mod Tools' techsetdefs), with the number of slots for each. Empty when no slot defaults to it.
         const std::map<std::string, size_t>* CodeImageSemantics(const std::string& Image) const;
@@ -130,6 +133,7 @@ namespace Bo3Target::Techsets
         std::map<uint64_t, std::vector<ConstantAt>> Layouts;
         std::set<std::pair<std::string, std::string>> DefaultImages;
         std::set<uint32_t> KnownHashes;
+        std::map<uint32_t, std::map<std::string, int>> KeysOfHash;
         std::map<std::string, std::map<std::string, size_t>> CodeSemantics;   // lower code image -> semantic -> slot count
         std::vector<std::string> Missing;
         std::shared_ptr<WraithNameIndex> Names;

@@ -355,21 +355,18 @@ namespace Bo3Target::GdtDb
     StockIndex::StockIndex(const std::vector<Row>& Rows, const StockRules& Rules, IFileTimes& Files)
     {
         RootPrefix = Rules.RootPrefix;
-        std::unordered_set<std::string> UsedGdts;
+        // Pass 1: the verdict of each gdt, and the install bound from the rows of the gdts saved in the install window
+        std::vector<int64_t> WindowIds;
         for (const Row& Entry : Rows)
         {
             const std::string Name = NormaliseName(Entry.Name);
             const std::string Relative = RelativeGdtPath(Entry.GdtFile, Rules.RootPrefix);
-            if (Name.empty() || Relative.empty())
-            {
-                ++NoGdtFile;
-                continue;
-            }
+            if (Name.empty() || Relative.empty()) continue;
             auto Found = Verdicts.find(Relative);
             if (Found == Verdicts.end())
             {
-                // Stock = not in a manifest and not a file this toolchain names (hydrax_ or graywolf_ prefix).
-                // The file's age no longer decides; it is only measured, for the report.
+                // Not stock: in a manifest, or a file this toolchain names (hydrax_ or graywolf_ prefix).
+                // The file's age does not decide by itself; it fixes the id bound below and is reported.
                 GdtVerdict Result;
                 const size_t Slash = Relative.rfind('\\');
                 const std::string_view Leaf = std::string_view(Relative).substr(Slash == std::string::npos ? 0 : Slash + 1);
@@ -381,16 +378,55 @@ namespace Bo3Target::GdtDb
                 {
                     Result.AgeSeconds = Seconds - Rules.ReferenceSeconds;
                     Result.Late = Result.AgeSeconds > Rules.WindowSeconds;
+                    Result.InWindow = Rules.ReferenceSeconds != 0 && Result.AgeSeconds >= -Rules.WindowSeconds && Result.AgeSeconds <= Rules.WindowSeconds;
                 }
                 Found = Verdicts.emplace(Relative, Result).first;
             }
-            if (Found->second.Missing) ++FileMissing;
-            if (Found->second.Late) ++SavedLater;
-            switch (Found->second.Code)
+            if (Found->second.Code == 0 && Found->second.InWindow) WindowIds.push_back(Entry.Id);
+        }
+        // The first import batch: the ids of the install-window rows up to the first gap larger than BatchGap. Rows of window gdts that a
+        // later gdtdb /update imported (ids far above a gap) are Treyarch's own too, but they do not raise the bound for gdts outside the window.
+        if (!WindowIds.empty())
+        {
+            std::sort(WindowIds.begin(), WindowIds.end());
+            Limit = WindowIds.front();
+            for (const int64_t Id : WindowIds)
+            {
+                if (Id - Limit > Rules.BatchGap) break;
+                Limit = Id;
+            }
+            LimitKnown = true;
+            for (const auto& [Path, Verdict] : Verdicts)
+                if (Verdict.Code == 0 && Verdict.InWindow) ++IdLimitGdts;
+        }
+        const bool Filter = Rules.UseIdLimit && LimitKnown;
+        Filtering = Filter;
+
+        // Pass 2: the rows
+        std::unordered_set<std::string> UsedGdts;
+        for (const Row& Entry : Rows)
+        {
+            const std::string Name = NormaliseName(Entry.Name);
+            const std::string Relative = RelativeGdtPath(Entry.GdtFile, Rules.RootPrefix);
+            if (Name.empty() || Relative.empty())
+            {
+                ++NoGdtFile;
+                continue;
+            }
+            const GdtVerdict& Verdict = Verdicts.find(Relative)->second;
+            if (Verdict.Missing) ++FileMissing;
+            if (Verdict.Late) ++SavedLater;
+            switch (Verdict.Code)
             {
             case 3: ++InManifest; continue;
             case 4: ++ToolPrefixed; continue;
             default: break;
+            }
+            HeldGdtPaths.insert(Relative);
+            if (Filter && !Verdict.InWindow && Entry.Id > Limit)
+            {
+                ++LateId;
+                continue;
             }
 
             ++Stock;
@@ -398,6 +434,11 @@ namespace Bo3Target::GdtDb
             HighestId = (std::max)(HighestId, Entry.Id);
             UsedGdts.insert(Relative);
             StockGdtPaths.insert(Relative);
+            {
+                std::string G = LowerAscii(Entry.Gdf);
+                if (G.ends_with(".gdf")) G.resize(G.size() - 4);
+                StockPairs.insert(G + "\n" + Name);
+            }
 
             const size_t Slash = Relative.rfind('\\');
             const std::string Folder = Slash == std::string::npos ? std::string() : Relative.substr(0, Slash);
@@ -417,6 +458,18 @@ namespace Bo3Target::GdtDb
         StockGdts = UsedGdts.size();
     }
 
+    bool StockIndex::IsHeldGdtPath(std::string_view RelativePath) const
+    {
+        return HeldGdtPaths.count(PathKey(RelativePath)) != 0;
+    }
+
+    bool StockIndex::HoldsStockPair(std::string_view Gdf, std::string_view Name) const
+    {
+        std::string G = LowerAscii(Gdf);
+        if (G.ends_with(".gdf")) G.resize(G.size() - 4);
+        return StockPairs.count(G + "\n" + NormaliseName(Name)) != 0;
+    }
+
     std::string StockIndex::Explain(const Row& Entry) const
     {
         const std::string Relative = RelativeGdtPath(Entry.GdtFile, RootPrefix);
@@ -424,7 +477,8 @@ namespace Bo3Target::GdtDb
         const auto Found = Verdicts.find(Relative);
         if (Found == Verdicts.end()) return "unknown gdt " + Relative;
         static const char* const Words[] = { "stock", "", "", "in_manifest", "tool_prefix" };
-        return std::format("{} gdt={} age_vs_linker_seconds={}{}{}", Words[Found->second.Code], Relative, Found->second.AgeSeconds,
+        const bool AboveBound = Found->second.Code == 0 && Filtering && !Found->second.InWindow && Entry.Id > Limit;
+        return std::format("{} gdt={} age_vs_linker_seconds={}{}{}", AboveBound ? "not_stock_id_above_install_bound" : Words[Found->second.Code], Relative, Found->second.AgeSeconds,
             Found->second.Late ? " saved_later" : "", Found->second.Missing ? " gdt_file_missing" : "");
     }
 
@@ -1040,6 +1094,58 @@ namespace Bo3Target::GdtDb
         Check(Stock.SavedLater == 2 && Stock.FileMissing == 1, "report-only counts: saved later, file missing", std::format("{} {}", Stock.SavedLater, Stock.FileMissing));
         Check(Stock.IsStockGdtPath("model_export\\a\\stock.gdt") && Stock.IsStockGdtPath("Model_Export/A/Stock.gdt"), "stock gdt path lookup", "");
         Check(!Stock.IsStockGdtPath("model_export\\a\\graywolf_stock.gdt") && !Stock.IsStockGdtPath("model_export\\a\\hydrax.gdt"), "a tool gdt path is not a stock path", "");
+
+        // the install bound: the largest id among gdts saved in the install window; rows above it are not stock
+        {
+            FakeFileTimes Times;
+            Times.Times["texture_assets\\t7_a.gdt"] = Ref + 60;
+            Times.Times["texture_assets\\t7_b.gdt"] = Ref - Day;                       // window edge
+            Times.Times["source_data\\vk.gdt"] = Ref - 3 * 365 * Day;                  // shipped with the tools, older mtime, low ids
+            Times.Times["texture_assets\\t7_metal2.gdt"] = Ref + 40 * Day;             // re-saved: renumbered
+            Times.Times["texture_assets\\t8_materials\\t8.gdt"] = Ref + 60 * Day;      // the user's own
+            Times.Times["source_data\\p7_hashed.gdt"] = Ref - 4 * 365 * Day;           // old mtime kept from a copy, late ids
+            Times.Times["source_data\\hydrax_x.gdt"] = Ref + 5;                        // in the window but a tool file: never fixes the bound
+            StockRules R2;
+            R2.ReferenceSeconds = Ref;
+            R2.RootPrefix = "f:\\root";
+            const std::vector<Row> Rows2 = {
+                { 100, "t7_a_one", "material", "F:\\Root\\texture_assets\\t7_a.gdt" },
+                { 200, "t7_a_two", "image", "F:\\Root\\texture_assets\\t7_a.gdt" },
+                { 190, "t7_b_one", "xmodel.gdf", "F:\\Root\\texture_assets\\t7_b.gdt" },
+                { 150, "vk_dev_one", "material", "F:\\Root\\source_data\\vk.gdt" },
+                { 120, "t7_metal_kept", "material", "F:\\Root\\texture_assets\\t7_metal2.gdt" },
+                { 5000, "t7_metal_renumbered", "material", "F:\\Root\\texture_assets\\t7_metal2.gdt" },
+                { 6000, "t8_custom_one", "material", "F:\\Root\\texture_assets\\t8_materials\\t8.gdt" },
+                { 353000, "p7_hashed_one", "xmodel", "F:\\Root\\source_data\\p7_hashed.gdt" },
+                { 999999, "hydrax_tool_one", "material", "F:\\Root\\source_data\\hydrax_x.gdt" },
+                { 10000000, "t7_a_late_import", "material", "F:\\Root\\texture_assets\\t7_a.gdt" },     // a window gdt imported later by gdtdb /update: Treyarch's, high id
+            };
+            const StockIndex Bound(Rows2, R2, Times);
+            Check(Bound.IdLimitKnown() && Bound.IdLimit() == 200 && Bound.IdLimitGdts == 2, "install bound: the top of the first batch of window ids (the late import behind a gap does not raise it), a tool file in the window ignored", std::format("{} {}", Bound.IdLimit(), Bound.IdLimitGdts));
+            Check(Bound.IsStock(100) && Bound.IsStock(200) && Bound.IsStock(190) && Bound.IsStock(150) && Bound.IsStock(120), "ids at or below the bound are stock, also in an old or re-saved gdt", "");
+            Check(!Bound.IsStock(5000) && !Bound.IsStock(6000) && !Bound.IsStock(353000) && !Bound.IsStock(999999), "ids above the bound are not stock: re-saved, the user's own, old mtime with late ids, a tool file", "");
+            Check(Bound.IsStock(10000000), "a row of a window gdt is stock whatever its id (a later gdtdb /update import)", "");
+            Check(Bound.LateId == 3 && Bound.ToolPrefixed == 1 && Bound.StockCount() == 6, "bound counts", std::format("{} {} {}", Bound.LateId, Bound.ToolPrefixed, Bound.StockCount()));
+            Check(Bound.Explain(Rows2[5]).starts_with("not_stock_id_above_install_bound"), "explain names the bound", Bound.Explain(Rows2[5]));
+            Check(Bound.HoldsStockPair("material", "T7_A_One") && Bound.HoldsStockPair("material.gdf", "t7_a_one") && Bound.HoldsStockPair("xmodel", "t7_b_one") && !Bound.HoldsStockPair("xmodel", "t7_a_one"),
+                  "a stock pair is by GDF and name, with or without .gdf", "");
+            Check(!Bound.HoldsStockPair("material", "t8_custom_one") && !Bound.HoldsStockPair("material", "t7_metal_renumbered"), "a user's own pair is not a stock pair", "");
+            Check(!Bound.IsStockGdtPath("texture_assets\\t8_materials\\t8.gdt"), "a gdt with only non-stock rows is not a stock path", "");
+            // no gdt in the window (no file times): no bound exists, the id decides nothing
+            FakeFileTimes None;
+            const StockIndex Open(Rows2, R2, None);
+            Check(!Open.IdLimitKnown() && Open.IsStock(5000) && Open.LateId == 0, "no install-window gdt: no bound, ids decide nothing", "");
+            StockRules Off = R2;
+            Off.UseIdLimit = false;
+            const StockIndex NoFilter(Rows2, Off, Times);
+            Check(NoFilter.IsStock(5000) && NoFilter.IdLimit() == 200, "UseIdLimit off keeps the file rules only", "");
+            Check(NoFilter.Explain(Rows2[5]).starts_with("stock ") && Bound.Explain(Rows2[5]).starts_with("not_stock_id_above_install_bound"),
+                  "Explain agrees with the filter that was applied: stock when UseIdLimit is off, above the bound when it is on", NoFilter.Explain(Rows2[5]));
+            // the placement redirect uses the unfiltered set: a re-saved library gdt and the user's own are held, a tool file is not
+            Check(Bound.IsHeldGdtPath("texture_assets\\t7_metal2.gdt") && Bound.IsHeldGdtPath("Texture_Assets/T8_Materials/T8.gdt") && Bound.IsHeldGdtPath("source_data\\p7_hashed.gdt") &&
+                  !Bound.IsStockGdtPath("texture_assets\\t8_materials\\t8.gdt") && !Bound.IsHeldGdtPath("source_data\\hydrax_x.gdt") && !Bound.IsHeldGdtPath("texture_assets\\nothing.gdt"),
+                  "held gdt paths: re-saved and user gdts are held although not stock; a tool file and an unknown path are not", "");
+        }
 
         // Closest: stock rows only, longest token prefix, family, minimum two tokens
         StockMatch Match;

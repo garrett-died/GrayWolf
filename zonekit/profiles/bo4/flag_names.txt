@@ -49,3 +49,6 @@ surface|watershallow|0x2600000
 surface|bodyarmor|0x2700000
 render|opaque|0x4
 render|decal|0x8
+# No stock BO3 material entry uses these two surface types (HydraX Bo4FlagNames.SurfaceTypeName: the 37 other names are exactly the strings of the stock entries): <none>.
+bo3_unused|player|0x1D00000
+bo3_unused|riotshield|0x1F00000

@@ -597,7 +597,7 @@ const XMaterial_t GameBlackOps4::ReadXMaterial(uint64_t MaterialPointer)
     XMaterial_t Result(MaterialData.ImageCount);
     const auto& Names = AssetNameCache.NameDatabase;
     if (const auto Named = Names.find(MaterialData.NamePtr); Named != Names.end())
-        Result.MaterialName = FileSystems::GetFileNamePurgeExtensions(Named->second);
+        Result.MaterialName = FileSystems::GetFileNamePurgeExtensions(Named->second.substr(0, Named->second.find('|')));   // cut at | first (HydraX RawEntryName)
     else
         Result.MaterialName = std::format("xmaterial_{:x}", MaterialData.NamePtr);
 
@@ -637,7 +637,8 @@ const XMaterial_t GameBlackOps4::ReadXMaterial(uint64_t MaterialPointer)
     MaterialElsewhere Elsewhere;
     if (MaterialData.ImageCount == 0 && ImagesElsewhere && ImagesElsewhere(MaterialData.NamePtr, Elsewhere))
     {
-        for (const auto& [Hash, Semantic] : Elsewhere.Images) Slots.push_back({ ExportWriters::ImageElsewhere, Semantic, Hash, 0 });
+        for (size_t K = 0; K < Elsewhere.Images.size(); K++)
+            Slots.push_back({ ExportWriters::ImageElsewhere, Elsewhere.Images[K].second, Elsewhere.Images[K].first, K < Elsewhere.Formats.size() ? Elsewhere.Formats[K] : 0 });
         if (Elsewhere.Techset != 0) Result.TechsetName = std::format("{:x}", Elsewhere.Techset);
         Result.SurfaceFlags = Elsewhere.SurfaceFlags, Result.RenderFlags = Elsewhere.RenderFlags;
         if (!Elsewhere.Constants.empty())
@@ -651,8 +652,13 @@ const XMaterial_t GameBlackOps4::ReadXMaterial(uint64_t MaterialPointer)
         if (const int64_t Flags = TechsetFlagsElsewhere(std::stoull(Result.TechsetName, nullptr, 16)); Flags > 0) Result.RenderFlags = Flags;
     if (Result.RenderFlags <= 0) Result.RenderFlags = -1;
 
-    for (const auto& S : Slots)
+    for (auto& S : Slots)
     {
+        if (S.Format == 0 && S.Hash != 0 && ImagesElsewhere)
+        {
+            MaterialElsewhere Asked;
+            if (ImagesElsewhere(S.Hash | ImageFormatKey, Asked) && !Asked.Formats.empty()) S.Format = Asked.Formats.front();
+        }
         const auto Named = Names.find(S.Hash);
         Result.Images.emplace_back(GameReaders::TreyarchSemanticUsage(S.Semantic), S.Semantic, S.ImagePtr,
                                    Named != Names.end() ? Named->second : std::format("ximage_{:x}", S.Hash));

@@ -58,6 +58,7 @@ namespace Bo3Target::Verify
         std::filesystem::path ModToolsRoot;             // deffiles\*.awi; empty: the awi checks are not run
         const Techsets::Data* Catalog = nullptr;        // null or empty: the techset checks are not run
         const GdtDb::Catalog* Held = nullptr;           // the Mod Tools gdt.db; null: the stock-pair and unresolved-reference checks are not run
+        const GdtDb::StockIndex* Stock = nullptr;       // which rows of Held are stock (Treyarch's own); null: every row is called a stock pair
         std::filesystem::path Approximations;           // the run's graywolf_approximations.tsv: it names why a material's surfaceType is <none> (material.surface_unknown / surface_unmapped); empty: not known
         bool MapSources = false;                        // the output holds map sources: a material's usage cannot be judged
     };

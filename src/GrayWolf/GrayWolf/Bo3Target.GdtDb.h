@@ -194,6 +194,14 @@ namespace Bo3Target::GdtDb
         int64_t WindowSeconds = 86400;      // "saved late" = a gdt modified more than this after the reference; reported, never decisive
         std::string RootPrefix;             // the Mod Tools root, to cut it off absolute gdt paths (may be empty)
         const std::unordered_set<std::string>* Manifests = nullptr;   // paths written by HydraX or GrayWolf
+        // The entity-id bound of "shipped" (HydraX StockRow.IsStock, placement-rules.md section 0 and section 6 note 4), computed from the
+        // install and never a constant. A gdt saved within WindowSeconds of the reference is the install's own and its rows are stock
+        // whatever their id. For a gdt outside the window a row is stock only up to the bound (the Mod Tools delete and reinsert the
+        // entities of a re-saved gdt, so its ids are new). With no gdt in the window (no reference, no file times) there is no bound.
+        bool UseIdLimit = true;
+        // The bound is the top of the first batch of install-window ids: the first gap above this ends the batch. Measured on the owner's
+        // install: the batch 104,479..187,765 has gaps up to 2,287; the next window id is 10,984,599 (a later gdtdb /update import).
+        int64_t BatchGap = 100000;
     };
 
     struct StockMatch
@@ -233,8 +241,18 @@ namespace Bo3Target::GdtDb
 
         // True when the root-relative gdt path holds stock rows (a path the exporter must not write to).
         bool IsStockGdtPath(std::string_view RelativePath) const;
+        // True when the root-relative gdt path is a file this toolchain does not own (not in a manifest, no hydrax_/graywolf_ prefix) that holds rows,
+        // stock or not: the user's own and the re-saved library gdts included. Unfiltered; the placement redirects an output away from such a path.
+        bool IsHeldGdtPath(std::string_view RelativePath) const;
 
         bool IsStock(int64_t EntityId) const { return StockIds.count(EntityId) != 0; }
+        // True when a stock row has this GDF (with or without ".gdf") and name. A user's own asset of the same name is not one; the
+        // unfiltered Catalog still answers "does the name exist".
+        bool HoldsStockPair(std::string_view Gdf, std::string_view Name) const;
+        // The bound computed from the install window and what it rests on
+        bool IdLimitKnown() const { return LimitKnown; }
+        int64_t IdLimit() const { return Limit; }
+        size_t IdLimitGdts = 0;     // distinct install-window gdts that fixed the bound
         // Why a row is or is not stock: "stock", "in_manifest", "tool_prefix" or "no_gdt_path", with the
         // relative path, the file's age against the reference in seconds, and "saved_later" /
         // "gdt_file_missing" when those hold.
@@ -249,6 +267,7 @@ namespace Bo3Target::GdtDb
         size_t SavedLater = 0;      // report only: the gdt was saved more than WindowSeconds after the reference (any verdict)
         size_t FileMissing = 0;     // report only: the gdt is not on disk (any verdict)
         size_t StockGdts = 0;       // distinct gdt files of stock rows
+        size_t LateId = 0;          // rows that pass the file rules but whose entity id is above the install bound (not stock)
 
     private:
         struct Bucket
@@ -264,13 +283,19 @@ namespace Bo3Target::GdtDb
             int64_t AgeSeconds = 0;     // file time minus the reference (when the file exists)
             bool Late = false;
             bool Missing = false;
+            bool InWindow = false;      // saved within WindowSeconds of the reference, either side
         };
         std::unordered_map<std::string, GdtVerdict> Verdicts;   // by root-relative gdt path
         std::string RootPrefix;
         std::unordered_set<int64_t> StockIds;
         std::unordered_set<std::string> StockGdtPaths;
+        std::unordered_set<std::string> StockPairs;     // gdf (no ".gdf"), a newline, name; lower case
         size_t Stock = 0;
         int64_t HighestId = 0;
+        int64_t Limit = 0;
+        bool LimitKnown = false;
+        bool Filtering = false;     // the id bound was applied (StockRules::UseIdLimit and a known bound)
+        std::unordered_set<std::string> HeldGdtPaths;   // every gdt a row of which passes the file rules (not a manifest, not a tool file), whatever the ids
     };
 
     // Self-tests on synthetic rows (name rule, match modes, stock rule, Closest). Appends each failure

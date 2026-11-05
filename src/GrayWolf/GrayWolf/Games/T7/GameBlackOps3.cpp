@@ -77,7 +77,9 @@ const XMaterial_t GameBlackOps3::ReadXMaterial(uint64_t MaterialPointer)
     auto MaterialData = CoDAssets::GameInstance->Read<BO3XMaterial>(MaterialPointer);
 
     XMaterial_t Result(MaterialData.ImageCount);
-    Result.MaterialName = FileSystems::GetFileNameWithoutExtension(CoDAssets::GameInstance->ReadNullTerminatedString(MaterialData.NamePtr));
+    // the name cut at '|' first, as HydraX Bo3MaterialDecoder.Export does (Path.GetFileNameWithoutExtension of the name before the |)
+    const std::string ZoneName = CoDAssets::GameInstance->ReadNullTerminatedString(MaterialData.NamePtr);
+    Result.MaterialName = FileSystems::GetFileNameWithoutExtension(ZoneName.substr(0, ZoneName.find('|')));
 
     // The technique set's name (+0x278 -> its name pointer) and each technique's static pixel
     // cbuffer (constantBufferInfo[12] at +0x30, 0x30 apart, psStatic[0] at +0x20 -> init data
@@ -85,11 +87,21 @@ const XMaterial_t GameBlackOps3::ReadXMaterial(uint64_t MaterialPointer)
     // The surface flags: the u32 at +0x24 (the material's flags and settings start at +8, the word is their 28th byte); the surface type is
     // (flags >> 20) & 0x3F, zonekit/profiles/t7/flag_names.txt.
     Result.SurfaceFlags = SurfaceTypes::ReadWord(MaterialPointer + 8 + 28);   // -1 when the read fails
-    const uint64_t Techset = CoDAssets::GameInstance->Read<uint64_t>(MaterialPointer + 0x278);
-    if (Techset != 0)
+    // Checked reads (Read<T> zero-fills a failed read, which would read as "no techset"): a pointer of 0 that was read is a material with no techset
+    // (TechsetName stays empty); a pointer or a name that could not be read is "<unreadable>", so the two stay apart.
+    const auto ReadPointer = [](uint64_t Address, uint64_t& Out) {
+        uint8_t Bytes[8] = {};
+        if (CoDAssets::GameInstance->Read(Bytes, Address, sizeof(Bytes)) != sizeof(Bytes)) return false;
+        std::memcpy(&Out, Bytes, sizeof(Out));
+        return true;
+    };
+    uint64_t Techset = 0;
+    if (!ReadPointer(MaterialPointer + 0x278, Techset)) Result.TechsetName = "<unreadable>";
+    else if (Techset != 0)
     {
-        const uint64_t TechsetName = CoDAssets::GameInstance->Read<uint64_t>(Techset);
-        if (TechsetName != 0) Result.TechsetName = CoDAssets::GameInstance->ReadNullTerminatedString(TechsetName);
+        uint64_t TechsetName = 0;
+        if (ReadPointer(Techset, TechsetName) && TechsetName != 0) Result.TechsetName = CoDAssets::GameInstance->ReadNullTerminatedString(TechsetName);
+        if (Result.TechsetName.empty()) Result.TechsetName = "<unreadable>";
     }
     for (uint32_t T = 0; T < 12; T++)
     {

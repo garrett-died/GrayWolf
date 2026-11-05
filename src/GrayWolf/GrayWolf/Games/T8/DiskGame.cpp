@@ -406,8 +406,25 @@ namespace
             LiveServed.reset();
             if (!On) return;
             LiveServed.emplace(Zone(), Assets);
+            // The DXGI format of an image is the image's own, so a material defined elsewhere takes it from wherever a header of that image is
+            // read: this zone's images, else the common zones' books. Built once, here, so the answer does not depend on the order materials are read in.
+            auto ImageFormats = std::make_shared<std::unordered_map<uint64_t, uint32_t>>();
+            for (const auto& Book : Common)
+                for (const auto& [MaterialHash, Entry] : *Book)
+                    for (size_t K = 0; K < Entry.Images.size() && K < Entry.Formats.size(); K++)
+                        if (Entry.Formats[K] != 0) ImageFormats->emplace(Entry.Images[K].first, Entry.Formats[K]);
+            for (const auto& Image : Assets.Images)
+                if (Image.Format != 0) (*ImageFormats)[Image.Hash] = Image.Format;
             // a material header takes its images from the common zone that defines it
-            ElsewhereServed.emplace(GameBlackOps4::ImagesElsewhere, [this](uint64_t Hash, GameBlackOps4::MaterialElsewhere& Out) {
+            ElsewhereServed.emplace(GameBlackOps4::ImagesElsewhere, [this, ImageFormats](uint64_t Hash, GameBlackOps4::MaterialElsewhere& Out) {
+                if ((Hash & GameBlackOps4::ImageFormatKey) != 0)
+                {
+                    // a question about one image's format, not about a material (GameBlackOps4::ImageFormatKey)
+                    const auto Known = ImageFormats->find(Hash & ~GameBlackOps4::ImageFormatKey);
+                    if (Known == ImageFormats->end()) return false;
+                    Out.Formats.assign(1, Known->second);
+                    return true;
+                }
                 // a book entry with images is the material; one without (a stub there too, or a material with no images) is taken only when no book has the real one
                 const Bo4DiskExport::BookMaterial* Imageless = nullptr;
                 const Bo4DiskExport::BookMaterial* Hit = nullptr;
@@ -425,6 +442,11 @@ namespace
                 if (Hit != nullptr)
                 {
                     Out.Images = Hit->Images;
+                    Out.Formats = Hit->Formats;
+                    Out.Formats.resize(Out.Images.size(), 0);
+                    for (size_t K = 0; K < Out.Images.size(); K++)
+                        if (Out.Formats[K] == 0)
+                            if (const auto Known = ImageFormats->find(Out.Images[K].first); Known != ImageFormats->end()) Out.Formats[K] = Known->second;
                     Out.Techset = Hit->Techset;
                     Out.Constants = Hit->Constants;
                     Out.SurfaceFlags = Hit->SurfaceFlags, Out.RenderFlags = Hit->RenderFlags;

@@ -768,13 +768,14 @@ namespace Bo3Target::Placement
 
         const std::string Kind = Lower(Asked.Kind);
         Out.FilesFolder = !P.Files.empty() ? P.Files : FilesFolderOf(P.Gdt, GameOf(Asked, Kind));
-        // a destination that is a stock gdt path becomes graywolf_<file>.gdt in the same folder
-        if (Stock.IsStockGdtPath(P.Gdt))
+        // a destination that is a gdt this tool does not own (stock, a re-saved library gdt, the user's own: the unfiltered set, not the layout
+        // filter) becomes graywolf_<file>.gdt in the same folder
+        if (Stock.IsHeldGdtPath(P.Gdt))
         {
             const size_t Slash = P.Gdt.rfind('\\');
             Out.GdtPath = Slash == std::string::npos ? "graywolf_" + P.Gdt : P.Gdt.substr(0, Slash + 1) + "graywolf_" + P.Gdt.substr(Slash + 1);
             Out.Redirected = true;
-            Out.Reason += " [stock gdt path: redirected to graywolf_" + Out.GdtPath.substr(Out.GdtPath.rfind('\\') + 1 + 9) + "]";
+            Out.Reason += " [gdt path held by the install: redirected to graywolf_" + Out.GdtPath.substr(Out.GdtPath.rfind('\\') + 1 + 9) + "]";
         }
         return Out;
     }
@@ -787,6 +788,18 @@ namespace Bo3Target::Placement
         {
         public:
             bool ModifiedSeconds(const std::string&, int64_t&) override { return false; }
+        };
+        class MapFileTimes final : public GdtDb::IFileTimes
+        {
+        public:
+            std::map<std::string, int64_t> Times;
+            bool ModifiedSeconds(const std::string& Path, int64_t& Seconds) override
+            {
+                const auto It = Times.find(Path);
+                if (It == Times.end()) return false;
+                Seconds = It->second;
+                return true;
+            }
         };
     }
 
@@ -881,6 +894,36 @@ namespace Bo3Target::Placement
         Check(R.Redirected && R.NaturalGdtPath == "texture_assets\\t7_metal.gdt" && R.GdtPath == "texture_assets\\graywolf_t7_metal.gdt", "fix c: a stock gdt path redirects to graywolf_<file>", R.GdtPath);
         R = Do("bulletweapon", "smg_new_mp");
         Check(!R.Redirected && R.GdtPath == "source_data\\smg_new.gdt", "fix c: a path that is not stock is kept", R.GdtPath);
+        // fix (e): a re-saved library gdt and the user's own are not stock (the layout filter) but are not ours either: the redirect still applies
+        {
+            constexpr int64_t Ref = 1'755'000'000, Day = 86400;
+            const std::vector<GdtDb::Row> Held = {
+                { 10, "t7_wall_clean", "material", "texture_assets\\t7_wall.gdt" },                      // in the install window: sets the bound
+                { 9000, "t7_metal_rust", "material", "texture_assets\\t7_metal.gdt" },                   // re-saved weeks later: renumbered, not stock
+                { 9001, "i_t7_metal_rust_c", "image", "texture_assets\\t7_metal.gdt" },
+                { 9500, "t8_custom_thing", "material", "texture_assets\\t8_materials\\t8.gdt" },       // the user's own
+            };
+            MapFileTimes HeldTimes;
+            HeldTimes.Times["texture_assets\\t7_wall.gdt"] = Ref;
+            HeldTimes.Times["texture_assets\\t7_metal.gdt"] = Ref + 40 * Day;
+            HeldTimes.Times["texture_assets\\t8_materials\\t8.gdt"] = Ref + 60 * Day;
+            GdtDb::StockRules HeldRules;
+            HeldRules.ReferenceSeconds = Ref;
+            const GdtDb::StockIndex HeldStock(Held, HeldRules, HeldTimes);
+            Check(!HeldStock.IsStockGdtPath("texture_assets\\t7_metal.gdt") && HeldStock.IsHeldGdtPath("texture_assets\\t7_metal.gdt") && HeldStock.IsHeldGdtPath("texture_assets\\t8_materials\\t8.gdt"),
+                  "fix e: the re-saved and the user's gdt are not stock but are held", "");
+            Request Q;
+            Q.Kind = "image";
+            Q.Name = "i_t7_metal_rust_d";
+            Q.GameId = "bo3";
+            const Result Re = Place(Q, HeldStock);
+            Check(Re.NaturalGdtPath == "texture_assets\\t7_metal.gdt" && Re.Redirected && Re.GdtPath == "texture_assets\\graywolf_t7_metal.gdt",
+                  "fix e: a new image aimed at a re-saved library gdt goes to graywolf_<file>.gdt, not into the owner's file", Re.NaturalGdtPath + " -> " + Re.GdtPath);
+            Request U = Q;
+            U.Name = "i_t7_metal_rust_c";
+            Check(Place(U, HeldStock).GdtPath.find("graywolf_") != std::string::npos || Place(U, HeldStock).GdtPath != "texture_assets\\t7_metal.gdt",
+                  "fix e: no output is ever aimed at the re-saved file itself", Place(U, HeldStock).GdtPath);
+        }
         // fix (d): each hash-named model gets its own gdt on the graywolf unresolved shelf
         const Result A = Do("xmodel", "xmodel_1a2b3c4d5e6f", "bo4"), B = Do("xmodel", "xmodel_ffee00112233", "bo4");
         Check(A.Rule == "P18.unresolved" && A.GdtPath == "model_export\\graywolf_unresolved\\bo4\\xmodel_1a2b3c4d5e6f.gdt" && A.GdtPath != B.GdtPath, "fix d: hash-named models each have their own gdt", A.GdtPath + " | " + B.GdtPath);

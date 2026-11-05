@@ -488,7 +488,7 @@ namespace
     // Described: its materials as the game's adapter describes them (their colour factor, for glTF)
     void WriteModelFiles(const std::unique_ptr<WraithModel>& Model, const std::string& ExportPath,
                          const std::vector<CastMaterialSlots>* Materials = nullptr,
-                         const std::vector<::Materials::Description>* Described = nullptr)
+                         const std::vector<::Materials::Description>* Described = nullptr, bool GdtNames = false)
     {
         // every file below is named after this base: claimed before any exists (ShouldExportModel)
         ExportWriters::Claim(std::filesystem::path(ExportPath) / Model->AssetName);
@@ -510,22 +510,18 @@ namespace
         // units (inches), the "unit" setting only applies to the DCC formats further down
 
         // with material_gdt, they name their materials as the material GDT defines them
-        std::vector<std::string> SourceNames;
-        if (MaterialGdt::ModelFilesUseAssetNames())
-            for (auto& Material : Model->Materials)
+        // (GdtNames is decided by the caller, on the run's thread; the scope puts the names back even when a writer throws)
+        {
+            const MaterialGdt::ScopedModelMaterialNames Named(*Model, GdtNames);
+            if (SettingsManager::GetSetting("export_xmexport") == "true")
             {
-                SourceNames.push_back(Material.MaterialName);
-                Material.MaterialName = MaterialGdt::AssetName(Material.MaterialName);
+                CodXME::ExportXME(*Model.get(), (std::filesystem::path(ExportPath) / (Model->AssetName + ".XMODEL_EXPORT")).string());
             }
-        if (SettingsManager::GetSetting("export_xmexport") == "true")
-        {
-            CodXME::ExportXME(*Model.get(), (std::filesystem::path(ExportPath) / (Model->AssetName + ".XMODEL_EXPORT")).string());
+            if (SettingsManager::GetSetting("export_xmbin") == "true")
+            {
+                CodXMB::ExportXMB(*Model.get(), (std::filesystem::path(ExportPath) / (Model->AssetName + ".XMODEL_BIN")).string());
+            }
         }
-        if (SettingsManager::GetSetting("export_xmbin") == "true")
-        {
-            CodXMB::ExportXMB(*Model.get(), (std::filesystem::path(ExportPath) / (Model->AssetName + ".XMODEL_BIN")).string());
-        }
-        for (size_t i = 0; i < SourceNames.size(); i++) Model->Materials[i].MaterialName = SourceNames[i];
         if (SettingsManager::GetSetting("export_smd") == "true")
         {
             ValveSMD::ExportSMD(*Model.get(), (std::filesystem::path(ExportPath) / (Model->AssetName + ".smd")).string());
@@ -652,7 +648,7 @@ namespace
         const std::string Base = (std::filesystem::path(ExportPath) / Model->AssetName).string();
         if (ModelFiles == nullptr)
         {
-            WriteModelFiles(Model, ExportPath, Described.CastSlots(), Described.Ok ? &Described.Sidecar.Materials : nullptr);
+            WriteModelFiles(Model, ExportPath, Described.CastSlots(), Described.Ok ? &Described.Sidecar.Materials : nullptr, MaterialGdt::ModelFilesUseAssetNames());
             WriteSidecar(Described, Base);
             return;
         }
@@ -661,10 +657,11 @@ namespace
             std::unique_ptr<WraithModel> Model;
             std::string ExportPath, Base;
             DescribedLod Described;
+            bool GdtNames = false;      // read here, on the run's thread, not on the pool's
         };
-        auto J = std::make_shared<Job>(Job{ std::move(Model), ExportPath, Base, std::move(Described) });
+        auto J = std::make_shared<Job>(Job{ std::move(Model), ExportPath, Base, std::move(Described), MaterialGdt::ModelFilesUseAssetNames() });
         (*ModelFiles)(Base, [J]() {
-            WriteModelFiles(J->Model, J->ExportPath, J->Described.CastSlots(), J->Described.Ok ? &J->Described.Sidecar.Materials : nullptr);
+            WriteModelFiles(J->Model, J->ExportPath, J->Described.CastSlots(), J->Described.Ok ? &J->Described.Sidecar.Materials : nullptr, J->GdtNames);
             WriteSidecar(J->Described, J->Base);
         });
     }
@@ -769,7 +766,7 @@ ExportGameResult LiveExport::ExportWraithModel(std::unique_ptr<WraithModel>& Mod
     }
     if (!ShouldExportModel((std::filesystem::path(ExportPath) / Model->AssetName).string(), Described ? Sidecar : nullptr))
         return ExportGameResult::Success;
-    WriteModelFiles(Model, ExportPath, Described ? &Slots : nullptr, Described ? &Sidecar->Materials : nullptr);
+    WriteModelFiles(Model, ExportPath, Described ? &Slots : nullptr, Described ? &Sidecar->Materials : nullptr, MaterialGdt::ModelFilesUseAssetNames());
     if (Described)
     {
         try { Materials::WriteSidecar((std::filesystem::path(ExportPath) / Model->AssetName).string() + ".materials.json", *Sidecar); }
@@ -867,7 +864,7 @@ ExportGameResult LiveExport::ExportModel(const CoDModel_t* Model, const std::str
             if (Result != nullptr)
             {
                 Result->AssetName += "_HITBOX";
-                WriteModelFiles(Result, ExportPath);
+                WriteModelFiles(Result, ExportPath, nullptr, nullptr, MaterialGdt::ModelFilesUseAssetNames());
             }
         }
     }
@@ -949,7 +946,7 @@ ExportGameResult LiveExport::ExportCompositeModel(const std::string& Name, const
     if (Read == 0) return ExportGameResult::UnknownError;
     if (!ShouldExportModel((std::filesystem::path(ExportPath) / Merged->AssetName).string(), Described ? &Sidecar : nullptr))
         return ExportGameResult::Success;
-    WriteModelFiles(Merged, ExportPath, Described ? &Slots : nullptr);
+    WriteModelFiles(Merged, ExportPath, Described ? &Slots : nullptr, nullptr, MaterialGdt::ModelFilesUseAssetNames());
     if (Described)
     {
         try { Materials::WriteSidecar((std::filesystem::path(ExportPath) / Merged->AssetName).string() + ".materials.json", Sidecar); }

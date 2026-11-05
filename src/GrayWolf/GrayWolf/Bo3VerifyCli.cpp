@@ -62,6 +62,7 @@ namespace
         std::vector<std::string> Warnings;
         if (HaveRoot) Mod.Open(Root, true, Warnings);
         In.Held = Mod.View().Held;
+        In.Stock = Mod.View().Stock;
 
         const Vf::Result R = Vf::Run(In);
         std::string Error;

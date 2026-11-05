@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <string>
 
 // Black Ops 3 materials: Treyarch's semantics (Games/Treyarch/TreyarchMaterials.h). Layered ("micro tile blend") materials: two layers
@@ -161,6 +162,39 @@ namespace
         D.Alpha = Materials::AlphaMode::Opaque;
     }
 
+    // HydraX D-13 (Bo3MaterialDecoder.Export): a BO3 material with an image whose name ends in _combo is an unusable duplicate and is not
+    // exported. The rule belongs to this game's adapter; the builder only honours Description::SkipWhy.
+    void DescribeComboRule(const Materials::Source& M, Materials::Description& D)
+    {
+        for (const Materials::Source::Image& I : M.Images)
+        {
+            // HydraX: image.EndsWith("_combo", Ordinal) on the image's name (its file name without extension), case as it is
+            const std::string Stem = std::filesystem::path(I.Path).stem().string();
+            if (Stem.ends_with("_combo"))
+            {
+                D.SkipWhy = "combo_image:image=" + Stem;
+                return;
+            }
+        }
+    }
+
+    // HydraX Bo3MaterialDecoder.Export: materialType is the material's own techset, "the techset name cut at # and stripped of directory and extension"
+    // (",mc/lit_advanced#e6142445" is lit_advanced). HydraX stops on a missing or unknown techset; here the material is still written (a published model
+    // names it, and a skipped material would leave that name undefined), by the normal slot rules and with a material.techset_fallback row. The
+    // two reasons a name is empty are kept apart: the material names no techset, or the reader got no name.
+    void DescribeTechset(const Materials::Source& M, Materials::Description& D)
+    {
+        std::string Name = TechsetName(M);
+        Name = Name.substr(0, Name.find('#'));
+        if (Name == "<unreadable>")
+        {
+            D.TechsetWhy = "name_unread";
+            return;
+        }
+        D.TechsetName = std::filesystem::path(Name).stem().string();
+        if (D.TechsetName.empty()) D.TechsetWhy = "no_techset";
+    }
+
     class T7Materials final : public Materials::SemanticAdapter
     {
     public:
@@ -174,6 +208,8 @@ namespace
             DescribeEmissive(M, D);
             DescribeBacklight(M, D);
             SurfaceTypes::Apply("t7", M, D);   // (flags >> 20) & 0x3F of the u32 at +0x24, zonekit/profiles/t7/flag_names.txt
+            DescribeComboRule(M, D);
+            DescribeTechset(M, D);
         }
     };
     const T7Materials Adapter;

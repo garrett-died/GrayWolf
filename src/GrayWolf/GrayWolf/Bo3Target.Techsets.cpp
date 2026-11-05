@@ -147,6 +147,17 @@ size_t Techset::KeyedCount() const
     return static_cast<size_t>(std::count_if(Slots.begin(), Slots.end(), [](const Slot& S) { return !S.Key.empty(); }));
 }
 
+std::string Data::DefaultKeyOfHash(uint32_t Hash) const
+{
+    const auto It = KeysOfHash.find(Hash);
+    if (It == KeysOfHash.end()) return {};
+    std::string Best;
+    int BestCount = 0;
+    for (const auto& [Key, Count] : It->second)
+        if (Count > BestCount) { BestCount = Count; Best = Key; }
+    return Best;
+}
+
 const Techset* Data::Find(const std::string& Name) const
 {
     const auto It = ByName.find(Name);
@@ -223,6 +234,7 @@ bool Data::LoadCatalogText(const std::string& Json)
     DefaultImages.clear();
     CodeSemantics.clear();
     KnownHashes.clear();
+    KeysOfHash.clear();
     const nlohmann::json Root = nlohmann::json::parse(Json, nullptr, false);
     if (Root.is_discarded() || !Root.is_object() || !Root.contains("techsets") || !Root["techsets"].is_array()) return false;
     const auto Str = [](const nlohmann::json& J, const char* Key) {
@@ -250,7 +262,7 @@ bool Data::LoadCatalogText(const std::string& Json)
                 S.Semantic = Cell(2);
                 S.Default = Cell(3);
                 S.Hash = SlotHash(S.Name);
-                KnownHashes.insert(S.Hash);
+                if (!S.Key.empty()) { KnownHashes.insert(S.Hash); KeysOfHash[S.Hash][S.Key]++; }     // HydraX _knownSlots: the hashes of ImageSlots, the textures a GDT key can hold
                 if (!S.Key.empty() && !S.Default.empty()) DefaultImages.insert({ S.Key, Lower(S.Default) });
                 if (!S.Default.empty() && S.Default.front() == '$')
                     for (const std::string& One : SplitList(S.Semantic)) CodeSemantics[Lower(S.Default)][One]++;
@@ -522,6 +534,34 @@ namespace
             for (const Slot& S : T.Slots) Hashes.insert(S.Hash);
             return Hashes;
         };
+        // HydraX candidate Slots / ImageSlots: only the textures that have a material GDT key
+        const auto KeyedHashes = [](const Techset& T) {
+            std::set<uint32_t> Hashes;
+            for (const Slot& S : T.Slots)
+                if (!S.Key.empty()) Hashes.insert(S.Hash);
+            return Hashes;
+        };
+        // HydraX CompatibleCount: of the material's known slots, how many the techset's slot accepts (a slot the material has no wish for, or the techset has no key for, counts)
+        const auto CompatibleCount = [&](const Techset& T) {
+            int Count = 0;
+            for (const uint32_t H : KnownMaterial)
+            {
+                const Slot* Own = nullptr;
+                for (const Slot& S : T.Slots)
+                    if (S.Hash == H && !S.Key.empty()) { Own = &S; break; }
+                bool Ok = true;
+                // the material's image in texture H is what the texture's usual key says it is (colorMap: the colour image), not what this
+                // techset happens to key the texture as: HydraX compares the image's semantic with what the techset expects at that hash
+                if (Own != nullptr)
+                {
+                    const std::string Usual = D.DefaultKeyOfHash(H);
+                    for (const auto& [Key, Intent] : R.Wanted)
+                        if (Key == Usual && !Accepts(*Own, Intent)) { Ok = false; break; }
+                }
+                if (Ok) ++Count;
+            }
+            return Count;
+        };
         const std::string Family = Named ? FamilyOf(Source) : std::string();
         const std::string Target = Family.empty() ? std::string() : FamilyTarget(D, Family);
 
@@ -554,7 +594,7 @@ namespace
                 // with the slot hashes (BO4, Cold War) the type needs a texture for every KNOWN hash of the material, as HydraX; else for every wanted key
                 const auto Covers = [&](const Techset& Type) {
                     if (!KnownMaterial.empty())
-                        return std::all_of(KnownMaterial.begin(), KnownMaterial.end(), [&](uint32_t H) { return std::any_of(Type.Slots.begin(), Type.Slots.end(), [&](const Slot& S) { return S.Hash == H; }); });
+                        return std::all_of(KnownMaterial.begin(), KnownMaterial.end(), [&](uint32_t H) { return std::any_of(Type.Slots.begin(), Type.Slots.end(), [&](const Slot& S) { return S.Hash == H && !S.Key.empty(); }); });     // HydraX: the keyed ImageSlots
                     return std::all_of(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return Type.ByKey(W.first) != nullptr; });
                 };
                 if (T != nullptr && IsMappable(Target) && VegetationOk(Target) && (!HaveRender || RenderMatches(R.RenderBlend, R.RenderTraits, *T)) && Compatible(*T) && Covers(*T))
@@ -655,7 +695,7 @@ namespace
                     {
                         // every known hash is a texture of the techset; the extras are the textures beyond them (HydraX)
                         if (KnownMaterial.empty() || !Compatible(*T)) continue;
-                        const std::set<uint32_t> Has = TextureHashes(*T);
+                        const std::set<uint32_t> Has = KeyedHashes(*T);
                         if (!std::all_of(KnownMaterial.begin(), KnownMaterial.end(), [&](uint32_t H) { return Has.count(H) != 0; })) continue;
                         Hit.emplace_back(Mismatch(*T), FamilyRank(T->Name), Has.size() - KnownMaterial.size(), T->Name.size(), T->Name, T);
                     }
@@ -674,27 +714,27 @@ namespace
             // With a game-stated class this is only for a material that has one (HydraX).
             if (!FromFlags || HaveRender)
             {
-                std::vector<std::tuple<int, size_t, size_t, size_t, std::string, const Techset*>> Hit;
+                std::vector<std::tuple<int, int, size_t, size_t, size_t, std::string, const Techset*>> Hit;
                 for (const Techset* T : Pool)
                 {
                     if (ByHash)
                     {
-                        const std::set<uint32_t> Has = TextureHashes(*T);
+                        const std::set<uint32_t> Has = KeyedHashes(*T);
                         const size_t Shared = static_cast<size_t>(std::count_if(KnownMaterial.begin(), KnownMaterial.end(), [&](uint32_t H) { return Has.count(H) != 0; }));
                         if (Shared == 0) continue;
-                        Hit.emplace_back(Mismatch(*T), KnownMaterial.size() - Shared, Has.size() - Shared, T->Name.size(), T->Name, T);
+                        Hit.emplace_back(Mismatch(*T), -CompatibleCount(*T), KnownMaterial.size() - Shared, Has.size() - Shared, T->Name.size(), T->Name, T);
                         continue;
                     }
                     const size_t Shared = static_cast<size_t>(std::count_if(R.Wanted.begin(), R.Wanted.end(), [&](const auto& W) { return Supports(*T, W); }));
                     if (Shared == 0) continue;
-                    Hit.emplace_back(Mismatch(*T), Need - Shared, T->KeyedCount() - Shared, T->Name.size(), T->Name, T);
+                    Hit.emplace_back(Mismatch(*T), 0, Need - Shared, T->KeyedCount() - Shared, T->Name.size(), T->Name, T);
                 }
                 if (!Hit.empty())
                 {
                     std::sort(Hit.begin(), Hit.end());
-                    const Techset* T = std::get<5>(Hit.front());
+                    const Techset* T = std::get<6>(Hit.front());
                     return Make(T, Rule::RenderClass, std::format("No techset of the class has all of the {} image slots ({}); {} keeps {} of them.{}", Need,
-                                                                  KeysText(R.Wanted), T->Name, Need - std::get<1>(Hit.front()), LevelNote[Level]));
+                                                                  KeysText(R.Wanted), T->Name, Need - std::get<2>(Hit.front()), LevelNote[Level]));
                 }
             }
         }
@@ -1097,6 +1137,70 @@ int SelfTest(std::string& Failures)
             Request Unknown = Nothing;
             Unknown.SlotHashes = { SlotHash("aBo4OnlySlot") };
             Check(Choose(M, Unknown).Used == Rule::Default, "a material whose hashes no techset knows: Default", Got(Choose(M, Unknown)));
+        }
+        // keyed slots, as HydraX ImageSlots: a texture with no material key is not a known slot, adds no extras, and the overlap prefers the techset whose slots accept the images
+        {
+            const std::string UnZ = Sl("zzMap", "", "", ""), Un = Sl("xUnkeyed", "", "", ""), Zz = Sl("zzMap", "specColorMap", "specularMap", ""),
+                              G1 = Sl("gMap", "cosinePowerMap", "glossMap", ""), G2 = Sl("gMap", "cosinePowerMap", "occlusionMap", "");
+            const std::string KJson = "{\"version\":1,\"techsets\":[" +
+                T("lit_kz_b", "Geometry", "Opaque", 0, { &Col, &Nor, &Ao }) + "," +
+                T("lit_kz_long_a", "Geometry", "Opaque", 0, { &Col, &Nor, &Ao, &Un }) + "," +          // one more texture, no key for it
+                T("lit_kx_p", "Geometry", "Opaque", 0, { &Col, &Nor, &Un }) + "," +
+                T("lit_kx_qqqq", "Geometry", "Opaque", 0, { &Col, &Nor }) + "," +
+                T("lit_ov_x", "Geometry", "Opaque", 0, { &Col, &Nor, &G1 }) + "," +
+                T("lit_ov_yyyyy", "Geometry", "Opaque", 0, { &Col, &Nor, &G2 }) + "," +
+                T("lit_other_blend", "Geometry", "Blend", 0, { &Col, &Nor, &Zz }) + "," +
+                T("lit_famly_long", "Geometry", "Opaque", 0, { &Col, &Nor, &UnZ }) + "]}";
+            Data K;
+            Check(K.LoadCatalogText(KJson), "keyed-slot catalog loads", "");
+            Check(!K.KnownHash(SlotHash("xUnkeyed")) && K.KnownHash(SlotHash("zzMap")) && K.KnownHash(SlotHash("colorMap")), "a texture with no material key is not a known slot", "");
+            const auto Opaque = [&](std::initializer_list<const char*> Names, std::vector<std::pair<std::string, std::string>> Wanted) {
+                Request Rq;
+                Rq.RenderFromFlags = true;
+                Rq.HasRender = true;
+                Rq.RenderBlend = Blend::Opaque;
+                Rq.Wanted = std::move(Wanted);
+                Rq.SlotHashes = Hashes(Names);
+                return Rq;
+            };
+            const std::vector<std::pair<std::string, std::string>> Plain = { { "colorMap", "diffuseMap" }, { "normalMap", "normalMap" }, { "occMap", "occlusionMap" } };
+            // a BO4-only hash keeps the exact slot set from matching; the unkeyed texture is not asked for, so the shorter name wins
+            const Choice A = Choose(K, Opaque({ "colorMap", "normalMap", "aoMap", "xUnkeyed", "bo4Only" }, Plain));
+            Check(Nm(A) == "lit_kz_b" && A.Used == Rule::SlotSuperset, "superset: an unkeyed texture of the material is no known slot, so it does not narrow the candidates", Got(A));
+            // both cover the material; the unkeyed texture of one is no extra
+            const Choice B = Choose(K, Opaque({ "colorMap", "normalMap", "bo4Only" }, { { "colorMap", "diffuseMap" }, { "normalMap", "normalMap" } }));
+            Check(Nm(B) == "lit_kx_p" && B.Used == Rule::SlotSuperset, "superset: the extras count keyed slots only", Got(B));
+            // overlap: zzMap is known (keyed in a blend techset) but no opaque techset has it
+            const Choice C = Choose(K, Opaque({ "colorMap", "normalMap", "zzMap", "bo4Only" }, { { "colorMap", "diffuseMap" }, { "normalMap", "normalMap" } }));
+            Check(Nm(C) == "lit_kx_p" && C.Used == Rule::RenderClass, "overlap: the extras count keyed slots only", Got(C));
+            // the compatible count is by texture hash: a techset that keys the colorMap texture as a normal map does not accept a colour image there
+            {
+                const std::string NormalKeyed = Sl("colorMap", "normalMap", "normalMap", "");
+                const std::string LJson = "{\"version\":1,\"techsets\":[" +
+                    T("lit_cx_a", "Geometry", "Opaque", 0, { &NormalKeyed }) + "," +
+                    T("lit_cx_bbbbb", "Geometry", "Opaque", 0, { &Col }) + "," +
+                    T("lit_cx_c_other", "Geometry", "Opaque", 0, { &Col }) + "," +
+                    T("lit_cx_zz", "Geometry", "Blend", 0, { &Col, &Zz }) + "]}";
+                Data L;
+                Check(L.LoadCatalogText(LJson), "compat catalog loads", "");
+                Check(L.DefaultKeyOfHash(SlotHash("colorMap")) == "colorMap" && L.DefaultKeyOfHash(SlotHash("nothing")).empty(), "the usual key of a texture hash is its most common key", L.DefaultKeyOfHash(SlotHash("colorMap")));
+                const Choice X = Choose(L, Opaque({ "colorMap", "zzMap" }, { { "colorMap", "diffuseMap" } }));
+                Check(Nm(X) == "lit_cx_bbbbb" && X.Used == Rule::RenderClass, "overlap: a colour image is not compatible with a techset that keys the colorMap texture as a normal map", Got(X));
+            }
+            // family: the type must have a keyed slot for every known hash of the material; a texture it holds without a key does not count
+            {
+                Request Fam = Opaque({ "colorMap", "normalMap", "zzMap" }, { { "colorMap", "diffuseMap" }, { "normalMap", "normalMap" } });
+                Fam.SourceTechset = "mc/lit_famly_long#9";
+                const Choice F = Choose(K, Fam);
+                Check(F.Used != Rule::Family, "family: a texture the type holds with no key is no slot for the material's known hash", Got(F));
+                Request Ok = Opaque({ "colorMap", "normalMap" }, { { "colorMap", "diffuseMap" }, { "normalMap", "normalMap" } });
+                Ok.SourceTechset = "mc/lit_famly_long#9";
+                const Choice G = Choose(K, Ok);
+                Check(Nm(G) == "lit_famly_long" && G.Used == Rule::Family, "family: the same type is taken when the material's slots are all keyed there", Got(G));
+            }
+            // overlap tie on shared slots, broken by how many of the images the slots accept (HydraX CompatibleCount), before the name length
+            const Choice D = Choose(K, Opaque({ "colorMap", "normalMap", "gMap", "zzMap" }, { { "colorMap", "diffuseMap" }, { "normalMap", "normalMap" }, { "cosinePowerMap", "occlusionMap" } }));
+            Check(Nm(D) == "lit_ov_yyyyy" && D.Used == Rule::RenderClass, "overlap: the techset whose slots accept the images beats a shorter name", Got(D));
         }
         // the name list: 60-bit key, xtechset_ form, no index
         {

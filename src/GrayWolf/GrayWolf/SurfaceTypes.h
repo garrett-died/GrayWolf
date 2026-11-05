@@ -40,11 +40,15 @@ namespace SurfaceTypes
         size_t Count() const { return Types.size(); }
         uint32_t Mask() const { return TypeMask; }
         bool HasGame(const std::string& Game) const;
+        // A `bo3_unused|<name>|<value>` row: the game names this surface type but no stock BO3 material entry uses it (HydraX writes
+        // <none> for the BO4 player and riotshield). Per game, as data: the t7 table has no such row, BO3 keeps both.
+        bool UnusedInBo3(const std::string& SurfaceName) const;
 
     private:
         uint32_t TypeMask = 0, OpaqueBit = 0, DecalBit = 0;
         std::vector<std::string> Games;
         std::vector<std::pair<uint32_t, std::string>> Types;
+        std::vector<std::string> Unused;
     };
 
     // The profile's table (zonekit/profiles/<profile>/flag_names.txt, found as the other profile files are); null when there is none.

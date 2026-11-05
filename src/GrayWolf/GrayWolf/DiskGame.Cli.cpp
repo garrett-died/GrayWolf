@@ -258,6 +258,7 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
             In.ModToolsRoot = Publish.ModToolsRoot;
             In.Catalog = &Bo3Target::Techsets::Shared();
             In.Held = Mod.View().Held;
+            In.Stock = Mod.View().Stock;
             In.Approximations = fs::path(C.OutRoot) / "graywolf_approximations.tsv";
             std::error_code GateEc;
             In.MapSources = fs::is_directory(Publish.OutputRoot / "map_source", GateEc) || Publish.FullMap;

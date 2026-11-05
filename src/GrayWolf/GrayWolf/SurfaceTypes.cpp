@@ -61,10 +61,16 @@ bool Names::Parse(std::string_view Text)
         if (Kind == "surface_mask") TypeMask = Word;
         else if (Kind == "game" && !Name.empty()) Games.push_back(Name);
         else if (Kind == "surface" && !Name.empty()) Types.emplace_back(Word, Name);
+        else if (Kind == "bo3_unused" && !Name.empty()) Unused.push_back(Name);
         else if (Kind == "render" && Name == "opaque") OpaqueBit = Word;
         else if (Kind == "render" && Name == "decal") DecalBit = Word;
     }
     return TypeMask != 0 && !Types.empty();
+}
+
+bool Names::UnusedInBo3(const std::string& SurfaceName) const
+{
+    return std::find(Unused.begin(), Unused.end(), SurfaceName) != Unused.end();
 }
 
 bool Names::HasGame(const std::string& Game) const
@@ -134,6 +140,11 @@ void Apply(const std::string& Profile, const Materials::Source& Source, Material
     switch (Table->Decode(static_cast<uint32_t>(Source.SurfaceFlags), Name))
     {
     case Names::State::Named:
+        if (Table->UnusedInBo3(Name))
+        {
+            D.SurfaceWhy = "no_bo3_use:" + Name;     // named by the game, used by no stock BO3 material: the writer says <none> and why
+            break;
+        }
         D.SurfaceType = Name;
         D.SurfaceWhy.clear();
         break;
@@ -232,6 +243,21 @@ int SelfTest(std::string& Failures)
     Check(D.SurfaceType == "metal" && D.SurfaceWhy.empty(), "bo4 0xD440A0 is metal", D.SurfaceType);
     Apply("no_such_profile", Src, D);
     Check(D.SurfaceType.empty() && (D.SurfaceWhy == "no_table" || D.SurfaceWhy == "table_missing"), "a profile with no table gives no type and a reason", D.SurfaceWhy);
+    // player and riotshield: BO4 gives <none> (no stock BO3 material uses them), BO3 keeps both (HydraX Bo3MaterialDecoder.SurfaceTypes)
+    Src.SurfaceFlags = 0x1D00000 | 0x80;
+    Apply("bo4", Src, D);
+    Check(D.SurfaceType.empty() && D.SurfaceWhy == "no_bo3_use:player", "bo4 player is <none> with its reason", D.SurfaceType + "/" + D.SurfaceWhy);
+    Src.SurfaceFlags = 0x1F00000;
+    Apply("bo4", Src, D);
+    Check(D.SurfaceType.empty() && D.SurfaceWhy == "no_bo3_use:riotshield", "bo4 riotshield is <none> with its reason", D.SurfaceWhy);
+    Apply("t7", Src, D);
+    Check(D.SurfaceType == "riotshield" && D.SurfaceWhy.empty(), "bo3 keeps riotshield", D.SurfaceType);
+    Src.SurfaceFlags = 0x1D00000;
+    Apply("t7", Src, D);
+    Check(D.SurfaceType == "player", "bo3 keeps player", D.SurfaceType);
+    Src.SurfaceFlags = 0xD440A0;
+    Apply("bo4", Src, D);
+    Check(D.SurfaceType == "metal", "bo4 metal is still metal", D.SurfaceType);
     const std::vector<std::string> Options = { "<error>", "<none>", "Metal", "wood" };
     Check(ToBo3("metal", Options) == "Metal" && ToBo3("wood", Options) == "wood" && ToBo3("ladder", Options).empty(), "ToBo3 matches an option by name, case aside, and nothing else");
     return Failed;

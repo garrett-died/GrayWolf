@@ -240,6 +240,15 @@ namespace
                     }
                     Out += std::format("compare_187765: stock_with_id_le={} stock_with_id_gt={} not_stock_with_id_le={}\n",
                         StockAtOrBelow, StockAbove, NotStockAtOrBelow);
+                    // The same rule with the file rules only (what the index counted before the install bound): the difference is the owner's content
+                    // and the re-saved library gdts, rows that stay in the exists and conflict checks but no longer feed layout learning.
+                    Db::StockRules FilesOnly = Rules;
+                    FilesOnly.UseIdLimit = false;
+                    const Db::StockIndex Before(Rows, FilesOnly, *Files);
+                    Out += std::format("stock_count_file_rules_only={}\nstock_count_with_install_bound={}\nnot_stock_above_install_bound={}\n",
+                        Before.StockCount(), Stock->StockCount(), Stock->LateId);
+                    Out += std::format("install_bound: known={} id_limit={} window_gdts={} batch_gap={} hydrax_constant=187765 limit_equals_constant={}\n",
+                        Stock->IdLimitKnown() ? "yes" : "no", Stock->IdLimit(), Stock->IdLimitGdts, Rules.BatchGap, Stock->IdLimit() == 187765 ? "yes" : "no");
                     // Report only: gdts saved more than a day after the linker. They are stock (the age does
                     // not decide); the list shows which stock gdts a naive date rule would have lost.
                     std::map<std::string, size_t> LateGdts;
@@ -261,7 +270,7 @@ namespace
                         if (Why.starts_with("tool_prefix")) ++Prefixed[Why];
                     }
                     for (const auto& [Why, Count] : Prefixed) Out += std::format("tool_prefixed_gdt rows={} {}\n", Count, Why);
-                    Out += std::format("stock_rule=gdt not in a manifest and file name without hydrax_/graywolf_ prefix\n"
+                    Out += std::format("stock_rule=gdt not in a manifest, file name without hydrax_/graywolf_ prefix, and (gdt saved in the install window, or entity id at most the install bound)\n"
                         "not_stock_no_gdt_path={}\nnot_stock_in_manifest={}\nnot_stock_tool_prefixed={}\n"
                         "report_only_rows_saved_later_than_1d_after_linker={}\nreport_only_rows_gdt_file_missing={}\n",
                         Stock->NoGdtFile, Stock->InManifest, Stock->ToolPrefixed, Stock->SavedLater, Stock->FileMissing);

@@ -30,6 +30,7 @@ public:
     struct MaterialElsewhere
     {
         std::vector<std::pair<uint64_t, uint32_t>> Images;
+        std::vector<uint32_t> Formats;                 // the DXGI format of each image (parallel to Images), 0 when the defining zone holds none
         uint64_t Techset = 0;
         std::vector<uint8_t> Constants;
         int64_t SurfaceFlags = -1, RenderFlags = -1;   // the material's surface flags (+0x28) and its techset's renderFlags (+0x20), -1 when unread
@@ -37,6 +38,10 @@ public:
     // A disk export's: a material header without images (another zone defines the material) ->
     // that zone's material; false when unknown. Unset outside a disk export.
     static thread_local std::function<bool(uint64_t MaterialHash, MaterialElsewhere& Out)> ImagesElsewhere;
+    // The same hook asked for one image: the key is the image's 60-bit name hash with this bit set, and the answer is Out.Formats[0] (the DXGI
+    // format of that image read wherever a header of it is, 0 when none is). The format is the image's own, so a material whose slot holds a stub
+    // header (its image is defined in another zone) can still be told colour from mask. Not a second hook: one thread-local function is enough.
+    static constexpr uint64_t ImageFormatKey = 1ull << 62;
     // A disk export's: the renderFlags of a technique set whose header in this zone is a stub (another zone holds it); 0 when unknown.
     static thread_local std::function<int64_t(uint64_t TechsetHash)> TechsetFlagsElsewhere;
     static void LoadXModel(const XModelLod_t& ModelLOD, const std::unique_ptr<WraithModel>& ResultModel);

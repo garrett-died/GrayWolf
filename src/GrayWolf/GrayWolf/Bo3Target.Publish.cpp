@@ -621,6 +621,11 @@ namespace Bo3Target::Publish
         {
             if (M.Bins.empty() && !M.Sidecars.empty() && !GeometryOwners.count(Name)) Count("models_without_xmodel_bin");
         }
+        for (const auto& [SkippedName, SkippedNote] : Resolved.Skipped)
+        {
+            Approxes.push_back({ SkippedNote.Code, SkippedName, SkippedNote.Detail, SkippedNote.Message });
+            Count("materials_skipped_by_game_rule");
+        }
         for (const auto& M : Resolved.Materials)
         {
             Asset A;

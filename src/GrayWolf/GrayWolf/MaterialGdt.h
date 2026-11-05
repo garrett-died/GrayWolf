@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+class WraithModel;
 namespace DiskGame { struct Context; struct Totals; }
 
 namespace MaterialGdt
@@ -28,6 +29,29 @@ namespace MaterialGdt
     // leading and trailing '_' dropped ("mc/mtl_Foo" -> "mc_mtl_foo", "~mtl_x-1" -> "mtl_x_1").
     // A function of the name alone, so a model file written on its own names what the GDT defines.
     std::string AssetName(const std::string& Source);
+
+    // The name a material has in the BO3 GDT and in the model files that name it: AssetName, then Placement::Shorten (over 63 characters becomes the
+    // first 55, '_' and 7 hex of the FNV-1a of the name; HydraX MaterialEntryNames). The one function both writers call.
+    std::string EntryName(const std::string& Source);
+
+    // The material names of a model, in place, as EntryName gives them; the old names go to Saved (RestoreModelMaterialNames puts them back).
+    // Called only while a BO3 material GDT is being written (ModelFilesUseAssetNames), so no other output changes.
+    void NameModelMaterials(WraithModel& Model, std::vector<std::string>& Saved);
+    void RestoreModelMaterialNames(WraithModel& Model, const std::vector<std::string>& Saved);
+    // The same as a scope: names on construction when On, puts the model's own names back on destruction, also when a writer throws.
+    class ScopedModelMaterialNames
+    {
+    public:
+        ScopedModelMaterialNames(WraithModel& Model, bool On);
+        ~ScopedModelMaterialNames();
+        ScopedModelMaterialNames(const ScopedModelMaterialNames&) = delete;
+        ScopedModelMaterialNames& operator=(const ScopedModelMaterialNames&) = delete;
+
+    private:
+        WraithModel& Model;
+        bool On;
+        std::vector<std::string> Saved;
+    };
 
     // True for a source image name an engine decorated (Infinity Ward): a "&" or "~" form marker ("_c&", "_s~"), a "packed_" prefix, or an 8-hex
     // token with a digit and a letter ("..._482cf5df_c"). Such an image is named from its material and slot ("i_<material>_<c|n|g|s|o|m|t|e>").
@@ -123,6 +147,7 @@ namespace MaterialGdt
         {
             std::vector<ResolvedMaterial> Materials;    // by name
             std::vector<ResolvedImage> ImagesOut;       // by name
+            std::vector<std::pair<std::string, Note>> Skipped;   // materials a game's adapter said not to export (asset name, why)
             size_t NameCollisions = 0;                  // images whose name another image already had (they got _2, _3 ...; none is dropped)
         };
         Resolved Resolve() const;
@@ -159,6 +184,7 @@ namespace MaterialGdt
         std::map<std::string, std::string> Usage;
         std::vector<std::string> SurfaceChoices;
         std::map<std::string, size_t> Count;
+        std::vector<std::pair<std::string, Note>> SkippedMaterials;
         bool Convert = false;
         std::filesystem::path RunRoot;
         Bo3Target::DerivedImages Derived;
