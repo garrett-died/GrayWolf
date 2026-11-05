@@ -36,7 +36,10 @@ namespace Bo3Target::Verify
         constexpr int kSpecDielectric = 56, kSpecTolerance = 2, kSpecDielectricMax = 90;
         constexpr double kSpecMinNonZero = 0.10;          // below this share of non-zero pixels the map carries no level to judge
         constexpr int kMetalSpecMin = 150, kBareMetalBlack = 24;
-        constexpr double kMetalWarnShare = 0.10, kMetalFailShare = 0.50;
+        // rules.specular_level and rules.bare_metal are warnings, never failures: measured on stock BO3 sources, stock breaks both
+        // guidelines on a large share of its own assets (painted metal, plastic, ice), so a failure would fail Treyarch's own assets. See
+        // docs/hydrax-port/p2-specular-gloss.md.
+        constexpr double kMetalWarnShare = 0.10;
         constexpr double kScrollMax = 10.0, kRotationMax = 3600.0;   // the awi ranges, restated so a stale awi cannot widen the rule
 
         const char* const kStatic = "static gate: read from the files against the Mod Tools' deffiles and the techset catalog; "
@@ -852,7 +855,10 @@ namespace Bo3Target::Verify
 
         std::vector<int> ChannelsFor(const std::string& Semantic)
         {
-            if (Semantic == "glossMap" || Semantic == "occlusionMap" || Semantic == "revealMap" || Semantic == "thicknessMap" || Semantic == "specularMask" || Semantic == "One Channel") return { 1 };
+            // stock headers: specularMask is 1 channel on 51 of 150 and 3 on 98, so both are accepted; gloss (126/150), occlusion (142/150),
+            // reveal (136/150) and thickness (32/36) are one channel
+            if (Semantic == "specularMask") return { 1, 3 };
+            if (Semantic == "glossMap" || Semantic == "occlusionMap" || Semantic == "revealMap" || Semantic == "thicknessMap" || Semantic == "One Channel") return { 1 };
             if (Semantic == "diffuseMap" || Semantic == "effectMap" || Semantic == "specularMap" || Semantic == "normalMap") return { 3, 4 };
             if (Semantic == "Two Channel") return { 2 };
             if (Semantic == "camoMap") return { 3 };
@@ -926,7 +932,7 @@ namespace Bo3Target::Verify
                     for (int W : Want) List += (List.empty() ? "" : " or ") + std::to_string(W);
                     // a one-channel map stored in more channels is acceptable to read only when it is grey (R = G = B)
                     bool Grey = false, Judged = false;
-                    if (Want.size() == 1 && Want[0] == 1 && Info.Channels > 1)
+                    if (std::find(Want.begin(), Want.end(), 1) != Want.end() && Info.Channels > 1)
                     {
                         if (const auto T = ThumbOf(C, File, E); T && !T->Rgba.empty())
                         {
@@ -975,7 +981,7 @@ namespace Bo3Target::Verify
                     const SpecStat S = SpecularMode(*T);
                     C.Judged("rules.specular_level");
                     if (S.Pixels && static_cast<double>(S.NonZero) / static_cast<double>(S.Pixels) >= kSpecMinNonZero && S.Mode > 0 && S.Mode <= kSpecDielectricMax && std::abs(S.Mode - kSpecDielectric) > kSpecTolerance)
-                        C.Fail("rules.specular_level", E, std::format("the most common non-zero level is {} ({:.0f}% of them); a non-metal's specular is {}/255 (gold, copper and brass are exceptions this check cannot tell apart)", S.Mode, 100 * S.Share, kSpecDielectric));
+                        C.Warn("rules.specular_level", E, std::format("the most common non-zero level is {} ({:.0f}% of them); a non-metal's specular is usually {}/255 (the stock mode; stock maps differ on purpose for gold, copper, brass, ice and plastic, so this is a guideline; nothing was changed)", S.Mode, 100 * S.Share, kSpecDielectric));
                 }
             }
         }
@@ -1177,10 +1183,8 @@ namespace Bo3Target::Verify
             C.Judged("rules.bare_metal");
             if (M.MetalPixels < 64) return;
             const double Share = static_cast<double>(M.NotBlack) / static_cast<double>(M.MetalPixels);
-            if (Share > kMetalFailShare)
-                C.Fail("rules.bare_metal", E, std::format("{:.0f}% of the {} metal-bright specular pixels (mean >= {}) have a diffuse above {}; bare metal's diffuse is black", 100 * Share, M.MetalPixels, kMetalSpecMin, kBareMetalBlack));
-            else if (Share > kMetalWarnShare)
-                C.Warn("rules.bare_metal", E, std::format("{:.0f}% of the {} metal-bright specular pixels (mean >= {}) have a diffuse above {}; bare metal's diffuse is black", 100 * Share, M.MetalPixels, kMetalSpecMin, kBareMetalBlack));
+            if (Share > kMetalWarnShare)
+                C.Warn("rules.bare_metal", E, std::format("{:.0f}% of the {} metal-bright specular pixels (mean >= {}) have a diffuse above {}; bare metal's diffuse is usually black, but stock materials with both maps break that (painted metal, plastic), so this is a guideline; nothing was changed", 100 * Share, M.MetalPixels, kMetalSpecMin, kBareMetalBlack));
         }
     }
 
@@ -2153,6 +2157,10 @@ void GenerateUI( asset Asset )
         Put(Out / "texture_assets" / "t" / "n_bad.tif", Tiff(8, 8, 3, { 128, 128, 0 }));
         Put(Out / "texture_assets" / "t" / "g3.tif", Tiff(8, 8, 3, { 90, 90, 90 }));
         Put(Out / "texture_assets" / "t" / "g3c.tif", Tiff(8, 8, 3, { 90, 10, 200 }));
+        Put(Out / "texture_assets" / "t" / "s_off.tif", Tiff(8, 8, 3, { 80, 80, 80 }));
+        Put(Out / "texture_assets" / "t" / "s_ok.tif", Tiff(8, 8, 3, { 56, 56, 56 }));
+        Put(Out / "texture_assets" / "t" / "s_metal.tif", Tiff(8, 8, 3, { 220, 220, 220 }));
+        Put(Out / "texture_assets" / "t" / "sm3.tif", Tiff(8, 8, 3, { 90, 90, 90 }));
         Put(Out / "texture_assets" / "t" / "odd.tif", Tiff(10, 6, 3, { 100, 100, 100 }));
         Fields NBad = Img("n_bad.tif", "normalMap", "Normal", "bogus");
         NBad.insert(NBad.begin() + 1, std::pair<std::string, std::string>{ "colorSRGB", "1" });
@@ -2164,6 +2172,11 @@ void GenerateUI( asset Asset )
             Ent("i_g3c", "image", Img("g3c.tif", "glossMap", "Linear1ch", "compressed")),
             Ent("i_n", "image", Img("n.tif", "normalMap", "Normal", "compressed")),
             Ent("i_n_bad", "image", NBad),
+            Ent("i_s_off", "image", Img("s_off.tif", "specularMap", "sRGB3ch", "compressed")),
+            Ent("i_s_ok", "image", Img("s_ok.tif", "specularMap", "sRGB3ch", "compressed")),
+            Ent("i_s_metal", "image", Img("s_metal.tif", "specularMap", "sRGB3ch", "compressed")),
+            Ent("mtl_barem", "material", { { "colorMap", "i_c" }, { "materialType", "lit" }, { "specColorMap", "i_s_metal" }, { "surfaceType", "metal" }, { "usage", "<not in editor>" } }),
+            Ent("i_sm3", "image", Img("sm3.tif", "specularMask", "Linear1ch", "compressed")),
             Ent("i_odd", "image", Img("odd.tif", "diffuseMap", "sRGB3chAlpha", "compressed")),
             Ent("i_x_missing", "image", Img("nope.tif", "normalMap", "Normal", "compressed")),
             Ent("mtl_bad", "material", { { "colorMap", "i_n" }, { "colorTint", "0.5 1 1 1" }, { "invented", "1" }, { "materialType", "lit_weapon_camo" }, { "normalMap", "i_c" },
@@ -2192,6 +2205,11 @@ void GenerateUI( asset Asset )
         Check(Count("image.dds", "image:i_dds") == 1, "a .dds source fails");
         Check(Count("image.channels", "image:i_g3", Severity::Warning) == 1 && Count("image.channels", "image:i_g3") == 0, "a grey three-channel gloss map warns");
         Check(Count("image.channels", "image:i_g3c") == 1, "a coloured three-channel gloss map fails the channel rule", [&] { std::string L; for (const Finding& F : R.Findings) if (F.Asset == "image:i_g3c") L += F.Check + ":" + F.Detail + "; "; return L; }());
+        Check(Count("rules.specular_level", "image:i_s_off", Severity::Warning) == 1 && Count("rules.specular_level", "image:i_s_off") == 0 && Count("rules.specular_level", "image:i_s_ok", Severity::Warning) == 0,
+              "a flat specular off the 56 level warns (stock breaks the guideline on 37%), one on 56 is silent");
+        Check(Count("rules.bare_metal", "material:mtl_barem", Severity::Warning) == 1 && Count("rules.bare_metal", "material:mtl_barem") == 0, "a bright diffuse on a metal specular warns, never fails");
+        Check(Count("image.channels", "image:i_sm3") == 0 && Count("image.channels", "image:i_sm3", Severity::Warning) == 0 && Count("image.channels", "image:i_g3", Severity::Warning) == 1,
+              "a three-channel specularMask is accepted as stock has it; the same three channels in a gloss map still warn");
         Check(Count("image.block_size", "image:i_odd") == 1, "10x6 compressed fails the multiple-of-4 rule");
         Check(Count("image.srgb", "image:i_n_bad") == 1 && Count("image.semantic_table", "image:i_n_bad") == 1, "colorSRGB 1 and an off-table compression fail");
         Check(Count("image.normal_z", "image:i_n_bad") == 1 && Count("image.normal_z", "image:i_n") == 0, "a normal with blue 0 fails, one with Z passes", std::to_string(Count("image.normal_z")));

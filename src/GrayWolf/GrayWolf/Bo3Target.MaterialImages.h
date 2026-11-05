@@ -35,6 +35,12 @@ namespace Bo3Target
     // it cannot be read. Width and Height too, to cost a load before it is made. Used to leave a one-channel or 16-bit file as it is.
     bool ImageFileLayout(const std::filesystem::path& File, size_t& Channels, size_t& BitsPerChannel, size_t& Width, size_t& Height);
 
+    // The one-channel form of a grey 8-bit PNG or TIFF (R = G = B and alpha 255 on every pixel): the encoded bytes of an
+    // 8-bit single-channel file of the same container. False, with Bytes empty, when the file is already one channel, is not 8-bit,
+    // is not exactly grey or has a varying alpha (nothing is lost or guessed: such a file is left as it is). BO3 stores gloss, occlusion,
+    // reveal, thickness and specular-mask sources in one channel (stock: 16-bit grey 67%, 8-bit grey 7%, RGB 25% of 250 gloss TIFFs).
+    bool OneChannelBytes(const std::filesystem::path& File, std::string& Bytes);
+
     // Inverts the green channel in place (a DirectX normal map to OpenGL and back).
     void FlipGreen(Rgba8Image& Image);
 

@@ -12,7 +12,9 @@
 namespace
 {
     constexpr float InsulatorSpecRange = 0.1f; // GameImageUtil's insulatorSpecRange
-    constexpr float SpecularFloor = 0.21f;     // the code's floor (its comment says 56/255; the code wins)
+    // BO3's non-metal specular level: the mode of 200 stock specularMap TIFFs is 56/255 (21.8% of all pixels; 0.21 = 53.55 is not
+    // where stock sits). It is made up only for the non-metal share of a pixel (see SplitFused), never over a derived metal value.
+    constexpr float SpecularFloor = 56.0f / 255.0f;
 
     float ToFloat(uint8_t Value)
     {
@@ -126,9 +128,11 @@ namespace
         OutColour.B = Colour.B * D;
         OutColour.A = ColourAlpha;
 
-        OutSpecular.R = std::max(R + M * Colour.R, SpecularFloor);
-        OutSpecular.G = std::max(R + M * Colour.G, SpecularFloor);
-        OutSpecular.B = std::max(R + M * Colour.B, SpecularFloor);
+        // the dielectric level is no authored value: it stands in only for the share of the pixel that is not metal (1 - M)
+        const float Floor = SpecularFloor * D;
+        OutSpecular.R = std::max(R + M * Colour.R, Floor);
+        OutSpecular.G = std::max(R + M * Colour.G, Floor);
+        OutSpecular.B = std::max(R + M * Colour.B, Floor);
         OutSpecular.A = 1.0f;
     }
 

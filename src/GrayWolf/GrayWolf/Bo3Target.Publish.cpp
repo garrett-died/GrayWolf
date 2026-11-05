@@ -79,6 +79,22 @@ namespace Bo3Target::Publish
 
     namespace
     {
+        std::string FieldOf(const Gdt::Fields& Fields, const char* Key)
+        {
+            for (const auto& [K, V] : Fields)
+                if (K == Key) return V;
+            return std::string();
+        }
+
+        // A one-channel semantic is narrowed only when the converter reads the same pixels afterwards: an entry with fromAlpha set reads the
+        // alpha channel, which an opaque grey RGBA file would lose by becoming one channel, so it is left as it is.
+        bool NarrowsToOneChannel(const Gdt::Fields& Fields)
+        {
+            static const std::set<std::string> OneChannel = { "glossMap", "occlusionMap", "revealMap", "thicknessMap", "specularMask", "One Channel" };
+            const std::string FromAlpha = FieldOf(Fields, "fromAlpha");
+            return OneChannel.count(FieldOf(Fields, "semantic")) != 0 && !(FromAlpha.size() && FromAlpha != "0");
+        }
+
         class NoTimes final : public GdtDb::IFileTimes
         {
         public:
@@ -720,6 +736,20 @@ namespace Bo3Target::Publish
                         A.Active = false;
                         A.Action = "no_source";
                         A.Reason = "the image file cannot be read: " + I.File.string();
+                    }
+                    // a one-channel semantic is stored in one channel (BO3 stock: 16-bit grey, 8-bit grey, or RGB): a grey RGBA source is
+                    // written as an 8-bit single-channel file. Only here, in the target layout: the exporter's own images are not touched.
+                    if (A.Active && Direct && !PlannedOnly)
+                    {
+                        std::string Narrow;
+                        if (NarrowsToOneChannel(I.Fields) && Bo3Target::OneChannelBytes(I.File, Narrow))
+                        {
+                            F.Converted = true;
+                            F.Bytes = std::move(Narrow);
+                            F.Hash = Out::Sha256Hex(F.Bytes);
+                            Approxes.push_back({ "image.one_channel", A.Name, "semantic=" + std::string(FieldOf(I.Fields, "semantic")), "a grey RGBA image is written as an 8-bit single-channel file, as BO3 stores this semantic; the pixel values are unchanged" });
+                            Count("images_one_channel");
+                        }
                     }
                     if (A.Active)
                     {
@@ -1926,6 +1956,45 @@ namespace Bo3Target::Publish
             size_t Files = 0;
             for (const auto& E : fs::directory_iterator(Dir, Ec)) { (void)E; ++Files; }
             Check(Hash0 == Hash1 && Files == 3, "image save: the existing file is as it was and no temp is left", std::to_string(Files));
+        }
+
+        Check(NarrowsToOneChannel({ { "semantic", "glossMap" } }) && !NarrowsToOneChannel({ { "semantic", "glossMap" }, { "fromAlpha", "1" } }) &&
+              NarrowsToOneChannel({ { "semantic", "occlusionMap" }, { "fromAlpha", "0" } }) && !NarrowsToOneChannel({ { "semantic", "diffuseMap" } }),
+              "one channel: an entry that reads the alpha channel (fromAlpha 1) is never narrowed; colour semantics are not", "");
+
+        // a grey RGBA image becomes an 8-bit single-channel file with the same values; a coloured one, or one with a varying alpha, is left
+        {
+            std::error_code Ec;
+            const fs::path Dir = fs::temp_directory_path(Ec) / std::format("gw_onech_selftest_{}", GetCurrentProcessId());
+            fs::remove_all(Dir, Ec);
+            fs::create_directories(Dir, Ec);
+            const auto Make2 = [](std::vector<uint8_t> P) { Rgba8Image I; I.Width = 2; I.Height = 1; I.Pixels = std::move(P); return I; };
+            std::string Error;
+            SaveRgba8(Dir / "grey.png", Make2({ 10, 10, 10, 255, 200, 200, 200, 255 }), Error);
+            SaveRgba8(Dir / "grey.tif", Make2({ 10, 10, 10, 255, 200, 200, 200, 255 }), Error);
+            SaveRgba8(Dir / "tint.png", Make2({ 10, 10, 11, 255, 200, 200, 200, 255 }), Error);
+            SaveRgba8(Dir / "alpha.png", Make2({ 10, 10, 10, 255, 200, 200, 200, 128 }), Error);
+            for (const char* Name : { "grey.png", "grey.tif" })
+            {
+                std::string Bytes;
+                const bool Narrowed = OneChannelBytes(Dir / Name, Bytes);
+                size_t Ch = 0, Bits = 0, W = 0, H = 0;
+                Rgba8Image Back;
+                bool Reads = false;
+                if (Narrowed)
+                {
+                    const fs::path Out1 = Dir / (std::string("one_") + Name);
+                    std::ofstream(Out1, std::ios::binary).write(Bytes.data(), (std::streamsize)Bytes.size());
+                    Reads = ImageFileLayout(Out1, Ch, Bits, W, H) && LoadRgba8(Out1, Back, Error);
+                }
+                Check(Narrowed && Reads && Ch == 1 && Bits == 8 && Back.Pixels == Make2({ 10, 10, 10, 255, 200, 200, 200, 255 }).Pixels,
+                      (std::string("one channel: ") + Name + " grey RGBA becomes one 8-bit channel with the same values").c_str(), std::format("{} {} {} {}", Narrowed, Ch, Bits, Error));
+            }
+            std::string Bytes;
+            Check(!OneChannelBytes(Dir / "tint.png", Bytes) && Bytes.empty(), "one channel: a pixel off grey by 1 keeps the file as it is", "");
+            Check(!OneChannelBytes(Dir / "alpha.png", Bytes) && Bytes.empty(), "one channel: a varying alpha keeps the file as it is", "");
+            Check(!OneChannelBytes(Dir / "one_grey.png", Bytes), "one channel: a file that is one channel already is left", "");
+            fs::remove_all(Dir, Ec);
         }
 
         // 17. ChooseRoot: --target modtools takes its root from the command line only

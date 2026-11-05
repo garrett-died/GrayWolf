@@ -459,30 +459,35 @@ static int SelfTest(std::string& Failures)
             std::format("{:f} {:f}", NX, NZ));
 
         // Fused colour, metal in alpha. (200,100,0,A=255): m=1, d=0 -> colour 0,0,0 with A 1;
-        // r=0.1, spec = (0.1+200/255, 0.1+100/255, 0.1 lifted to the 0.21 floor) = 226, 125, 54.
+        // r=0.1, spec = (0.1+200/255, 0.1+100/255, 0.1) = 226, 125, 26: a fully metal pixel gets no dielectric floor (it would rewrite the derived value).
         // (200,100,50,A=0): m=0, d=1 -> colour unchanged with A forced to 255; r=0 and m=0 so
-        // every spec channel is the 0.21 floor = 54
+        // every spec channel is the BO3 non-metal level 56/255 (tested on stock) = 56
         const auto Fused = Bo3Target::UnpackFusedColourMetalAlpha(Make(2, 1, { 200, 100, 0, 255,  200, 100, 50, 0 }));
         Check(Near(Fused.Colour, 0, 0, 0, 0, 255), "Bo3 fused metal alpha: full metal has no diffuse", Show(Fused.Colour, 0));
-        Check(Near(Fused.Specular, 0, 226, 125, 54, 255), "Bo3 fused metal alpha: 0.1 range and 0.21 floor", Show(Fused.Specular, 0));
+        Check(Near(Fused.Specular, 0, 226, 125, 26, 255), "Bo3 fused metal alpha: 0.1 range, no floor on a full metal pixel", Show(Fused.Specular, 0));
         Check(Near(Fused.Colour, 1, 200, 100, 50, 255), "Bo3 fused metal alpha: no metal keeps colour, alpha 1", Show(Fused.Colour, 1));
-        Check(Near(Fused.Specular, 1, 54, 54, 54, 255), "Bo3 fused metal alpha: no metal spec is the floor", Show(Fused.Specular, 1));
+        Check(Near(Fused.Specular, 1, 56, 56, 56, 255), "Bo3 fused metal alpha: no metal spec is the 56/255 non-metal level", Show(Fused.Specular, 1));
 
         // Fused colour with a separate mask. Colour is 2x2, all (200,100,50,A=77); the mask is one
         // pixel, so it is resized to 2x2. Mask R=255,A=0: m=1,d=0,r=0 -> colour 0,0,0 with A 77 kept,
-        // spec = max(X, 0.21) = 200,100,54. Mask R=0,A=255: m=0,d=1,r=0.1 -> colour unchanged,
-        // spec = max(0.1, 0.21) = 54 everywhere
+        // spec = X = 200,100,50 (no floor over metal). Mask R=0,A=255: m=0,d=1,r=0.1 -> colour unchanged,
+        // spec = max(0.1, 56/255) = 56 everywhere
         const auto Colour = Make(2, 2, { 200, 100, 50, 77,  200, 100, 50, 77,  200, 100, 50, 77,  200, 100, 50, 77 });
         const auto Metal = Bo3Target::UnpackFusedColourMetalMask(Colour, Make(1, 1, { 255, 0, 0, 0 }));
         Check(Metal.Colour.Width == 2 && Metal.Colour.Height == 2 && Metal.Specular.IsValid(),
             "Bo3 fused mask: output takes the colour image size", std::format("{}x{}", Metal.Colour.Width, Metal.Colour.Height));
         Check(Near(Metal.Colour, 3, 0, 0, 0, 77), "Bo3 fused mask: colour keeps its own alpha", Show(Metal.Colour, 3));
-        Check(Near(Metal.Specular, 3, 200, 100, 54, 255), "Bo3 fused mask: spec from the resized mask", Show(Metal.Specular, 3));
+        Check(Near(Metal.Specular, 3, 200, 100, 50, 255), "Bo3 fused mask: spec from the resized mask", Show(Metal.Specular, 3));
         const auto Plain = Bo3Target::UnpackFusedColourMetalMask(Colour, Make(1, 1, { 0, 0, 0, 255 }));
         Check(Near(Plain.Colour, 0, 200, 100, 50, 77), "Bo3 fused mask: no metal leaves colour", Show(Plain.Colour, 0));
-        Check(Near(Plain.Specular, 0, 54, 54, 54, 255), "Bo3 fused mask: insulator spec hits the 0.21 floor", Show(Plain.Specular, 0));
+        Check(Near(Plain.Specular, 0, 56, 56, 56, 255), "Bo3 fused mask: insulator spec is the 56/255 non-metal level", Show(Plain.Specular, 0));
         Check(!Bo3Target::UnpackFusedColourMetalMask(Colour, Rgba8Image()).Colour.IsValid(),
             "Bo3 fused mask: an empty mask gives nothing", "");
+
+        // the dielectric level stands in for the non-metal share only: mask R=128 gives M=0.447, D=0.553, so a black colour's
+        // specular is 56 * 0.553 = 31 (it is 56 at M=0 and absent at M=1)
+        const auto Half = Bo3Target::UnpackFusedColourMetalMask(Make(1, 1, { 0, 0, 0, 255 }), Make(1, 1, { 128, 0, 0, 0 }));
+        Check(Near(Half.Specular, 0, 31, 31, 31, 255), "Bo3 fused mask: the non-metal level is scaled by the non-metal share", Show(Half.Specular, 0));
 
         // Channel extraction: (10,20,30,40), blue is 30, inverted is 225, alpha is 40
         const auto Source = Make(1, 1, { 10, 20, 30, 40 });
@@ -755,9 +760,9 @@ static int SelfTest(std::string& Failures)
                   Count(F.Counters(), "metalness_dropped") == 1 && Count(F.Counters(), "type_lit_advanced_fullspec") == 2,
                 "Bo3 gdt: fused colour and metal become colour plus specular; an unmarked metalness is still counted dropped",
                 std::format("{} {} {}", Count(F.Counters(), "converted_metal_fused_alpha"), Count(F.Counters(), "converted_metal_fused_mask"), Count(F.Counters(), "metalness_dropped")));
-            // the mask material: M=(1-0.1)/0.9=1 so the colour goes black; specular is the colour with the 0.21 floor (50 -> 54)
+            // the mask material: M=(1-0.1)/0.9=1 so the colour goes black; specular is the colour itself, no floor over metal (50 stays 50)
             Rgba8Image FmC, FmS;
-            Check(Bo3Target::LoadRgba8(Dir / "w_c_c.png", FmC, Error) && Px(FmC, 0, 0, 0, 0, 255) && Bo3Target::LoadRgba8(Dir / "w_c_s.png", FmS, Error) && Px(FmS, 0, 200, 100, 54, 255),
+            Check(Bo3Target::LoadRgba8(Dir / "w_c_c.png", FmC, Error) && Px(FmC, 0, 0, 0, 0, 255) && Bo3Target::LoadRgba8(Dir / "w_c_s.png", FmS, Error) && Px(FmS, 0, 200, 100, 50, 255),
                 "Bo3 gdt: the fused mask split gives black colour and metal specular", Error);
         }
 

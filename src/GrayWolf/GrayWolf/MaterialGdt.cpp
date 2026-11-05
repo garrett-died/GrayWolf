@@ -3,6 +3,8 @@
 #include "MaterialGdt.h"
 
 #include "DiskGame.h"
+#include <optional>
+#include <cmath>
 #include "ExportNaming.h"
 #include "ExportWriters.h"
 #include "GdtWriter.h"
@@ -679,7 +681,11 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
         }
         // a stock image is judged by what it declares, not by what the source slot meant
         const std::string Effective = I.StockSemantic.empty() ? I.Semantic : I.StockSemantic;
-        if (S == nullptr || !Tc::Accepts(*S, Effective))
+        // An effect techset's colour slot takes effectMap, a diffuse image in the same sRGB colour form. An image this builder writes
+        // itself is retargeted to the slot's semantic (as a colour specular is to a mask below), not dropped: 29 effect materials of the
+        // 300-model BO4 run lost their colorMap to this. A stock image keeps what it declares and is still judged by it.
+        const bool ColourToEffect = S != nullptr && I.StockSemantic.empty() && Effective == "diffuseMap" && !Tc::Accepts(*S, "diffuseMap") && Tc::Accepts(*S, "effectMap");
+        if (S == nullptr || (!Tc::Accepts(*S, Effective) && !ColourToEffect))
         {
             M.Notes.push_back({ "material.unmapped_slot", "slot=" + Key + ", techset=" + T.Name + ", image=" + I.File.filename().string(),
                                 S == nullptr ? "the techset has no slot " + Key + ": the image is not written"
@@ -694,12 +700,13 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
             ++It;       // the stock image keeps its own semantic; nothing of it is written
             continue;
         }
-        const std::string Sem = Tc::SemanticFor(*S, I.Semantic);
+        const std::string Sem = ColourToEffect ? std::string("effectMap") : Tc::SemanticFor(*S, I.Semantic);
         if (Sem != I.Semantic)
         {
             M.Notes.push_back({ "material.slot_semantic_changed", "slot=" + Key + ", techset=" + T.Name + ", from=" + I.Semantic + ", to=" + Sem,
-                                "the slot takes " + Sem + ": a colour specular map is read as a scalar mask" });
+                                Sem == "effectMap" ? "the slot takes effectMap: a colour image is written as an effect map (the same sRGB colour form)" : "the slot takes " + Sem + ": a colour specular map is read as a scalar mask" });
             if (Sem == "specularMask") Counter("spec_as_mask")++;
+            if (ColourToEffect) Counter("colour_as_effect_map")++;
             const Tc::Form F = Tc::FormOf(Sem);
             I.Semantic = Sem;
             I.Core = F.Core;
@@ -711,6 +718,19 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
     }
     // stock writes <custom> for most materials, with a gloss map or without (BO3 stock: 73% of 14650 with a gloss image, 83% of 9179 without)
     M.Values.emplace_back("glossSurfaceType", "<custom>");
+
+    // The gloss range maps the gloss image to BO3 stops (0..17). It is written only where a source constant proves it (BO4 below); for
+    // every other game the image is written and the range is left at the techset default, which is a stated assumption, never a copied value.
+    if (M.Slots.count("cosinePowerMap") && ExportNaming::Lower(Game) != "bo4" && !(Source != nullptr && Source->Techset.rfind("xtechset_", 0) == 0))
+    {
+        const std::string G = ExportNaming::Lower(Game);
+        const char* Label = G == "t5" || G == "t4" ? "hypothesis" : "unknown";
+        const char* What = G == "t5" || G == "t4" ? "a legacy gloss alpha: the stock T6 legacy ports use glossRangeMax 13 on 78% of 261 (a hypothesis, no BO1 pairs exist to fit it); the range is not written, the map is kept linear"
+                         : G == "bo3" || G == "t7" ? "BO3's range is in stops already but this path does not read it from the material's constant block"
+                                                   : "the source's gloss curve is not measured; the range is not written and stays at the techset default";
+        Counter("gloss_range_default")++;
+        M.Notes.push_back({ "material.gloss_range_default", "game=" + G + ", label=" + Label, std::string("glossRangeMin/Max are not set from the source: ") + What });
+    }
 
     // BO4 constants, only where constant-layouts.json lists the techset (no size-gated fallback)
     if (Source == nullptr) return;
@@ -733,6 +753,7 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
         return;
     }
     const std::vector<uint8_t>& Block = Source->Constants.front();
+    std::optional<float> GlossMin, GlossMax;
     for (const Tc::ConstantAt& At : *Layout)
     {
         if (At.Key == "colorTint" && At.Size == 12)
@@ -746,14 +767,27 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
         }
         else if ((At.Key == "glossRangeMin" || At.Key == "glossRangeMax") && At.Size == 4)
         {
-            float V;
-            if (ReadFloat(Block, At.Offset, V))
+            float V;     // read raw: a NaN or infinity is judged below and reported, not silently skipped
+            if (static_cast<size_t>(At.Offset) + 4 <= Block.size())
             {
-                M.Values.emplace_back(At.Key, Tc::FloatText(V));   // BO4 gloss is 0 to 17 stops like BO3: no conversion
-                Counter("constants_" + At.Key)++;
-            }
+                std::memcpy(&V, &Block[At.Offset], 4);
+                (At.Key == "glossRangeMin" ? GlossMin : GlossMax) = V;
+            }   // BO4 gloss is 0 to 17 stops like BO3: no conversion
         }
     }
+    // a read float is used only when it is a number inside what material.awi allows (0..17) and min <= max; else the default stays, with the reason
+    const char* Why = nullptr;
+    for (const std::optional<float>& G : { GlossMin, GlossMax })
+        if (G && (!std::isfinite(*G) || *G < 0.0f || *G > 17.0f)) Why = "a gloss range float is NaN, infinite or outside material.awi's 0..17";
+    if (Why == nullptr && GlossMin && GlossMax && *GlossMin > *GlossMax) Why = "glossRangeMin is above glossRangeMax";
+    if (Why != nullptr && (GlossMin || GlossMax))
+    {
+        Counter("gloss_range_rejected")++;
+        M.Notes.push_back({ "material.gloss_range_default", "game=bo4, label=unknown, techset=" + Ts, std::string("glossRangeMin/Max are not set from the source: ") + Why });
+        return;
+    }
+    if (GlossMin) { M.Values.emplace_back("glossRangeMin", Tc::FloatText(*GlossMin)); Counter("constants_glossRangeMin")++; }
+    if (GlossMax) { M.Values.emplace_back("glossRangeMax", Tc::FloatText(*GlossMax)); Counter("constants_glossRangeMax")++; }
 }
 
 Builder::Resolved Builder::Resolve() const
@@ -1378,6 +1412,75 @@ int SelfTest(std::string& Failures)
             }
         Check(Ok && Value(R.Materials[0], "materialType") == "lit" && Unmapped && !Fallback && (Value(R.Materials[0], "cosinePowerMap") == "(no key)" || Value(R.Materials[0], "cosinePowerMap") == "") && (Value(R.Materials[0], "occMap") == "(no key)" || Value(R.Materials[0], "occMap") == ""),
               "an exact name is taken; an image whose slot the techset lacks is reported unmapped_slot, not written", Ok ? Value(R.Materials[0], "materialType") : "");
+    }
+    // an effect techset's colour slot takes effectMap: the builder's own colour image is retargeted to it, not dropped (BO4 300-model run: 29 lost colorMap)
+    {
+        Builder::Resolved R;
+        Materials::Description Fx = Make("mtl_fx", 0);
+        Fx.Alpha = Materials::AlphaMode::Blend;
+        Tc::Data Effects;     // one effect techset whose colour slot takes effectMap
+        Effects.LoadCatalogText(R"({"techsets":[{"n":"effect_lit_emissive_add","c":"Effect","f":"none","b":"Blend","t":0,"s":[["colorMap","colorMap","effectMap",null],["normalMap","normalMap","normalMap",null]]}]})");
+        std::map<std::string, size_t> FxCounters;
+        const bool Ok = One(Fx, &Effects, "", R, &FxCounters, "iw8");
+        std::string FxSeen;
+        for (const auto& [K, V] : FxCounters) FxSeen += K + "=" + std::to_string(V) + " ";
+        const std::string Bound = Ok ? Value(R.Materials[0], "colorMap") : "";
+        std::string Sem, Core;
+        if (Ok)
+            for (const auto& I : R.ImagesOut)
+                if (!Bound.empty() && I.Name == Bound)
+                    for (const auto& [K, V] : I.Fields)
+                    {
+                        if (K == "semantic") Sem = V;
+                        if (K == "coreSemantic") Core = V;
+                    }
+        Check(Ok && Value(R.Materials[0], "materialType").rfind("effect_", 0) == 0 && !Bound.empty() && Bound != "(no key)" && Sem == "effectMap" && Core == "sRGB3chAlpha",
+              "an effect techset keeps the colour image of its colorMap slot as an effectMap", (Ok ? Value(R.Materials[0], "materialType") : std::string("(none)")) + " " + Bound + " " + Sem + " " + Core + " " + FxSeen);
+    }
+    // BO4 gloss range floats: used when a number inside 0..17 with min <= max; else the default stays and a row says why
+    {
+        const auto Range = [&](float Min, float Max, std::string& MinText, std::string& MaxText, std::string& Note) {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            Materials::Source Src;
+            Materials::Description D = Make("mtl_range", Gloss);
+            Src.Name = D.Name;
+            Src.Techset = "00293375A8079D3E";     // a BO4 techset whose layout has glossRangeMin at 0x14 and glossRangeMax at 0x18
+            std::vector<uint8_t> Block(32, 0);
+            std::memcpy(&Block[20], &Min, 4);
+            std::memcpy(&Block[24], &Max, 4);
+            Src.Constants.push_back(Block);
+            B.Add(D, Dir, &Src, "bo4");
+            const Builder::Resolved R = B.Resolve();
+            if (R.Materials.size() != 1) return false;
+            MinText = Value(R.Materials[0], "glossRangeMin");
+            MaxText = Value(R.Materials[0], "glossRangeMax");
+            for (const auto& N : R.Materials[0].Notes)
+                if (N.Code == "material.gloss_range_default") Note = N.Message;
+            return true;
+        };
+        std::string Mn, Mx, Nt;
+        Check(Range(2.0f, 10.0f, Mn, Mx, Nt) && Mn == "2" && Mx == "10" && Nt.empty(), "a valid BO4 gloss range is written", Mn + " " + Mx + " " + Nt);
+        Mn.clear(); Mx.clear(); Nt.clear();
+        Check(Range(12.0f, 3.0f, Mn, Mx, Nt) && Mn != "12" && Mx != "3" && Nt.find("above") != std::string::npos, "a BO4 gloss range with min above max keeps the default and says why", Mn + " " + Mx + " " + Nt);
+        Nt.clear();
+        Check(Range(0.0f, std::numeric_limits<float>::quiet_NaN(), Mn, Mx, Nt) && Mx.find("nan") == std::string::npos && Nt.find("NaN") != std::string::npos, "a NaN BO4 gloss range keeps the default and says why", Mx + " " + Nt);
+        Nt.clear();
+        Check(Range(0.0f, 20.0f, Mn, Mx, Nt) && Mx != "20" && Nt.find("0..17") != std::string::npos, "a BO4 gloss range above 17 keeps the default and says why", Mx + " " + Nt);
+    }
+    // a gloss image without a range proven by the source says so, per game; BO4 (constants read) does not
+    {
+        Builder::Resolved R1, R2, R3;
+        const bool A = One(Make("mtl_gr1", Gloss), &Data, "", R1, nullptr, "t5");
+        const bool B = One(Make("mtl_gr2", Gloss), &Data, "", R2, nullptr, "iw8");
+        const bool C = One(Make("mtl_gr3", Gloss), &Data, "", R3, nullptr, "bo4");
+        const auto Detail = [](const Builder::Resolved& R) {
+            for (const auto& N : R.Materials[0].Notes)
+                if (N.Code == "material.gloss_range_default") return N.Detail;
+            return std::string();
+        };
+        Check(A && B && C && Detail(R1) == "game=t5, label=hypothesis" && Detail(R2) == "game=iw8, label=unknown" && Detail(R3).empty(),
+              "a gloss image whose range the source does not prove is reported per game with its label; BO4 is not", Detail(R1) + " | " + Detail(R2) + " | " + Detail(R3));
     }
     // a fallback is reported with its rule, the source techset and the result
     {

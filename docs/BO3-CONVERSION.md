@@ -126,7 +126,7 @@ not proof Black Ops III accepts the asset. `pool-coverage` puts each pool in one
 its zones are the zones walked, and a gate only if its GDT hash still holds. `converted` counts are per GDF in that run, not
 per asset of a zone.
 
-Checked on the Black Ops 4 zone `mp_frenetic` (25 models): 0 failures and 38 warnings. `surfaceType <none>` passes only with a
+Checked on the Black Ops 4 zone `mp_frenetic` (25 models): 0 failures and 11 warnings, all `rules.diffuse_range`. `surfaceType <none>` passes only with a
 report row showing the flag word was read and names no surface type; with no such row it is a failure. Compared with t7kb
 `gdt_check` on the same files. Not built: sound, weapon, animation and stock comparison checks. A slot bound to a stock
 image is judged from the stock GDT. A code image with no Mod Tools semantic stays incomplete, so that output does not reach exit 0. `--target modtools` has not been run.
@@ -138,6 +138,13 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
 - Black Ops 4 has run end to end. Black Ops III, Black Ops 4, Cold War and WWII have run through the normal map fix
   below; WWII also through `--target` on a real map zone, which worked. Black Ops 6 and Black Ops 7 data was not
   installed here, so those two games are untested.
+- Gloss, occlusion, reveal, thickness and mask specular images that are exactly grey are written as 8-bit single-channel
+  files in the target layout. Whether the Mod Tools accept a single-channel PNG has not been tested.
+- The non-metal specular level 56/255 applies only to the fused colour and metal split. In that split it is correct at metal 0
+  and 1 and an approximation in between. Black Ops III, Black Ops 4 and Cold War specular images are copied as authored.
+- `rules.specular_level` and `rules.bare_metal` are warnings, since stock Black Ops III art breaks both guidelines too.
+- Gloss range: Black Ops 4 uses its own constants. A material without a usable range keeps the default and gets a
+  `material.gloss_range_default` row. Black Ops 1 and World at War gloss is unverified.
 - `surfaceType` comes from the material flags in Black Ops III, Black Ops 4 and Cold War. Cold War rests on measurement only
   (165 of 173 stock names on one map). Other games write `<none>` and a `material.surface_unknown` row: GrayWolf does not read
   their flag word yet.

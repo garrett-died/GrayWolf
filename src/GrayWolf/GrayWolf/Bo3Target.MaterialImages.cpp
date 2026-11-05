@@ -8,6 +8,8 @@
 #include "Image.h"
 
 #include <atomic>
+#include <fstream>
+#include <span>
 #include <objbase.h>
 
 namespace fs = std::filesystem;
@@ -244,6 +246,46 @@ namespace Bo3Target
         }
         return true;
     }
+    }
+
+    bool OneChannelBytes(const fs::path& File, std::string& Bytes)
+    {
+        Bytes.clear();
+        const std::string Ext = ExportNaming::Lower(File.extension().string());
+        if (Ext != ".png" && Ext != ".tif" && Ext != ".tiff") return false;
+        size_t Channels = 0, Bits = 0, Width = 0, Height = 0;
+        if (!ImageFileLayout(File, Channels, Bits, Width, Height) || Channels < 2 || Bits != 8) return false;
+        Rgba8Image Image;
+        std::string Error;
+        if (!LoadRgba8(File, Image, Error)) return false;
+        for (size_t I = 0; I + 3 < Image.Pixels.size(); I += 4)
+            if (Image.Pixels[I] != Image.Pixels[I + 1] || Image.Pixels[I] != Image.Pixels[I + 2] || Image.Pixels[I + 3] != 255) return false;
+        EnsureCom();
+        DirectX::ScratchImage Scratch;
+        if (FAILED(Scratch.Initialize2D(DXGI_FORMAT_R8_UNORM, Image.Width, Image.Height, 1, 1))) return false;
+        const DirectX::Image* To = Scratch.GetImage(0, 0, 0);
+        const std::span<uint8_t> Dest(To->pixels, To->slicePitch);
+        for (uint32_t Y = 0; Y < Image.Height; Y++)
+            for (uint32_t X = 0; X < Image.Width; X++) Dest[(size_t)Y * To->rowPitch + X] = Image.Pixels[((size_t)Y * Image.Width + X) * 4];
+        DirectX::Blob Blob;
+        const HRESULT R = DirectX::SaveToWICMemory(*To, DirectX::WIC_FLAGS_NONE, DirectX::GetWICCodec(Ext == ".png" ? DirectX::WIC_CODEC_PNG : DirectX::WIC_CODEC_TIFF), Blob);
+        if (FAILED(R) || Blob.GetBufferSize() == 0) return false;
+        Bytes.assign(reinterpret_cast<const char*>(Blob.GetBufferPointer()), Blob.GetBufferSize());
+        // the result must read back as one channel with the same pixels; otherwise the file stays as it was
+        const fs::path Check = fs::temp_directory_path() / std::format("graywolf_onech_{}_{}{}", GetCurrentProcessId(), (unsigned long long)(uintptr_t)Bytes.data(), Ext);
+        std::error_code Ec;
+        bool Good = false;
+        if (std::ofstream Out(Check, std::ios::binary); Out)
+        {
+            Out.write(Bytes.data(), (std::streamsize)Bytes.size());
+            Out.close();
+            size_t C2 = 0, B2 = 0, W2 = 0, H2 = 0;
+            Rgba8Image Back;
+            Good = ImageFileLayout(Check, C2, B2, W2, H2) && C2 == 1 && B2 == 8 && W2 == Image.Width && H2 == Image.Height && LoadRgba8(Check, Back, Error) && Back.Pixels == Image.Pixels;
+        }
+        fs::remove(Check, Ec);
+        if (!Good) Bytes.clear();
+        return Good;
     }
 
     void FlipGreen(Rgba8Image& Image)
