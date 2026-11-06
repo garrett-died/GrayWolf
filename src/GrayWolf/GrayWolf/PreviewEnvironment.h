@@ -52,7 +52,7 @@ public:
     // L's environment loaded when it changed, set on Effect (before its Apply), the constants and
     // the table bound to the pixel stage
     void Apply(ID3D11DeviceContext* Ctx, DirectX::PBREffect& Effect, const PreviewLighting& L);
-    // The radiance cube Apply set last and its mips (the backdrop samples it)
+    // The radiance cube the backdrop samples (PreviewLighting::BackdropEnvironment's when set, else the lighting environment's) and its mips
     ID3D11ShaderResourceView* Radiance() const;
     int RadianceMips() const;
 
@@ -95,6 +95,21 @@ bool EnvironmentSourceCube(const EnvironmentImage& Image, int Size, std::vector<
 // calls this). Fails with reason=cancelled when Control.Cancel was set.
 bool BakePreviewEnvironment(const EnvironmentImage& Image, const std::string& OutDir, const std::string& Id, int Size, std::string& Report,
                             const EnvironmentBakeControl& Control = EnvironmentBakeControl());
+
+// A sky as it is, for the backdrop: the source seen as a cube of FaceSize per face (no prefiltering: mip 0 is the sky at full detail, the mips a
+// box filter), every texel times Control.ScaleMultiplier (Control.AbsoluteScale) and cut to ClampTexel when that is set, BC6H, written as
+// OutDir\<Id>_radiance.dds alone (BC6H: FaceSize^2 * 6 * 4/3 bytes with its mips, 8.4 MB at 1024). Cancel and Progress as BakePreviewEnvironment's.
+bool BakeSkyCube(const EnvironmentImage& Image, const std::string& OutDir, const std::string& Id, int FaceSize, std::string& Report,
+                 const EnvironmentBakeControl& Control);
+
+// A vertical gradient sky (HydraX's ProceduralEnvironment, Z up): the radiance straight up, at the horizon and straight down. Written as
+// OutDir\<Id>_radiance.dds and <Id>_irradiance.dds exactly as HydraX evaluates it: radiance mip m (roughness r = m / (mips - 1)) is
+// lerp(Sky(d), Horizon, r^2), the irradiance cube is lerp(Ground, Zenith, 0.5 n.z + 0.5); every value times Scale. Half floats, no source.
+struct ProceduralSky
+{
+    float Zenith[3] = {}, Horizon[3] = {}, Ground[3] = {};
+};
+bool BakeProceduralEnvironment(const ProceduralSky& Sky, float Scale, const std::string& OutDir, const std::string& Id, std::string& Report);
 
 // Environments beyond those beside the exe (the Mod Tools skies baked into the cache): a baked environment is also
 // looked for in this folder. Set at start; empty: none.

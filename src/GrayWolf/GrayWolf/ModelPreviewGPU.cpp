@@ -960,7 +960,7 @@ struct PreviewRenderer::Impl
         XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(C.Right), XMVectorScale(Right, TanH));
         XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(C.Up), XMVectorScale(CamUp, TanV));
         XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(C.Forward), Fwd);
-        const float Blur = std::clamp(L.BackdropBlur, 0.0f, 1.0f);
+        const float Blur = std::clamp(L.BackdropEnvironment.empty() ? L.BackdropBlur : L.SkyBackdropBlur, 0.0f, 1.0f);
         C.Params[0] = 2.0f / (float)T.W; C.Params[1] = 2.0f / (float)T.H;
         C.Params[2] = Blur * (float)std::max(0, Env->RadianceMips() - 1);
         C.Params[3] = kIblScale * L.EnvIntensity;

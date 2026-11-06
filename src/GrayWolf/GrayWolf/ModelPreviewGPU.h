@@ -147,6 +147,9 @@ struct PreviewLighting
     std::string Environment = "studio";   // the image based light: "studio" (procedural) or a baked one's id
     float EnvRotation = 0.0f;   // degrees about the up axis
     float EnvIntensity = 1.0f;  // the image based light's strength
+    // The environment drawn behind the model when it is not the one that lights it (a Mod Tools sky state: SkyLighting.h); "": Environment's
+    std::string BackdropEnvironment;
+    float SkyBackdropBlur = 0.0f;   // BackdropBlur's counterpart while BackdropEnvironment is set: a Mod Tools sky is drawn sharp by default
     bool Bloom = true;
     float BloomStrength = 0.15f;
     // The environment drawn behind the model, blurred (its radiance cube at roughness BackdropBlur),

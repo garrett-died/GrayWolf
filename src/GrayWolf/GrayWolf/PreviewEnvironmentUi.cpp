@@ -20,13 +20,14 @@ namespace
     void Save(const PreviewLighting& L)
     {
         // a baked sky's id is not kept (its hash changes with the files): the state is, as preview_light (SkyLighting.h)
-        if (L.Environment.rfind("sky-", 0) != 0) SettingsManager::SetSetting("preview_environment", L.Environment);
+        if (L.Environment.rfind("sky-", 0) != 0 && L.Environment.rfind("skylight-", 0) != 0) SettingsManager::SetSetting("preview_environment", L.Environment);
         SettingsManager::SetSetting("preview_env_rotation", std::to_string(L.EnvRotation));
         SettingsManager::SetSetting("preview_env_intensity", std::to_string(L.EnvIntensity));
         SettingsManager::SetSetting("preview_bloom", L.Bloom ? "true" : "false");
         SettingsManager::SetSetting("preview_bloom_strength", std::to_string(L.BloomStrength));
         SettingsManager::SetSetting("preview_env_backdrop", L.Backdrop ? "true" : "false");
         SettingsManager::SetSetting("preview_env_backdrop_blur", std::to_string(L.BackdropBlur));
+        SettingsManager::SetSetting("preview_sky_backdrop_blur", std::to_string(L.SkyBackdropBlur));
     }
 
     const PreviewEnvironmentInfo* Find(const std::string& Id)
@@ -49,6 +50,7 @@ void LoadPreviewEnvironmentSettings(PreviewLighting& L)
     L.BloomStrength = SettingsManager::GetSettingFloat("preview_bloom_strength", Default.BloomStrength, 0.0f, 2.0f);
     L.Backdrop = SettingsManager::GetSetting("preview_env_backdrop", Default.Backdrop ? "true" : "false") == "true";
     L.BackdropBlur = SettingsManager::GetSettingFloat("preview_env_backdrop_blur", Default.BackdropBlur, 0.0f, 1.0f);
+    L.SkyBackdropBlur = SettingsManager::GetSettingFloat("preview_sky_backdrop_blur", Default.SkyBackdropBlur, 0.0f, 1.0f);
 }
 
 namespace
@@ -167,7 +169,9 @@ void DrawPreviewEnvironmentControls(PreviewLighting& L, SkyLighting::Service& Sk
         if (ImGui::Checkbox("Backdrop", &L.Backdrop)) Save(L);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The environment shown behind the model, blurred (screenshots stay transparent)");
         ImGui::BeginDisabled(!L.Backdrop);
-        Row("Blur", "##backdropblur", &L.BackdropBlur, 0.0f, 1.0f, "%.2f", Default.BackdropBlur, "How blurred the backdrop is");
+        const bool OnSky = !L.BackdropEnvironment.empty();   // a Mod Tools sky has its own blur, sharp by default
+        Row("Blur", "##backdropblur", OnSky ? &L.SkyBackdropBlur : &L.BackdropBlur, 0.0f, 1.0f, "%.2f", OnSky ? Default.SkyBackdropBlur : Default.BackdropBlur,
+            OnSky ? "How blurred the sky is (0: sharp, as in the game)" : "How blurred the backdrop is");
         ImGui::EndDisabled();
         ImGui::Separator();
         if (ImGui::Checkbox("Bloom", &L.Bloom)) Save(L);

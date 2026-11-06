@@ -72,7 +72,7 @@ and that is what the self-test compares.
   Not ported (not needed until the sky is drawn behind a model).
 - The sun disc and Night's strength: see "U9b" below; the 1000 cut and the 0.06 / 0.18 factors are gone.
 
-## Looked at in the previewer (U9, owner's install, read only; numbers only, no pixels kept)
+## Looked at in the previewer (U9, with the first bake; the Night and 1000-cut remarks are superseded by U9b below)
 
 The four states shown on the demo sphere with the viewport's own Lighting menu (the sun is the key light at the preset's direction, the
 sky is the environment and the backdrop). Labels as above.
@@ -93,27 +93,38 @@ sky is the environment and the backdrop). Labels as above.
 - **Sunset's sky is a blue-sky mountain scene** in the image the chain resolves (not a fallback), with the preset's orange sun on the
   model: sun and sky do not match in colour. Unknown whether that is the game's own asset or a wrong link of the chain.
 
-## U9b: the sky's scale, the sun twice, Sunset, Morning's sun (owner's install, read only; figures only)
+## U9b: HydraX's sky rules, ported (owner's install, read only; figures only)
 
-**How HydraX does it** (read in `SkyImage.cs`, `Shading.cs`, `ProceduralEnvironment.cs`, `Mesh.hlsl`): the sky cube is only the **backdrop**
-there (scaled by `TargetMid / geometric-mean luminance`, 0.18, Night 0.06, by eye); the model's **light** is a procedural gradient from the
-preset's probe colours (`ProbeScale` 0.55, Night x 0.1), so the sun disc never lights anything in HydraX. The 1000 cutoff only keeps the
-disc out of that mean. GrayWolf bakes the sky into the light, so it needs a rule of its own. Apex has no sky exposure of its own (HDR buffer
-times the global exposure, `led-and-sky.md`).
+Paths are under `packages/v02/src/` of HydraX. Everything below is **read in the code** (proven as source) and ported with the same numbers:
 
-**The rule now (hypothesis, supported):** a sky texel is multiplied by `2^stops / Exposure` of its state (`SkyGain`: Day 2.11, Morning 1.43,
-Sunset 2.83, Night 0.22), the same number the sun's radiance has, so sky and sun keep HydraX's ratio; no mean normalisation, no cut.
-Checked against the other source in HydraX, the LED's probe colours (0.55 x luminance): the sky's mean times this gain is 0.58 (Morning),
-0.36 (Day) and 0.56 (Sunset) against 0.55: within 6, 35 and 3 percent. **Night disagrees**: its sky's mean is 0.001, so 0.0002 on screen
-against 0.055 from HydraX's probe rule (about 275 times darker); Night is now close to black, lit by the preset's sun only. Unknown which
-is the game's. The Night ssi also carries `evcmp 2.5` (+2.5 EV), which is not applied anywhere.
+| What | HydraX | Value / rule | GrayWolf |
+|---|---|---|---|
+| Backdrop grey target | `HydraX.Preview/SkyImage.cs:130` | 0.18, Night 0.06 (by eye there) | `TargetMid` |
+| Backdrop gain | `SkyImage.cs:139-143` | `TargetMid / ExposureEstimate` | `BakeState` scale |
+| Exposure estimate | `SkyImage.cs:198-224` | geometric mean luminance over the six faces' texels, `log(lum + 1e-4)`, texels above 1000 left out | `ExposureEstimate` |
+| The 1000 cut | `SkyImage.cs:37` | only for that estimate; the image keeps its disc | not applied to the image |
+| Face size | `HydraX.Application/Sky/SkyFaceCache.cs:28, :248` | at most 1024; a lat-long's width / 4 | `BakeState` `FaceSize` |
+| Cache cap | `SkyFaceCache.cs:31` | 200 MB | `BakeSettings::CapBytes` |
+| Backdrop draw | `HydraX.Preview.D3D11/Shaders/Mesh.hlsl:550-554` | the cube, sharp, turned by the sky yaw, times the gain | `DrawBackdrop`, blur 0 for a sky |
+| Model light | `HydraX.Preview/ProceduralEnvironment.cs:19-25` | gradient: zenith = probe colour * g, horizon = (probe * 0.5 + 0.5) * g, ground = (0.35, 0.32, 0.28) * g; g = `ProbeScale` * (1, or 0.1 when stops <= 5) | `ProceduralSkyOf` baked as `skylight-<state>-v1` |
+| ProbeScale / NightGain | `HydraX.Preview/Shading.cs:33`, `ProceduralEnvironment.cs:15` | 0.55 / 0.1 | constants |
+| Diffuse and specular environment | `ProceduralEnvironment.cs:37, :42`, `Mesh.hlsl:114-127, :499` | diffuse = lerp(ground, zenith, 0.5 n.z + 0.5); specular = lerp(Sky(r), horizon, roughness^2), **not** the sky image | the gradient cube's mips (roughness = mip / (mips - 1)) and irradiance |
+| Sun | `Shading.cs:46-49, :145` | colour * 2^stops / Exposure, shaded `albedo / pi * SunRadiance * N.L` | `SunRadiance / pi` (the preview's light is `albedo * LightColor * N.L`) |
+| evcmp | none | HydraX never applies it (only a BO4 map parser reads it) | not applied |
+| Sky yaw | `SkyImage.cs:150-160` | 0 for every state | none |
 
-**Sun twice, measured, so left alone:** no texel in the four skies is above 14, so the old 1000 cut did nothing. The brightest cluster
-(Morning, max 13.6) integrates to 0.012 in sun units (sum of L times solid angle, 0.0014 sr): 1.2 percent of the preset sun's light, and Day,
-Sunset and Night hold no disc (their brightest area is cloud). It stays in the image light and in the backdrop, as in the asset.
+So the sky image is **only the backdrop**; the model is lit by the gradient, so the disc never lights anything (the earlier worry about the
+sun lighting twice does not arise). Studio sky and the other environments are untouched. In the app, a sky state sets `Environment` to the gradient,
+`BackdropEnvironment` to the sky cube and a separate blur (`preview_sky_backdrop_blur`, 0 by default; the others keep 0.5).
 
-**Light colour:** HydraX shades the sun as `albedo / pi * SunRadiance * N.L`, the preview as `albedo * LightColor * N.L`, so
-`LightColor = SunRadiance / pi` (the earlier 0.5 was a guess).
+**Cost of a state in the cache** (measured, BC6H with mips): the sky cube is 8.39 MB at 1024 per face (all four skies came out at 1024), the gradient
+light 0.31 MB, so four states are 34 MB of the 200 MB; over the cap the oldest entry goes first (`PruneCache`, the entry being baked and its light kept).
+
+**A model pixel against HydraX's rule** (demo sphere, default camera, `ui-shot`; HydraX's `Shade` evaluated by hand for the same normal, albedo read
+from a Fullbright shot, specular ignored; GrayWolf's pixel put back to linear through its own tone curve): GrayWolf is 1.05 to 1.24 times HydraX's linear
+value on patches lit by the sky, and 1.14 to 1.45 times on the patch facing the sun (its specular and Disney diffuse add what the hand rule leaves out); for
+example Day, centre patch: HydraX 0.087 0.125 0.217, GrayWolf 0.103 0.142 0.240. Display values differ more in the darks (Night 6 against 16) because
+GrayWolf encodes with a 2.2 power and HydraX with exact sRGB (not changed here).
 
 **Sunset (traced):** `ssi.gdt` `default_sunset` has `skyboxmodel skybox_default_sunset`; that xmodel's skinOverride material has `colorMap
 skybox_default_sunset_ft`; that image's `baseImage` is `model_export\t7_skybox\skybox_default\skybox_default_sunset_ll.exr`, a lat-long (2048 x 1024
@@ -127,4 +138,4 @@ azimuth -97.9, elevation 7.1; the preset (`default_morning` pitch 165, yaw 263) 
 (no pitch offset exists). The azimuth agrees to 1 degree; the 8 degree elevation difference is between two assets of the Mod Tools (the sun lamp
 and the sky image), not a bake error.
 
-**Turn:** the environment's Turn now turns the preset sun with the sky (`TurnedSunDirection`), proven by `ui-selftest`.
+**Turn:** the environment's Turn now turns the backdrop and the preset sun together (the gradient is the same all round) (`TurnedSunDirection`), proven by `ui-selftest`.

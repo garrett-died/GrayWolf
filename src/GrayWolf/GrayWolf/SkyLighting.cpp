@@ -106,13 +106,14 @@ namespace SkyLighting
 
     // ---------------------------------------------------------------- what a pick does to the lighting
 
-    void ApplyBakedSky(PreviewLighting& L, LightState State, const std::string& Id)
+    void ApplyBakedSky(PreviewLighting& L, LightState State, const std::string& SkyId, const std::string& LightId)
     {
         const ModToolsSky::LightingPreset& P = ModToolsSky::PresetOf(State);
         float Toward[3];
         P.SunDirection(Toward);
         const double K = P.SunIntensity() / P.Exposure() * kSunToPreview;
-        L.Environment = Id;
+        L.Environment = LightId;
+        L.BackdropEnvironment = SkyId;
         L.Sun.On = true;
         for (int I = 0; I < 3; I++)
         {
@@ -124,6 +125,7 @@ namespace SkyLighting
     void ApplyEnvironment(PreviewLighting& L, const std::string& Id)
     {
         L.Environment = Id;
+        L.BackdropEnvironment.clear();
         L.Sun.On = false;
     }
 
@@ -263,7 +265,7 @@ namespace SkyLighting
             if (Job->Finished())
             {
                 const ModToolsSky::BakeOutcome& Out = Job->Outcome();
-                if (Out.Ok && Chosen.Sky && Chosen.State == JobState) ApplyBakedSky(L, JobState, Out.Id);
+                if (Out.Ok && Chosen.Sky && Chosen.State == JobState) ApplyBakedSky(L, JobState, Out.Id, Out.LightId);
                 else if (!Out.Ok && Out.Message != "cancelled")
                 {
                     St.Failed[JobState] = Out.Message;
@@ -436,7 +438,7 @@ namespace SkyLighting
                 if (L.Environment != StartEnv) Fail("the look stays until the bake is ready");
                 for (int I = 0; I < 3000 && S.Busy(); I++) { Sleep(10); S.Tick(L); }
                 S.Tick(L);
-                if (L.Environment.rfind("sky-sunset-", 0) != 0 || !L.Sun.On) Fail("a finished bake sets the sky's id and the sun");
+                if (L.BackdropEnvironment.rfind("sky-sunset-", 0) != 0 || L.Environment != ModToolsSky::LightId(LightState::Sunset) || !L.Sun.On) Fail("a finished bake sets the sky behind, the state's light and the sun");
                 else
                 {
                     float Toward[3];
@@ -444,13 +446,13 @@ namespace SkyLighting
                     if (!Near(L.Sun.Toward[0], Toward[0]) || !Near(L.Sun.Toward[2], Toward[2])) Fail("the sun is the preset's");
                     if (L.Sun.Radiance[0] <= 0.0f) Fail("the sun has light");
                 }
-                if (!fs::exists(Cache / (L.Environment + "_radiance.dds"), Ec)) Fail("the bake is in the cache folder");
+                if (!fs::exists(Cache / (L.BackdropEnvironment + "_radiance.dds"), Ec) || !fs::exists(Cache / (L.Environment + "_irradiance.dds"), Ec)) Fail("the bake is in the cache folder");
 
                 // a bake switched away from: the look changes at once and the bake does not land
                 S.PickState(LightState::Night, L);
                 S.PickEnvironment(kStudioEnvironment, L);
                 for (int I = 0; I < 300; I++) { Sleep(10); S.Tick(L); }
-                if (L.Environment != kStudioEnvironment || L.Sun.On) Fail("switching away from a bake keeps the new pick (no late sky)");
+                if (L.Environment != kStudioEnvironment || L.Sun.On || !L.BackdropEnvironment.empty()) Fail("switching away from a bake keeps the new pick (no late sky)");
                 if (SettingsManager::GetSetting(kStateKey, "x") != "") Fail("an environment pick forgets the state");
             }
             {
@@ -464,7 +466,7 @@ namespace SkyLighting
                 if (!S.Current().Sky || S.Current().State != LightState::Day) Fail("the remembered state is picked at the next start");
                 for (int I = 0; I < 3000 && S.Busy(); I++) { Sleep(10); S.Tick(L2); }
                 S.Tick(L2);
-                if (L2.Environment.rfind("sky-day-", 0) != 0) Fail("the remembered sky is applied");
+                if (L2.BackdropEnvironment.rfind("sky-day-", 0) != 0) Fail("the remembered sky is applied");
             }
             fs::remove_all(Cache, Ec);
         }
@@ -479,7 +481,7 @@ namespace SkyLighting
             L.EnvIntensity = 2.0f;
             L.BloomStrength = 0.4f;
             L.Shadow.Softness = 0.9f;
-            ApplyBakedSky(L, LightState::Day, "sky-day-0123456789abcdef");
+            ApplyBakedSky(L, LightState::Day, "sky-day-0123456789abcdef", "skylight-day-v1");
             const PreviewLighting Before = L;
             ApplyFullbright(L, true);
             if (!L.Fullbright) Fail("Fullbright turns on");
@@ -494,7 +496,7 @@ namespace SkyLighting
         {
             // the exposure rule: Day's sun is 2^14 over its exposure 2^(log2(1941.254) + 5 - 3) = 4 * 1941.254 (inside the EV range), then the preview's scale
             PreviewLighting L;
-            ApplyBakedSky(L, LightState::Day, "sky-day-x");
+            ApplyBakedSky(L, LightState::Day, "sky-day-x", "skylight-day-v1");
             const double Want = 16384.0 / (1941.2540 * 4.0) / 3.14159265358979;
             if (std::fabs(L.Sun.Radiance[0] - Want) > 0.002) Fail("the sun follows the preset's stops and exposure rule");
         }

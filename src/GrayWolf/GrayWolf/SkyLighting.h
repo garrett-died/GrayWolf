@@ -76,10 +76,10 @@ namespace SkyLighting
 
     Menu BuildMenu(const Status& St, const Choice& Current);
 
-    // The look of a picked sky once baked (Id: the cache's environment id): the environment and the sun (PresetOf: direction, colour
-    // times 2^stops divided by the exposure rule, so Day is about 2 where the three lights' key at its default is 0.65). Nothing
-    // else of L changes.
-    void ApplyBakedSky(PreviewLighting& L, ModToolsSky::LightState State, const std::string& Id);
+    // The look of a picked sky once baked, as HydraX draws a state: the sky (SkyId, the cache's cube) behind the model, the model lit by the
+    // state's gradient (LightId: ProceduralSkyOf) and the sun (PresetOf: colour times 2^stops over the exposure, divided by pi for the preview's
+    // light model). Nothing else of L changes.
+    void ApplyBakedSky(PreviewLighting& L, ModToolsSky::LightState State, const std::string& SkyId, const std::string& LightId);
     // A shipped environment: the id, the sun off (the three lights back)
     void ApplyEnvironment(PreviewLighting& L, const std::string& Id);
     // Fullbright on or off. Touches nothing else: off, the look is as it was.

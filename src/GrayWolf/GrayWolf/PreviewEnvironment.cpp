@@ -176,10 +176,29 @@ const std::vector<PreviewEnvironmentInfo>& PreviewEnvironments()
 struct PreviewEnvironment::Impl
 {
     ComPtr<ID3D11Device> Dev;
-    ComPtr<ID3D11ShaderResourceView> StudioRad, StudioIrr, Rad, Irr, Brdf;
+    ComPtr<ID3D11ShaderResourceView> StudioRad, StudioIrr, Rad, Irr, Brdf, BackRad;
     ComPtr<ID3D11Buffer> CB;
-    int StudioMips = 1, Mips = 1;
+    int StudioMips = 1, Mips = 1, BackMips = 1;
     std::string Current;   // the environment set on the effect ("": none yet)
+    std::string BackCurrent;   // the backdrop's own environment ("": the lighting one)
+
+    // Only the radiance cube of Id (the backdrop's)
+    bool LoadRadiance(const std::string& Id)
+    {
+        BackRad.Reset();
+        if (Id.empty() || Id == kStudioEnvironment) return false;
+        fs::path Dir = EnvironmentDir();
+        {
+            std::lock_guard<std::mutex> Lock(ExtraDirLock());
+            std::error_code Ec;
+            if (!ExtraDir().empty() && fs::exists(fs::path(Strings::ToUnicodeString(ExtraDir())) / (Id + "_radiance.dds"), Ec)) Dir = fs::path(Strings::ToUnicodeString(ExtraDir()));
+        }
+        ScratchImage Img;
+        TexMetadata Meta{};
+        if (FAILED(LoadFromDDSFile((Dir / (Id + "_radiance.dds")).c_str(), DDS_FLAGS_NONE, &Meta, Img)) || !Meta.IsCubemap()) return false;
+        BackMips = (int)Meta.mipLevels;
+        return SUCCEEDED(CreateShaderResourceView(Dev.Get(), Img.GetImages(), Img.GetImageCount(), Meta, BackRad.ReleaseAndGetAddressOf()));
+    }
     bool Ok = false;
 
     bool Load(const std::string& Id)
@@ -224,8 +243,8 @@ PreviewEnvironment::PreviewEnvironment(ID3D11Device* Dev, ID3D11ShaderResourceVi
 
 PreviewEnvironment::~PreviewEnvironment() = default;
 bool PreviewEnvironment::Ok() const { return P->Ok; }
-ID3D11ShaderResourceView* PreviewEnvironment::Radiance() const { return P->Rad ? P->Rad.Get() : P->StudioRad.Get(); }
-int PreviewEnvironment::RadianceMips() const { return P->Rad ? P->Mips : P->StudioMips; }
+ID3D11ShaderResourceView* PreviewEnvironment::Radiance() const { return P->BackRad ? P->BackRad.Get() : P->Rad ? P->Rad.Get() : P->StudioRad.Get(); }
+int PreviewEnvironment::RadianceMips() const { return P->BackRad ? P->BackMips : P->Rad ? P->Mips : P->StudioMips; }
 
 void PreviewEnvironment::Apply(ID3D11DeviceContext* Ctx, PBREffect& Effect, const PreviewLighting& L)
 {
@@ -240,6 +259,11 @@ void PreviewEnvironment::Apply(ID3D11DeviceContext* Ctx, PBREffect& Effect, cons
             P->Mips = P->StudioMips;
         }
         Effect.SetIBLTextures(P->Rad.Get(), P->Mips, P->Irr.Get());
+    }
+    if (L.BackdropEnvironment != P->BackCurrent)
+    {
+        P->BackCurrent = L.BackdropEnvironment;
+        P->LoadRadiance(L.BackdropEnvironment);   // not read: the lighting environment's cube is the backdrop
     }
     const float Turn = XMConvertToRadians(L.EnvRotation);
     const EnvConstants C{ { std::cos(Turn), std::sin(Turn) }, (float)std::max(0, P->Mips - 1), 1.0f };
@@ -471,6 +495,92 @@ namespace
             }
         });
     }
+}
+
+bool BakeProceduralEnvironment(const ProceduralSky& Sky, float Scale, const std::string& OutDir, const std::string& Id, std::string& Report)
+{
+    using DirectX::PackedVector::XMConvertFloatToHalf;
+    const auto Lerp = [](float A, float B, float T) { return A + (B - A) * T; };
+    // HydraX ProceduralEnvironment.Sky: horizon to zenith above, horizon to ground below, by the square root of the elevation
+    const auto SkyAt = [&](const XMFLOAT3& D, int C) {
+        const float T = std::sqrt(std::clamp(std::abs(D.z), 0.0f, 1.0f));
+        return D.z >= 0.0f ? Lerp(Sky.Horizon[C], Sky.Zenith[C], T) : Lerp(Sky.Horizon[C], Sky.Ground[C], T);
+    };
+    const auto Write = [&](size_t Size, size_t Mips, const auto& Value, const fs::path& File) {
+        ScratchImage Img;
+        if (FAILED(Img.InitializeCube(DXGI_FORMAT_R16G16B16A16_FLOAT, Size, Size, 1, Mips))) return false;
+        for (size_t M = 0; M < Mips; M++)
+            for (size_t F = 0; F < 6; F++)
+            {
+                const Image& Face = *Img.GetImage(M, F, 0);
+                for (size_t y = 0; y < Face.height; y++)
+                {
+                    const std::span<uint16_t> Row(reinterpret_cast<uint16_t*>(std::span<uint8_t>(Face.pixels, Face.slicePitch).subspan(y * Face.rowPitch).data()), Face.width * 4);
+                    for (size_t x = 0; x < Face.width; x++)
+                    {
+                        const XMFLOAT3 D = CubeDir((int)F, 2.0f * (x + 0.5f) / Face.width - 1, 2.0f * (y + 0.5f) / Face.height - 1);
+                        for (int C = 0; C < 3; C++) Row[x * 4 + (size_t)C] = XMConvertFloatToHalf(std::min(Value(D, C, M, Mips) * Scale, 60000.0f));
+                        Row[x * 4 + 3] = XMConvertFloatToHalf(1.0f);
+                    }
+                }
+            }
+        std::error_code Ec;
+        const fs::path Temp = File.string() + ".tmp";   // written beside and renamed: never a half file under the real name
+        if (FAILED(SaveToDDSFile(Img.GetImages(), Img.GetImageCount(), Img.GetMetadata(), DDS_FLAGS_NONE, Temp.c_str()))) return false;
+        fs::rename(Temp, File, Ec);
+        return !Ec;
+    };
+    std::error_code Ec;
+    const fs::path Base = fs::path(Strings::ToUnicodeString(OutDir));
+    fs::create_directories(Base, Ec);
+    const bool Rad = Write(64, 7, [&](const XMFLOAT3& D, int C, size_t M, size_t Mips) {
+        const float R = (float)M / (float)(Mips - 1);
+        return Lerp(SkyAt(D, C), Sky.Horizon[C], R * R);
+    }, Base / Strings::ToUnicodeString(Id + "_radiance.dds"));
+    const bool Irr = Write(32, 1, [&](const XMFLOAT3& D, int C, size_t, size_t) {
+        return Lerp(Sky.Ground[C], Sky.Zenith[C], 0.5f * D.z + 0.5f);   // HydraX ProceduralEnvironment.Diffuse
+    }, Base / Strings::ToUnicodeString(Id + "_irradiance.dds"));
+    if (!Rad || !Irr) { Report += "result=error\nreason=cannot write the procedural environment " + Id + "\n"; return false; }
+    Report += "result=ok\nprocedural=" + Id + "\n";
+    return true;
+}
+
+bool BakeSkyCube(const EnvironmentImage& Env, const std::string& OutDir, const std::string& Id, int FaceSize, std::string& Report,
+                 const EnvironmentBakeControl& Control)
+{
+    const auto Fail = [&](const std::string& Why) { Report += "result=error\nreason=" + Why + "\n"; return false; };
+    const auto Cancelled = [&] { return Control.Cancel && Control.Cancel->load(); };
+    const auto Progress = [&](float V) { if (Control.Progress) Control.Progress(V); };
+    if (FaceSize < 16 || FaceSize > 4096) return Fail("the face size is 16 to 4096");
+    if (!ImageValid(Env)) return Fail("the source image does not match its size");
+    const SourceSampler Src(Env, Control.ClampTexel);
+    ScratchImage Cube;
+    if (FAILED(Cube.InitializeCube(DXGI_FORMAT_R32G32B32A32_FLOAT, (size_t)FaceSize, (size_t)FaceSize, 1, 1))) return Fail("out of memory");
+    for (int F = 0; F < 6; F++)
+    {
+        const Image& Face = *Cube.GetImage(0, (size_t)F, 0);
+        FillSourceFace(Src, F, (size_t)FaceSize, Control.ScaleMultiplier, std::span<uint8_t>(Face.pixels, Face.slicePitch), Face.rowPitch, Control.Cancel);
+        if (Cancelled()) return Fail("cancelled");
+        Progress(0.5f * (float)(F + 1) / 6.0f);
+    }
+    ScratchImage Mips;
+    if (FAILED(GenerateMipMaps(Cube.GetImages(), Cube.GetImageCount(), Cube.GetMetadata(), TEX_FILTER_DEFAULT, 0, Mips))) return Fail("cannot make the mips");
+    Cube = ScratchImage();
+    if (Cancelled()) return Fail("cancelled");
+    Progress(0.7f);
+    std::error_code Ec;
+    const fs::path Base = fs::path(Strings::ToUnicodeString(OutDir));
+    fs::create_directories(Base, Ec);
+    ComPtr<ID3D11Device> Dev;
+    const D3D_FEATURE_LEVEL Want[] = { D3D_FEATURE_LEVEL_11_0 };
+    D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, Want, 1, D3D11_SDK_VERSION, &Dev, nullptr, nullptr);
+    std::string How;
+    const fs::path RadFile = Base / Strings::ToUnicodeString(Id + "_radiance.dds");
+    if (!SaveBc6h(Mips, RadFile, Dev.Get(), How)) return Fail("cannot write " + RadFile.string());
+    Progress(1.0f);
+    Report += std::format("result=ok\nradiance={} ({} bytes, {} x {}, {} mips)\ncompress={}\n", RadFile.string(), fs::file_size(RadFile, Ec), FaceSize, FaceSize,
+                          Mips.GetMetadata().mipLevels, How);
+    return true;
 }
 
 bool EnvironmentSourceCube(const EnvironmentImage& Env, int Size, std::vector<float>& Rgba)

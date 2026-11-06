@@ -54,10 +54,16 @@ namespace ModToolsSky
         double Exposure() const;                 // 2^(ExposureValue - 3)
     };
     const LightingPreset& PresetOf(LightState S);
-    // What a state's sky texels are multiplied by on screen: the sun's radiance over the exposure, 2^stops / Exposure (so the sky, in
-    // the units of the sun, is divided by the same exposure as the sun: Day 2.11, Morning 1.41, Sunset 2.83, Night 0.22). Hypothesis that
-    // a sky texel is in units of the sun, supported by the LED's probe colours (docs/hydrax-port/sky-axes.md); not the game's own rule.
-    double SkyGain(LightState S);
+    // HydraX's numbers (docs/hydrax-port/sky-axes.md has each with its file and line):
+    // the mid grey the backdrop sky is exposed to: 0.18, Night 0.06 (SkyImage.cs:130)
+    float TargetMid(LightState S);
+    // The geometric mean luminance of a sky's six faces (a lat-long is made a cube first), texels above 1000 left out so the sun disc does not
+    // drag it (SkyImage.cs:198-224); the backdrop is multiplied by TargetMid / this (SkyImage.cs:139-143)
+    float ExposureEstimate(const EnvironmentImage& Image);
+    // The gradient that lights the model in a state: the preset's probe colour times ProbeScale 0.55 (Night x 0.1) (ProceduralEnvironment.cs:19-25)
+    ProceduralSky ProceduralSkyOf(LightState S);
+    // The id of the state's lighting environment (a ProceduralSky baked into the cache) and of a sky's backdrop is BakeOutcome::Id
+    std::string LightId(LightState S);
 
     // ---------------------------------------------------------------- where the Mod Tools are
 
@@ -146,7 +152,8 @@ namespace ModToolsSky
     {
         bool Ok = false;
         bool FromCache = false;
-        std::string Id;           // the environment id (files <CacheDir>\<Id>_radiance.dds and _irradiance.dds)
+        std::string LightId;      // the model's light for the state: an analytic gradient (ProceduralSkyOf), no source file
+        std::string Id;           // the sky (the backdrop's) environment id (files <CacheDir>\<Id>_radiance.dds and _irradiance.dds)
         std::string Message;      // the failure, or the bake's report
     };
 
@@ -159,7 +166,7 @@ namespace ModToolsSky
     void UseCacheForEnvironments(const std::string& CacheDir = std::string());
     // Deletes the oldest entries (a radiance and irradiance pair is one) until the folder is within CapBytes; Keep is spared.
     // Returns the bytes left.
-    int64_t PruneCache(const std::string& CacheDir, int64_t CapBytes, const std::string& KeepId);
+    int64_t PruneCache(const std::string& CacheDir, int64_t CapBytes, const std::string& KeepId, const std::string& AlsoKeepId = std::string());
 
     // Decodes (unless cached) and bakes one state into the cache. Bake runs on the calling thread: SkyBakeJob is the one off it.
     BakeOutcome BakeState(const SkySource& Source, const BakeSettings& Settings, const std::atomic<bool>* Cancel,

@@ -233,7 +233,18 @@ namespace
         T.Check(PresetOf(LightState::Sunset).ExposureValue() == 12.5, "Sunset ev clamps to EvMax 12.5", Num(PresetOf(LightState::Sunset).ExposureValue()));
         T.Check(PresetOf(LightState::Night).ExposureValue() == 3.0 && PresetOf(LightState::Night).Exposure() == 1.0, "Night ev clamps to EvMin 3, exposure 2^0", Num(PresetOf(LightState::Night).ExposureValue()));
         T.Check(Near(PresetOf(LightState::Sunset).Exposure(), std::pow(2.0, 9.5), 1e-6), "Sunset exposure 2^(12.5 - 3)");
-        T.Check(Near(SkyGain(LightState::Day), 16384.0 / (1941.2540 * 4.0), 1e-9) && Near(SkyGain(LightState::Night), std::pow(2.0, -2.2), 1e-12), "sky gain is 2^stops over the exposure", Num(SkyGain(LightState::Day)));
+        T.Check(TargetMid(LightState::Day) == 0.18f && TargetMid(LightState::Night) == 0.06f, "target mid greys 0.18, Night 0.06 (SkyImage.cs:130)");
+        // HydraX's model light: the probe colour times 0.55, Night x 0.1 (ProceduralEnvironment.cs:19-25); horizon (colour * 0.5 + 0.5) * gain; ground (0.35 0.32 0.28) * gain
+        const ProceduralSky Day = ProceduralSkyOf(LightState::Day), Night = ProceduralSkyOf(LightState::Night);
+        T.Check(Near(Day.Zenith[0], 0.7713 * 0.55, 1e-5) && Near(Day.Horizon[0], (0.7713 * 0.5 + 0.5) * 0.55, 1e-5) && Near(Day.Ground[1], 0.32 * 0.55, 1e-5), "Day's gradient is the probe colour times ProbeScale 0.55");
+        T.Check(Near(Night.Zenith[0], 0.3945 * 0.055, 1e-5) && Near(Night.Ground[2], 0.28 * 0.055, 1e-5), "Night's gradient is a tenth of that");
+        // the exposure estimate: the geometric mean luminance, a texel above 1000 (the sun disc) left out (SkyImage.cs:198-224)
+        EnvironmentImage Flat;
+        Flat.Kind = EnvironmentImage::Layout::CubeFaces;
+        Flat.Width = Flat.Height = 2;
+        Flat.Rgba.assign((size_t)6 * 4 * 4, 0.5f);
+        Flat.Rgba[0] = Flat.Rgba[1] = Flat.Rgba[2] = 5000.0f;
+        T.Check(Near(ExposureEstimate(Flat), 0.5001, 1e-3), "the exposure estimate leaves a texel above 1000 out", Num(ExposureEstimate(Flat)));
     }
 
     void Locator(Harness& T, const fs::path& Tmp)
@@ -453,7 +464,10 @@ namespace
         const BakeOutcome First = BakeState(A, S, nullptr, [&](float V) { Seen.push_back(V); });
         T.Check(First.Ok && !First.FromCache && !First.Id.empty(), "bake: a sky bakes", First.Message);
         std::error_code Ec;
-        T.Check(fs::exists(Cache / (First.Id + "_radiance.dds"), Ec) && fs::exists(Cache / (First.Id + "_irradiance.dds"), Ec), "bake: the radiance and irradiance cubes are in the cache");
+        T.Check(fs::exists(Cache / (First.Id + "_radiance.dds"), Ec) && !fs::exists(Cache / (First.Id + "_irradiance.dds"), Ec) && fs::file_size(Cache / (First.Id + "_radiance.dds"), Ec) > 2000,
+                "bake: the sky is one sharp cube in the cache (with its mips)");
+        T.Check(First.LightId == LightId(LightState::Day) && fs::exists(Cache / (First.LightId + "_radiance.dds"), Ec) && fs::exists(Cache / (First.LightId + "_irradiance.dds"), Ec),
+                "bake: the state's light, a gradient, is beside it");
         T.Check(!Seen.empty() && std::is_sorted(Seen.begin(), Seen.end()) && Seen.back() == 1.0f, "bake: progress runs up to 1");
         size_t Strangers = 0;
         for (auto It = fs::directory_iterator(Cache, Ec); !Ec && It != fs::directory_iterator(); It.increment(Ec))
@@ -486,13 +500,13 @@ namespace
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         const BakeOutcome Sunset = BakeState(B, S, nullptr, nullptr);
         T.Check(Sunset.Ok, "cache: a second state bakes", Sunset.Message);
-        const int64_t One = [&] { int64_t N = 0; for (const char* K : { "_radiance.dds", "_irradiance.dds" }) N += (int64_t)fs::file_size(Cache / (Third.Id + K), Ec); return N; }();
+        const int64_t One = [&] { int64_t N = 0; for (const char* K : { "_radiance.dds" }) N += (int64_t)fs::file_size(Cache / (Third.Id + K), Ec); return N; }();
         BakeSettings Tight = S;
         Tight.CapBytes = One + One / 2;
         const int64_t Left = PruneCache(Cache.string(), Tight.CapBytes, Sunset.Id);
         T.Check(Left <= Tight.CapBytes && fs::exists(Cache / (Sunset.Id + "_radiance.dds"), Ec) && !fs::exists(Cache / (Third.Id + "_radiance.dds"), Ec) && !fs::exists(Cache / (Third.Id + "_irradiance.dds"), Ec),
                 "cache: over the cap the oldest pair goes, the kept entry stays", std::to_string(Left) + " of " + std::to_string(Tight.CapBytes));
-        T.Check(PruneCache(Cache.string(), 0, Sunset.Id) == (int64_t)([&] { int64_t N = 0; for (const char* K : { "_radiance.dds", "_irradiance.dds" }) N += (int64_t)fs::file_size(Cache / (Sunset.Id + K), Ec); return N; }()),
+        T.Check(PruneCache(Cache.string(), 0, Sunset.Id) == (int64_t)([&] { int64_t N = 0; for (const char* K : { "_radiance.dds" }) N += (int64_t)fs::file_size(Cache / (Sunset.Id + K), Ec); return N; }()),
                 "cache: the kept entry is never pruned, even over a cap of 0");
 
         // Cancel: the bake stops, nothing is left half written
@@ -503,8 +517,8 @@ namespace
         const BakeOutcome Stopped = BakeState(A, S2, &Cancel, nullptr);
         size_t Left2 = 0;
         for (auto It = fs::recursive_directory_iterator(Cache2, Ec); !Ec && It != fs::recursive_directory_iterator(); It.increment(Ec))
-            if (It->is_regular_file(Ec)) Left2++;
-        T.Check(!Stopped.Ok && Stopped.Message == "cancelled" && Left2 == 0, "bake: a cancelled bake reports it and leaves no file", Stopped.Message + " files=" + std::to_string(Left2));
+            if (It->is_regular_file(Ec) && It->path().filename().string().rfind("skylight-", 0) != 0) Left2++;   // the state's gradient light is whole or absent, it is not the sky
+        T.Check(!Stopped.Ok && Stopped.Message == "cancelled" && Left2 == 0, "bake: a cancelled bake reports it and leaves no sky file", Stopped.Message + " files=" + std::to_string(Left2));
 
         // A job on its own thread, cancelled by its destructor before it finishes, then one allowed to finish
         {

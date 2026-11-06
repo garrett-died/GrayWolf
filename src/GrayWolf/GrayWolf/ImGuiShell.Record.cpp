@@ -210,7 +210,7 @@ namespace ShellUi
                     else V.Sky.PickEnvironment(Want, V.Lighting);
                 }
                 if (St.contains("sky")) V.Lighting.Backdrop = St["sky"].get<bool>();
-                if (St.contains("backdrop_blur")) V.Lighting.BackdropBlur = std::clamp(St["backdrop_blur"].get<float>(), 0.0f, 1.0f);   // 0: the sky sharp
+                if (St.contains("backdrop_blur")) V.Lighting.BackdropBlur = V.Lighting.SkyBackdropBlur = std::clamp(St["backdrop_blur"].get<float>(), 0.0f, 1.0f);   // 0: the sky sharp
                 if (St.contains("background") && !SkyLighting::ParseColor(St["background"].get<std::string>(), V.Background)) Fail("not a colour: " + St["background"].get<std::string>());
                 if (St.contains("lighting_menu")) RequestLightingMenu(St["lighting_menu"].get<bool>());
                 if (St.contains("label"))

@@ -19,7 +19,11 @@ namespace ModToolsSky
 namespace
 {
     constexpr double Pi = 3.14159265358979323846;
-    constexpr int kBakeVersion = 2;   // bump when the decode or bake changes what a source gives
+    constexpr int kBakeVersion = 4;
+    constexpr float kExposureCutoff = 1000.0f;   // SkyImage.cs:37
+    constexpr float kProbeScale = 0.55f;         // Shading.cs:33
+    constexpr float kNightGain = 0.1f;           // ProceduralEnvironment.cs:15
+    constexpr int kLightVersion = 1;             // bump when ProceduralSkyOf or the gradient bake changes   // bump when the decode or bake changes what a source gives
 
     const LightingPreset kPresets[kStateCount] = {
         { LightState::Morning, "Morning", 165, 263, { 1.0f, 0.7758f, 0.5088f }, 11.3, -32, 31, 442.3148, { 0.9580f, 1.0122f, 1.0028f } },
@@ -106,7 +110,50 @@ const LightingPreset& PresetOf(LightState S)
     const int I = (int)S;
     return kPresets[(I >= 0 && I < kStateCount) ? I : 0];
 }
-double SkyGain(LightState S) { return PresetOf(S).SunIntensity() / PresetOf(S).Exposure(); }
+float TargetMid(LightState S) { return S == LightState::Night ? 0.06f : 0.18f; }
+
+float ExposureEstimate(const EnvironmentImage& Image)
+{
+    EnvironmentImage Cube;
+    const EnvironmentImage* Faces = &Image;
+    if (Image.Kind == EnvironmentImage::Layout::LatLong)
+    {
+        constexpr int kSize = 256;
+        Cube.Kind = EnvironmentImage::Layout::CubeFaces;
+        Cube.Width = Cube.Height = kSize;
+        std::vector<float> D3dOrder;
+        if (!EnvironmentSourceCube(Image, kSize, D3dOrder)) return 1e-4f;
+        Cube.Rgba = std::move(D3dOrder);
+        Faces = &Cube;
+    }
+    double Sum = 0;
+    size_t Count = 0;
+    for (size_t I = 0; I + 3 < Faces->Rgba.size(); I += 4)
+    {
+        const float Lum = 0.2126f * Faces->Rgba[I] + 0.7152f * Faces->Rgba[I + 1] + 0.0722f * Faces->Rgba[I + 2];
+        if (!(Lum <= kExposureCutoff)) continue;   // the sun disc (or NaN)
+        Sum += std::log(std::max(Lum, 0.0f) + 1e-4);
+        Count++;
+    }
+    return Count == 0 ? 1e-4f : (float)std::exp(Sum / (double)Count);
+}
+
+ProceduralSky ProceduralSkyOf(LightState S)
+{
+    const LightingPreset& P = PresetOf(S);
+    const float Gain = kProbeScale * (P.SunStops > 5 ? 1.0f : kNightGain);
+    ProceduralSky Out;
+    for (int C = 0; C < 3; C++)
+    {
+        Out.Zenith[C] = P.ProbeColor[C] * Gain;
+        Out.Horizon[C] = (P.ProbeColor[C] * 0.5f + 0.5f) * Gain;
+    }
+    const float Ground[3] = { 0.35f, 0.32f, 0.28f };
+    for (int C = 0; C < 3; C++) Out.Ground[C] = Ground[C] * Gain;
+    return Out;
+}
+
+std::string LightId(LightState S) { return std::format("skylight-{}-v{}", Lower(StateName(S)), kLightVersion); }
 
 double LightingPreset::SunIntensity() const { return std::pow(2.0, SunStops); }
 void LightingPreset::SunDirection(float (&Out)[3]) const
@@ -767,7 +814,7 @@ namespace
     }
 }
 
-int64_t PruneCache(const std::string& CacheDir, int64_t CapBytes, const std::string& KeepId)
+int64_t PruneCache(const std::string& CacheDir, int64_t CapBytes, const std::string& KeepId, const std::string& AlsoKeepId)
 {
     const fs::path Dir(Strings::ToUnicodeString(CacheDir));
     std::vector<CacheEntry> E = Entries(Dir);
@@ -778,7 +825,7 @@ int64_t PruneCache(const std::string& CacheDir, int64_t CapBytes, const std::str
     for (const CacheEntry& X : E)
     {
         if (Total <= CapBytes) break;
-        if (X.Id == KeepId) continue;
+        if (X.Id == KeepId || X.Id == AlsoKeepId) continue;
         fs::remove(Dir / (X.Id + "_radiance.dds"), Ec);
         fs::remove(Dir / (X.Id + "_irradiance.dds"), Ec);
         Total -= X.Bytes;
@@ -800,11 +847,27 @@ BakeOutcome BakeState(const SkySource& Source, const BakeSettings& Settings, con
     }
 
     std::error_code Ec;
-    const fs::path Rad = Cache / (Out.Id + "_radiance.dds"), Irr = Cache / (Out.Id + "_irradiance.dds");
-    if (fs::exists(Rad, Ec) && fs::exists(Irr, Ec))
+    // the model's light for the state: an analytic gradient, beside the sky (HydraX lights the model from it, not from the sky image)
+    Out.LightId = LightId(Source.State);
+    const fs::path LightRad = Cache / (Out.LightId + "_radiance.dds"), LightIrr = Cache / (Out.LightId + "_irradiance.dds");
+    if (!fs::exists(LightRad, Ec) || !fs::exists(LightIrr, Ec))
+    {
+        std::string LightReport;
+        if (!BakeProceduralEnvironment(ProceduralSkyOf(Source.State), 1.0f / kPreviewIblScale, Dir, Out.LightId, LightReport))
+        {
+            Out.Message = LightReport;
+            return Out;
+        }
+    }
+    else
+    {
+        fs::last_write_time(LightRad, fs::file_time_type::clock::now(), Ec);
+        fs::last_write_time(LightIrr, fs::file_time_type::clock::now(), Ec);
+    }
+    const fs::path Rad = Cache / (Out.Id + "_radiance.dds");   // the sky's backdrop cube: one file
+    if (fs::exists(Rad, Ec))
     {
         fs::last_write_time(Rad, fs::file_time_type::clock::now(), Ec);   // oldest-first eviction then drops what was not used lately
-        fs::last_write_time(Irr, fs::file_time_type::clock::now(), Ec);
         Out.Ok = true;
         Out.FromCache = true;
         Out.Message = "from the cache";
@@ -828,12 +891,14 @@ BakeOutcome BakeState(const SkySource& Source, const BakeSettings& Settings, con
     EnvironmentBakeControl Control;
     Control.Cancel = Cancel;
     Control.Progress = [&](float V) { Report(0.3f + 0.7f * V); };
-    // the sky's own scale times the state's exposure rule (SkyGain), no mean normalisation and no cut: what the cube holds is what the preview shows
-    // (times kPreviewIblScale, which the preview multiplies every environment by)
+    // the face HydraX keeps (SkyFaceCache.cs:28, :248): a cube's own, a lat-long's width / 4, at most MaxFace (1024)
+    const int FaceSize = std::clamp(Image.Kind == EnvironmentImage::Layout::CubeFaces ? Image.Width : Image.Width / 4, 16, std::max(16, Settings.MaxFace));
+    // HydraX's backdrop: the sky times TargetMid / ExposureEstimate (SkyImage.cs:139-143), the image itself not cut (the cutoff only keeps the disc out of
+    // the estimate). The preview multiplies every environment by kPreviewIblScale, so that is divided out.
     Control.AbsoluteScale = true;
-    Control.ScaleMultiplier = (float)(SkyGain(Source.State) / kPreviewIblScale);
+    Control.ScaleMultiplier = TargetMid(Source.State) / ExposureEstimate(Image) / kPreviewIblScale;
     std::string BakeReport;
-    const bool Baked = BakePreviewEnvironment(Image, Temp.string(), Out.Id, Settings.Size, BakeReport, Control);
+    const bool Baked = BakeSkyCube(Image, Temp.string(), Out.Id, FaceSize, BakeReport, Control);
     Image = EnvironmentImage();
     if (!Baked)
     {
@@ -843,9 +908,8 @@ BakeOutcome BakeState(const SkySource& Source, const BakeSettings& Settings, con
     }
 
     fs::rename(Temp / (Out.Id + "_radiance.dds"), Rad, Ec);
-    if (!Ec) fs::rename(Temp / (Out.Id + "_irradiance.dds"), Irr, Ec);
     fs::remove_all(Temp, Ec);
-    if (!fs::exists(Rad, Ec) || !fs::exists(Irr, Ec))
+    if (!fs::exists(Rad, Ec))
     {
         Out.Message = "cannot move the baked cubes into the cache";
         return Out;
@@ -859,7 +923,7 @@ BakeOutcome BakeState(const SkySource& Source, const BakeSettings& Settings, con
             fs::remove(Cache / (E.Id + "_radiance.dds"), Ec);
             fs::remove(Cache / (E.Id + "_irradiance.dds"), Ec);
         }
-    PruneCache(Dir, Settings.CapBytes, Out.Id);
+    PruneCache(Dir, Settings.CapBytes, Out.Id, Out.LightId);
 
     Out.Ok = true;
     Out.Message = BakeReport;
