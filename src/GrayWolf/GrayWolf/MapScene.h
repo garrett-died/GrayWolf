@@ -7,6 +7,7 @@
 // stay in the game's space (Z up, inches); triangles keep the game's winding.
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <cstring>
@@ -47,6 +48,8 @@ namespace Maps
         // the UV sets after each vertex's Uv (a blended surface's other layers: WWII), UvSets - 1
         // pairs per vertex in a row; empty when the surface has one set
         uint32_t UvSets = 1;
+        // the game's decal sort of each triangle (0: no decal layer), one per triangle, empty where the game gives none read; the surface and its primitives are not split by it
+        std::vector<uint32_t> TriangleSort;
         std::vector<float> MoreUvs;
         size_t Triangles() const { return Indices.size() / 3; }
     };
@@ -161,6 +164,9 @@ namespace Maps
 
     // The level's collision, from its clip map: the world's brushes, and each brush model's, in
     // the model's own space (Models[N] is "*N" in the entity string; Models[0], the world, empty).
+    // the key of a clip tool row: the contents word and the surface word (0xFFFFFFFF: any surface)
+    inline uint64_t ClipToolKey(int64_t Surface, uint32_t Contents) { return (static_cast<uint64_t>(Surface < 0 ? 0xFFFFFFFFu : static_cast<uint32_t>(Surface)) << 32) | Contents; }
+
     struct Collision
     {
         std::vector<Brush> Brushes;
@@ -173,11 +179,21 @@ namespace Maps
         size_t ClipBrushes = 0;   // the clip map's brush count (world and models): what was read from
         // the clip map's materials (name, content flags): what names the tool materials of this game
         std::vector<std::pair<std::string, uint32_t>> Materials;
+        std::vector<uint32_t> MaterialSurface;   // their surface flags, beside Materials (0 where the game keeps none)
         // the world's collision triangles (patches, terrain): three floats per vertex, three
         // vertex numbers per triangle (a, b, c), in world space, each facing out where
         // (b - a) x (c - a) points (a game storing them the other way round is turned by its reader)
         std::vector<float> Vertices;
         std::vector<uint32_t> Triangles;
+        // one label per triangle: the clip material index its partition names (an index, into Materials where the game keeps names, else into a table the game keeps elsewhere), -1 where the
+        // game gives none or it was not read; empty: none read for any
+        std::vector<int32_t> TriangleLabel;
+        bool TriangleLabelIsClipMaterial = false;   // the labels index Materials (names and contents the clip map keeps), so a mesh with no drawn material is named by the contents like a brush
+        // exact clip contents -> the BO3 tool material the game's profile names for it (zonekit/profiles/<profile>/flag_names.txt, `clip_tool` rows; filled by the game's reader); the contents mapping of brushes is used for the rest
+        std::map<uint64_t, std::string> ClipToolByContents;   // key: ClipToolKey(surface or -1, contents)
+        std::map<uint64_t, std::string> ClipToolApproximation;   // beside it: what the tool cannot express (reported as an approximation)
+        // the tool a (surface, contents) pair is named by when the game's profile has a table of tools by properties (Black Ops 4: SurfaceTypes::Names::ClipMatch); empty name: none
+        std::function<std::string(uint32_t Surface, uint32_t Contents)> ClipToolMatch;
         bool Empty() const { return Brushes.empty() && Models.empty() && Triggers.empty(); }
     };
 
@@ -196,5 +212,7 @@ namespace Maps
         std::string MapEnts;                        // the entity string, as the game keeps it
         std::map<std::string, std::string> EntityKeys;   // a key the entity string numbers (MW3, Ghosts on), by number
         Maps::Collision Collision;                  // the clip map's brushes, when the game reads them
+        // the game's decal sort values that have an editor layer name (BO4: HydraX Bo4MapWorld.DecalLayerNames, measured against stock layerSortDecal); a sort with no name is written no layer
+        std::map<int64_t, std::string> DecalLayerNames;
     };
 }

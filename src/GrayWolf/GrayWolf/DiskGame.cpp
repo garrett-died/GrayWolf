@@ -10,6 +10,7 @@
 #include "DiskGame.Monitor.h"
 #include "ExportNaming.h"
 #include "FastFile.h"
+#include "FileSystems.h"
 #include "Games/GameModule.h"
 #include "ImageRoles.h"
 #include "MapFullExport.h"
@@ -392,6 +393,18 @@ const IDiskGame* Detect(const std::string& Input)
     for (const IDiskGame* G : Registry())
         if (std::string(G->Engine()) == Module->Engine) return G;
     return nullptr;
+}
+
+std::string PackageIndexLines(const IDiskGame& Game)
+{
+    if (!Game.UsesNameDatabase()) return std::string();
+    // A run from a folder with no package_index\ cannot resolve the names the name database holds (hashes stay hashes, techset names are guessed): say so, in the report and on stderr.
+    // A warning, not an error.
+    std::error_code Ec;
+    const std::filesystem::path Index = std::filesystem::path(FileSystems::GetApplicationPath()) / "package_index";
+    if (std::filesystem::is_directory(Index, Ec) && !std::filesystem::is_empty(Index, Ec)) return std::string();
+    std::fputs("package_index_missing=1: package_index\\ was not found beside the exe; names from the name database are not resolved\n", stderr);
+    return "package_index_missing=1\nwarning package_index\\ was not found beside the exe: names the name database holds are not resolved in this run\n";
 }
 
 std::string Report(const Totals& T)

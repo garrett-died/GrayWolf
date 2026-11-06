@@ -28,6 +28,9 @@ void RenderMeshCounters::Add(const RenderMeshCounters& O)
     CopiesKeptFront += O.CopiesKeptFront;
     CopiesKeptUv += O.CopiesKeptUv;
     CopiesKeptColour += O.CopiesKeptColour;
+    ContainedRemoved += O.ContainedRemoved;
+    MeshesNoAttributes += O.MeshesNoAttributes;
+    MeshesNoMaterial += O.MeshesNoMaterial;
     CellsBothDiagonals += O.CellsBothDiagonals;
     CellsBothDiagonalsNonPlanar += O.CellsBothDiagonalsNonPlanar;
     MaxCandidatePotential = (std::max)(MaxCandidatePotential, O.MaxCandidatePotential);
@@ -191,6 +194,7 @@ namespace
             const int32_t X = OwnVertex(Keep[static_cast<size_t>(First)], Vertex), Y = OwnVertex(Keep[static_cast<size_t>(Second)], Vertex);
             if (X < 0 || Y < 0) return Differs::No;
             const RenderCorner &Cx = CornerOf(X), &Cy = CornerOf(Y);
+            if (!Cx.HasData || !Cy.HasData) return Differs::No;   // a corner no render triangle sits on joins every neighbour (HydraX IsPatchBorder)
             const double Du = static_cast<double>(Cx.U) - Cy.U, Dv = static_cast<double>(Cx.V) - Cy.V;
             const bool Texture = std::fabs(Du - std::nearbyint(Du)) > O.UvTolerance || std::fabs(Dv - std::nearbyint(Dv)) > O.UvTolerance;
             if (Texture) return Differs::Texture;
@@ -372,12 +376,14 @@ namespace
                         const int32_t V = LI[static_cast<size_t>(Grid.Triangles[T]) * 3 + K];
                         const int32_t Point = LRep[static_cast<size_t>(V)];
                         const RenderCorner& Cv = CornerOf(V);
+                        if (!Cv.HasData) continue;
                         const double WantU = static_cast<double>(Cv.U) + OffU[T], WantV = static_cast<double>(Cv.V) + OffV[T];
                         const auto Range = std::equal_range(Items.begin(), Items.end(), WalkItem{ Point, 0, 0 }, [](const WalkItem& A, const WalkItem& B) { return A.Point < B.Point; });
                         for (auto It = Range.first; It != Range.second; ++It)
                         {
                             if (static_cast<size_t>(It->Tri) == T) continue;
                             const RenderCorner& Co = CornerOf(LI[static_cast<size_t>(Grid.Triangles[static_cast<size_t>(It->Tri)]) * 3 + static_cast<size_t>(It->K)]);
+                            if (!Co.HasData) continue;
                             // a shift beyond MaxShift repeats (or not a number) is not applied: the cast to int would be undefined, and a mesh that far from its neighbour is not one
                             // surface; it counts as a conflict below
                             const auto Shift = [](double Difference) { return std::isfinite(Difference) && std::fabs(Difference) <= MaxShift ? static_cast<int>(std::nearbyint(Difference)) : 0; };
@@ -400,10 +406,28 @@ namespace
             Mesh.GroupCount = Grid.GroupCount;
             Mesh.GroupSize = Grid.GroupSize;
             Mesh.Source = Name;
-            Mesh.NonColliding = true;
+            Mesh.NonColliding = !O.Collision;
             Mesh.Points.reserve(Grid.Points.size());
             Mesh.Data.reserve(Grid.Points.size());
             bool Coloured = false;
+            // The mesh's material (collision): the render material most of its triangles' twins have. A point takes data only from a corner that has some and whose twin has that
+            // material (r46: a neighbouring material's data gave anisotropy 198), its own triangle's first, then any other triangle of the grid at the point; a point with none
+            // leaves the mesh without attributes (written with the running coordinate).
+            int32_t MeshMaterial = -1;
+            if (!S.TwinMaterial.empty())
+            {
+                std::map<int32_t, size_t> Votes;
+                for (const int32_t T : Grid.Triangles)
+                    if (const int32_t M = S.TwinMaterial[static_cast<size_t>(Tris[static_cast<size_t>(T)])]; M >= 0) Votes[M]++;
+                size_t Best = 0;
+                for (const auto& [M, N] : Votes)
+                    if (N > Best) Best = N, MeshMaterial = M;
+            }
+            const auto Eligible = [&](size_t Tri, int32_t Vertex) {
+                if (!CornerOf(Vertex).HasData) return false;
+                return S.TwinMaterial.empty() || MeshMaterial < 0 || S.TwinMaterial[static_cast<size_t>(Tris[static_cast<size_t>(Grid.Triangles[Tri])])] == MeshMaterial;
+            };
+            bool NoAttributes = false;
             for (int Gi = 0; Gi < Grid.GroupCount; Gi++)
                 for (int Pi = 0; Pi < Grid.GroupSize; Pi++)
                 {
@@ -416,16 +440,42 @@ namespace
                         const size_t Column = static_cast<size_t>((std::min)(Pi, static_cast<int>(NT) - 1));
                         if (const int32_t Own = OwnVertex(Grid.Triangles[Column], LRep[static_cast<size_t>(V)]); Own >= 0) Source = Own, Tri = Column;
                     }
-                    const RenderCorner& Cn = CornerOf(Source);
+                    if (!Eligible(Tri, Source))
+                    {
+                        Source = -1;
+                        const auto Range = std::equal_range(Items.begin(), Items.end(), WalkItem{ static_cast<int32_t>(R), 0, 0 }, [](const WalkItem& A, const WalkItem& B) { return A.Point < B.Point; });
+                        for (auto It = Range.first; It != Range.second && Source < 0; ++It)
+                        {
+                            const int32_t Candidate = LI[static_cast<size_t>(Grid.Triangles[static_cast<size_t>(It->Tri)]) * 3 + static_cast<size_t>(It->K)];
+                            if (Eligible(static_cast<size_t>(It->Tri), Candidate)) Source = Candidate, Tri = static_cast<size_t>(It->Tri);
+                        }
+                    }
                     Mesh.Points.push_back(LocalPoint(V));
+                    if (Source < 0)
+                    {
+                        NoAttributes = true;
+                        Mesh.Data.push_back({ 0, 0, 255, 255, 255, 255 });
+                        continue;
+                    }
+                    const RenderCorner& Cn = CornerOf(Source);
                     Mesh.Data.push_back({ static_cast<double>(Cn.U) + OffU[Tri], static_cast<double>(Cn.V) + OffV[Tri], Cn.Color[0], Cn.Color[1], Cn.Color[2], Cn.Color[3] });
                     Coloured = Coloured || Cn.Color[0] != 255 || Cn.Color[1] != 255 || Cn.Color[2] != 255 || Cn.Color[3] != 255;
                 }
+            if (NoAttributes)
+            {
+                Mesh.Data.clear();
+                C.MeshesNoAttributes++;
+                Coloured = false;
+            }
+            if (MeshMaterial < 0 && O.Collision) C.MeshesNoMaterial++;
 
             for (MapMesh& Piece : SplitToLimit(Mesh, O.MaxPoints))
             {
                 RenderMesh R;
                 R.Label = Label;
+                R.Material = MeshMaterial;
+                if (O.Collision)
+                    for (const int32_t T : Grid.Triangles) R.Triangles.push_back(Tris[static_cast<size_t>(T)]);
                 R.ReplaceUv = Degenerate.Check(Piece);
                 R.Mesh = std::move(Piece);
                 C.Meshes++;
@@ -489,7 +539,7 @@ RenderMeshResult BuildRenderMeshes(const RenderSoup& Soup, const std::vector<std
         Result.Count.WeldTolerance = Choice.Tolerance;
         Result.Count.WeldReason = Choice.Reason;
         Result.Count.NearestText = Nearest.ToText();
-        const OverlapResult Copies = TriangleOverlap::Find(Soup.Positions, Soup.Indices, Soup.Label, false);
+        const OverlapResult Copies = TriangleOverlap::Find(Soup.Positions, Soup.Indices, Soup.Label, Options.Collision);
         // A copy by position, winding and material is removed only when it is a copy of the render data too: the same texture coordinate and colour at each corner and the
         // same front, bit for bit. Otherwise it is another surface on the same triangle (a decal-like layer, the other side lit differently) and stays, counted.
         const auto Bits = [&](int32_t V) { return std::array<int32_t, 3>{ BitsOf(Soup.Positions[static_cast<size_t>(V) * 3]), BitsOf(Soup.Positions[static_cast<size_t>(V) * 3 + 1]), BitsOf(Soup.Positions[static_cast<size_t>(V) * 3 + 2]) }; };
@@ -519,9 +569,20 @@ RenderMeshResult BuildRenderMeshes(const RenderSoup& Soup, const std::vector<std
         }
         for (const auto& P : Copies.Proofs(Soup.Positions, Soup.Indices))
             if (Keep[static_cast<size_t>(P.first)]) Proofs.push_back(P);
+        // collision: a triangle inside a larger one of the same label and facing is removed with its proof (HydraX does this for collision); counted apart from the copies
+        if (Options.Collision)
+        {
+            std::vector<char> Contained(TriangleCount, 0);
+            for (const ContainedRemoval& R : Copies.ContainedRemovals())
+                if (R.Triangle >= 0 && static_cast<size_t>(R.Triangle) < TriangleCount && (Soup.TwinMaterial.empty() || Soup.TwinMaterial[static_cast<size_t>(R.Triangle)] < 0)) Contained[static_cast<size_t>(R.Triangle)] = 1;   // a twinned triangle is never removed by containment (as a copy is not)
+            size_t Before = Proofs.size();
+            for (const auto& P : Copies.Proofs(Soup.Positions, Soup.Indices))
+                if (Contained[static_cast<size_t>(P.first)] && !Keep[static_cast<size_t>(P.first)]) Proofs.push_back(P);
+            Result.Count.ContainedRemoved = Proofs.size() - Before;
+        }
         const WeldResult Weld = VertexWeld::Weld(Soup.Positions, Soup.Indices, Choice.Tolerance);
         Rep.assign(Weld.Representative.begin(), Weld.Representative.end());
-        Result.Count.CopiesRemoved = Proofs.size();
+        Result.Count.CopiesRemoved = Proofs.size() - Result.Count.ContainedRemoved;
         Result.Count.WeldClusters = static_cast<size_t>(Weld.Clusters);
         Result.Count.WeldedVertices = static_cast<size_t>(Weld.Welded);
         Result.Count.WeldSpan = Weld.LargestSpan;
@@ -633,6 +694,7 @@ std::string MeshText(const MapMesh& Mesh, const std::string& Material, bool Repl
     std::string Out = Options.Prefix;
     Out += "  mesh\n  {\n";
     if (Options.NonColliding) Out += "  contents nonColliding;\n";
+    if (!Options.Contents.empty()) Out += "  contents " + Options.Contents + ";\n";
     if (Options.ToolFlags) Out += "  toolFlags;\n";
     Out += "   " + Material + "\n   lightmap_gray\n   " + std::to_string(Mesh.GroupCount) + " " + std::to_string(Mesh.GroupSize) + " " + std::to_string(Options.LightmapSize) + " 8\n";
 
@@ -684,6 +746,7 @@ std::string MeshText(const MapMesh& Mesh, const std::string& Material, bool Repl
         }
         Out += "   )\n";
     }
+    if (!Options.DecalLayer.empty()) Out += "   decalLayerSort \"" + Options.DecalLayer + "\"\n   decalEditorSort -1\n";
     Out += "  }\n";
     return Out;
 }

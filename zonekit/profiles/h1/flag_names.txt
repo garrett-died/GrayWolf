@@ -64,3 +64,7 @@ surface_bit|wood_hollow|48|wood
 surface_bit|wood_wet|49|wood
 surface_bit|wood_debris|50|wood
 surface_bit|cushion|51|cushion
+# clip_tool|<BO3 tool material>|<exact contents word of a clip material>|<what BO3 cannot express>: the tool a collision mesh with no drawn material is named when its clip material has exactly these contents.
+# 0x2080 = bullet clip (0x2000) and missile clip (0x80), no solid and no player/AI bit: detail collision for shots. BO3's clip_full has aiClip, aiSightClip, bulletClip and canShootClip;
+# clip_weapon has bulletClip and canShootClip only (art_assets/t6_legacy/texture_assets/clip.gdt, read). clip_weapon is the nearest; BO3 has no tool for the missile bit alone.
+clip_tool|clip_weapon|0x2080|BO3 has no tool material that is bullet clip plus missile clip: the missile bit is not expressed

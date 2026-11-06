@@ -70,7 +70,8 @@ namespace Maps
         WorldBuilder(std::string Name, Fetch Read, FetchUvs MoreUvs = {})
             : Out{ std::move(Name), {} }, Read(std::move(Read)), MoreUvs(std::move(MoreUvs)) {}
         // false when a vertex could not be read (the triangle is left out)
-        bool Triangle(const std::string& Material, uint32_t A, uint32_t B, uint32_t C);
+        // Sort: the triangle's decal sort where the game gives one (-1: none read), kept per triangle (Surface::TriangleSort); it does not split the surface
+        bool Triangle(const std::string& Material, uint32_t A, uint32_t B, uint32_t C, int64_t Sort = -1);
         size_t Triangles() const { return Count; }
         Mesh Take() { return std::move(Out); }
 
@@ -78,7 +79,7 @@ namespace Maps
         Mesh Out;
         Fetch Read;
         FetchUvs MoreUvs;
-        std::unordered_map<std::string, size_t> Group;                  // material -> surface
+        std::unordered_map<std::string, size_t> Group;                  // material (and decal sort) -> surface
         std::vector<std::unordered_map<uint32_t, uint32_t>> Remap;      // per surface
         size_t Count = 0;
     };
@@ -99,6 +100,7 @@ namespace Maps
         int64_t Surfaces = -1, Brushes = -1, Indices = -1;   // where the arrays are (-1: not in the zone)
         uint32_t SurfaceCount = 0, BrushCount = 0, IndexCount = 0;
         int64_t SurfaceSize = 0, FirstVertex = 0, TriCount = 0, BaseIndex = 0, Material = 0;   // u32, u16, u32, pointer
+        int64_t DecalSort = -1;         // where the surface record keeps its decal sort (u32), -1: the game keeps none read; carried per triangle (Surface::TriangleSort)
         uint32_t FirstVertexUnit = 1;   // what the first vertex counts: vertices (1), or bytes of a stream
         // non-zero: the first vertex is a byte offset into a block of vertices this many bytes each,
         // not always a whole vertex (Black Ops II); a vertex is then read by its byte offset

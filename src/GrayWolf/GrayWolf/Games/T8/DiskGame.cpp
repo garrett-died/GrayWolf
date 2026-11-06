@@ -8,6 +8,7 @@
 #include "Bo4DiskExport.h"
 #include "DBGameAssets.h"
 #include "DiskGame.h"
+#include "SurfaceTypes.h"
 #include "DiskGameSizes.h"
 #include "FileSystems.h"
 #include "GameBlackOps4.h"
@@ -574,6 +575,8 @@ namespace
         C.ModelCount = 0xb0, C.Models = 0xb8, C.ModelSize = 88, C.ModelLeafBrushNode = 0x48;
         C.NodeSize = 0x20, C.NodeCount = 4, C.NodeBrushes = 0x10, C.NodeChildren = 0x18, C.NodeWide = true;
         C.VertexCount = 0x70, C.Vertices = 0x78, C.TriangleCount = 0x80, C.Triangles = 0x88, C.TriangleIndexBytes = 4;
+        C.LabelCount = 0x90, C.Labels = 0x98, C.LabelSize = 36, C.LabelFirst = 24, C.LabelTris = 32, C.LabelValue = 34;   // partitions: first u32, count u8, clip material index u16
+        C.CheckContentsUnion = true;
         return C;
     }
 
@@ -648,6 +651,7 @@ namespace
         L.Indices = Off(At<uint64_t>(Img, World + WorldIndices));
         L.IndexCount = At<uint32_t>(Img, World + WorldIndexCount);
         L.SurfaceSize = Treyarch::SurfaceSize, L.FirstVertex = 12, L.TriCount = 38, L.BaseIndex = 40, L.Material = Treyarch::SurfaceMaterial;
+        L.DecalSort = 88;   // u32 at +88 of the surface record (HydraX Bo4MapWorld SDecalSort: best fit on Alpha Omega, not a documented field)
         L.BrushSize = BrushModelSize, L.FirstSurface = 76, L.SurfaceCountAt = 72;
         if (FILE* Dbg = Maps::DebugFile())
             std::fprintf(Dbg, "[map] %s vertices %u at %llx/%llx indices %u at %llx surfaces %u at %llx brushes %u at %llx\n",
@@ -656,6 +660,10 @@ namespace
         const auto MaterialOf = [&](uint64_t Address) {
             return Address == 0 ? std::string() : Maps::AddMaterial(Scene, GameBlackOps4::ReadXMaterial(Address));
         };
+        // The decal layers (editor names of the game's decal sort values), measured against the stock layerSortDecal of the same material: 952 surfaces matched (Grunge 11 of 15,
+        // Damage - Old 9 of 11, Asphalt (bottom) 6 of 8, Foliage 5 of 6, Signage - Old 2 of 2, Damage - New 23 of 30; 1 is most likely Debris (top)). The value order is the game's enum,
+        // not the editor list order; 3 to 14 and 17 to 19 have no evidenced name and no layer is written for them.
+        Scene.DecalLayerNames = { { 1, "Debris (top)" }, { 2, "Damage - New" }, { 15, "Grunge" }, { 16, "Damage - Old" }, { 20, "Foliage" }, { 21, "Signage - Old" }, { 22, "Asphalt (bottom)" } };
         if (const size_t Bad = Maps::AddWorld(Scene, L, Treyarch::WorldVertices(Img, Positions, Data, VertexCount), MaterialOf))
             Counter("map_triangles_unread") += Bad;
 
@@ -755,6 +763,9 @@ namespace
 
         // ---- the clip map's brushes, brush models and collision triangles (Maps::ClipLayout)
         AddCollision(Scene, { "clipmap" }, ClipLayout());
+        // the tool a (surface, contents) pair is named by: the profile's table of tools by properties (flag_names.txt, clip_match rows)
+        if (const SurfaceTypes::Names* Names = SurfaceTypes::For("bo4"); Names != nullptr)
+            Scene.Collision.ClipToolMatch = [Names](uint32_t Surface, uint32_t Contents) { return Names->ClipMatch(Surface, Contents); };
         if (FILE* Dbg = Maps::DebugFile())
         {
             // diagnostics only (GH_MAPDEBUG): the clip map's counts, and the terrain's pointers
@@ -822,6 +833,7 @@ namespace
         std::vector<std::string> Aliases() const override { return { "bo4-disk-export" }; }
         // the game's own bytes: no BC decode or PNG encode, half the disk
         const char* DefaultImageFormat() const override { return "DDS"; }
+        bool UsesNameDatabase() const override { return true; }
         bool RebuildsNormalZ() const override { return true; }
         const std::vector<DiskGame::Setting>& Settings() const override
         {

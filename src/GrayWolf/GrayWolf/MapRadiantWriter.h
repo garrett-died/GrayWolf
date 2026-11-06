@@ -52,9 +52,8 @@ namespace Maps
     struct RadiantStats
     {
         size_t Brushes = 0, BrushesDropped = 0, BrushesUnsound = 0, Faces = 0, Entities = 0, BrushEntities = 0, BrushEntitiesEmpty = 0;
-        size_t Placements = 0, WorldModels = 0, ModelFiles = 0, ModelsElsewhere = 0, Triangles = 0, TrianglesDropped = 0, TriggerBrushes = 0;
+        size_t Placements = 0, WorldModels = 0, ModelFiles = 0, ModelsElsewhere = 0, TriggerBrushes = 0;
         size_t ModelsPublished = 0;   // --full-map: placed models left to the publish step
-        size_t TrianglesDuplicate = 0;
         // the sides given the drawn world's materials: the clip map's world brushes', the collision
         // triangles' prisms', the brush entities'
         RadiantTextureStats Textures, PrismTextures, EntityTextures;
@@ -78,10 +77,25 @@ namespace Maps
         size_t OwnersWelded = 0, OwnersNotSeparated = 0;
         double MeshTextMaxAbsT = 0;
         size_t MeshMilliseconds = 0;   // wall time of the mesher (BuildRenderMeshes), all owners
+        // M2c: the collision triangles as meshes (MapCollisionMeshes.h). CollisionTaken: per object, surface and triangle, the world triangles that leave the render pass
+        RenderMeshCounters CollisionMesh;
+        size_t CollisionTriangles = 0, CollisionTwinned = 0, CollisionAmbiguous = 0, CollisionDecalOnly = 0, CollisionDecalBeside = 0, CollisionTwinDrawnByBrush = 0, CollisionRenderTaken = 0;
+        size_t CollisionRenderCandidates = 0, RenderWorldTaken = 0, RenderWorldByBrush = 0, RenderWorldInPass = 0;   // the world patch-fate triangles, and where each went
+        size_t CollisionExhausted = 0, CollisionRenderStayed = 0, CollisionToolRejected = 0;
+        std::map<uint64_t, size_t> BrushToolRows;   // brush sides named by a profile row (ClipToolKey), by row
+        std::string CollisionToolSummary;           // the tool meshes by name and contents, as written to <map>.meshes.txt (for <map>.ownercheck.txt)
+        size_t CollisionSurfaceCompared = 0, CollisionSurfaceAgree = 0;   // twin pairs whose clip surface word and material surface word could both be read, and of them equal
+        // decal layers: meshes written with an editor layer (and per layer), meshes whose sort has no evidenced name, meshes with no sort read or sort 0
+        size_t DecalMeshesLayered = 0, DecalMeshesSortUnnamed = 0, DecalMeshesNoSort = 0;
+        size_t DecalSortNonzeroOnDecal = 0, DecalSortZeroOnDecal = 0, DecalSortNonzeroOnSurface = 0, DecalSortZeroOnSurface = 0;   // the world triangles by decal sort (nonzero / zero) and kind of material
+        std::map<std::string, size_t> DecalLayerMeshes;
+        std::vector<std::vector<std::vector<char>>> CollisionTaken;
         // one block per material whose coverage failed (written to <map>.coverage.txt)
         std::vector<std::string> CoverageLines;
         // one line per owner and kind (<map>.meshes.txt): the triangles, the measured vertex distances and the weld tolerance they gave, and what the mesher made of them
         std::vector<std::string> MeshLines;
+        // <map>.ownercheck.txt: what to open in Radiant and where to look (M2c)
+        std::vector<std::string> OwnerCheckLines;
         size_t Lights = 0, PlacementsPolar = 0, PlacementsPolarNoise = 0, KeysUnresolved = 0;
         // what was not written or not resolved, one line each (<map>.unresolved.txt)
         std::vector<std::string> Unresolved;

@@ -520,6 +520,8 @@ namespace DiskGame
 
         // The image format when --image-format is not given (nullptr: the saved setting).
         virtual const char* DefaultImageFormat() const { return nullptr; }
+        // true: the game's names come from the name database (package_index*.wni), so a run from a folder without it leaves hashes unresolved (reported as package_index_missing=1)
+        virtual bool UsesNameDatabase() const { return false; }
 
         // True for a game whose normal maps ship as two components (X and Y, Z left to the shader):
         // Export reads each zone's materials for the slot every image is bound to and, once the run's
@@ -793,4 +795,6 @@ namespace DiskGame
                   const Context& C, const ProgressFn& OnProgress = nullptr, const std::atomic<bool>* Cancel = nullptr);
 
     std::string Report(const Totals& T);
+    // the warning lines for a run from a folder with no package_index (empty for a game that does not use the name database)
+    std::string PackageIndexLines(const IDiskGame& Game);
 }

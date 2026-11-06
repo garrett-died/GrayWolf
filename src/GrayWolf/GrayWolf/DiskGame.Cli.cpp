@@ -384,7 +384,7 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
         {
             // a publish that failed because the floor was reached is the floor's exit, with its row
             const bool Floor = DiskGuard::WriteReport(fs::path(C.OutRoot));
-            CliReport(Options, std::string(Floor ? "result=disk_floor_reached\ndisk_floor_reached=1\n" + DiskGuard::RowText() : std::string("result=error\n")) + "reason=" + Refused + "\n" + PublishLines + Report(T));
+            CliReport(Options, std::string(Floor ? "result=disk_floor_reached\ndisk_floor_reached=1\n" + DiskGuard::RowText() : std::string("result=error\n")) + "reason=" + Refused + "\n" + PublishLines + Report(T) + PackageIndexLines(Game));
             return Floor ? DiskGuard::ExitCode : 1;
         }
     }
@@ -396,10 +396,10 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
     // the floor was reached: every report above was written; the row goes into the report folder and the CLI layer (only) exits 75
     if (DiskGuard::WriteReport(fs::path(C.OutRoot)))
     {
-        CliReport(Options, std::string("result=disk_floor_reached\ngame=") + Game.Id() + "\ndisk_floor_reached=1\n" + DiskGuard::RowText() + LanguageLines + PublishLines + Report(T));
+        CliReport(Options, std::string("result=disk_floor_reached\ngame=") + Game.Id() + "\ndisk_floor_reached=1\n" + DiskGuard::RowText() + LanguageLines + PublishLines + Report(T) + PackageIndexLines(Game));
         return DiskGuard::ExitCode;
     }
-    CliReport(Options, std::string("result=ok\ngame=") + Game.Id() + "\n" + (Ignored ? "name_filter=ignored\n" : "") + LanguageLines + PublishLines + Report(T));
+    CliReport(Options, std::string("result=ok\ngame=") + Game.Id() + "\n" + (Ignored ? "name_filter=ignored\n" : "") + LanguageLines + PublishLines + Report(T) + PackageIndexLines(Game));
     return 0;
 }
 
@@ -767,7 +767,7 @@ namespace
                          "\twritten " + std::to_string(std::get<3>(Apart[I])) + "\n";
         }
         if (!Options.KeepOutput) fs::remove_all(C.OutRoot, Ec);
-        CliReport(Options, std::string("result=ok\ngame=") + Game->Id() + "\nformats=" + Formats + "\n" + Lines + Report(T));
+        CliReport(Options, std::string("result=ok\ngame=") + Game->Id() + "\nformats=" + Formats + "\n" + Lines + Report(T) + PackageIndexLines(*Game));
         return 0;
     }
 

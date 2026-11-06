@@ -4,6 +4,8 @@
 
 #include "ExportNaming.h"
 #include "GdtWriter.h"
+#include "MapCollision.h"
+#include "MapCollisionMeshes.h"
 #include "MapFullExport.h"
 #include "MapLive.h"
 #include "MapMaterials.h"
@@ -204,21 +206,49 @@ namespace
 
     bool Starts(const std::string& S, const char* Prefix) { return S.rfind(Prefix, 0) == 0; }
 
-    // The tool material a brush is written with: a side's own when the clip map names one per side
-    // and it is a tool material (IW), else the one Black Ops III's mod tools give the brush's
-    // content flags (Quake's lineage, the same bits from CoD4 to Black Ops). A drawn surface's
-    // brush (Black Ops: bullets and missiles, 0x2080; CoD4: solid with a drawn material) stood for
-    // geometry now drawn by a misc_model: clip_full, which blocks everything and seals nothing.
+    // A collision mesh is never a sky, a trigger, a mantle or a ladder: a clip or caulk only (ToolOfMesh counts and replaces anything else).
+    bool ClipOrCaulk(const std::string& Name) { return Name.find("clip") != std::string::npos || Name == "caulk"; }
+
+    // The tool material a brush is written with: a side's own when the clip map names one per side and it is a tool material (IW), else the game's profile row for the brush's exact contents
+    // (H1: 0x2080, bullet and missile clip, is clip_weapon, as a collision mesh with those contents; before, a brush with them was clip_full, which blocks everything), else the table of tools by
+    // properties (Black Ops 4), else the one Black Ops III's mod tools give the content flags (Quake's lineage, the same bits from CoD4 to Black Ops: a drawn surface's brush, bullets and
+    // missiles 0x2080 or CoD4 solid with a drawn material, stood for geometry now drawn by a misc_model: clip_full otherwise).
+
     class ToolNames
     {
     public:
-        explicit ToolNames(const Collision& C) : Keywords(C.ContentsKeywords)
+        explicit ToolNames(const Collision& C) : Keywords(C.ContentsKeywords), Match(C.ClipToolMatch), Rows(&C.ClipToolByContents)
         {
             for (const auto& [Name, Contents] : C.Materials)
                 if (Sky.empty() && Starts(ExportNaming::Lower(Name), "sky")) Sky = ExportNaming::Lower(Name);
             if (Sky.empty()) Sky = "sky";
         }
-        std::string Of(const Brush& B, const BrushSide& S) const
+        // the name from the contents, refined to the tool of the game's properties table (a surface-qualified clip: metal_clip, wood_clip_nosight ...) when the game has one and the name is a clip
+        // A clip name is first looked up in the game's profile rows by exact contents (the brush's, with the side's surface or any: H1 names 0x2080 clip_weapon), RowKey (when given) says which row.
+        std::string Of(const Brush& B, const BrushSide& S, uint64_t* RowKey = nullptr) const
+        {
+            std::string Name = Generic(B, S);
+            if (Name.rfind("clip", 0) != 0) return Name;
+            if (Rows != nullptr)
+                for (const uint64_t Key : { ClipToolKey(S.Surface, B.Contents), ClipToolKey(-1, B.Contents) })
+                    if (const auto Row = Rows->find(Key); Row != Rows->end())
+                    {
+                        if (RowKey != nullptr) *RowKey = Key;
+                        return Row->second;
+                    }
+            if (Match)
+                if (const std::string Refined = Match(S.Surface, S.Contents); !Refined.empty()) return Refined;
+            return Name;
+        }
+        // whether Name is a tool one of the game's profile rows gives
+        bool IsRowTool(const std::string& Name) const
+        {
+            if (Rows == nullptr) return false;
+            for (const auto& [Key, Tool] : *Rows)
+                if (Tool == Name) return true;
+            return false;
+        }
+        std::string Generic(const Brush& B, const BrushSide& S) const
         {
             std::string M = ExportNaming::Lower(S.Material);
             if (RadiantTool(M)) return M;
@@ -249,10 +279,50 @@ namespace
 
         // the game's contents bits are Radiant's `contents ...;` keywords (Black Ops III)
         const bool Keywords;
+        std::function<std::string(uint32_t, uint32_t)> Match;
+        const std::map<uint64_t, std::string>* Rows = nullptr;
 
     private:
         std::string Sky;
     };
+
+    // The tool a collision mesh with no drawn material is written with, from its label's clip material (surface and contents of the clip map's table) through the same path as a brush side: the
+    // game's profile row for the exact contents, the table of tools by properties, else the contents' name. Never a sky, a trigger or a mantle: anything that is not a clip or caulk is Rejected,
+    // written as clip_full and given no contents keywords. Known false: the label is not a clip material (clip_full, as the prisms were).
+    struct MeshTool
+    {
+        std::string Name = "clip_full", Keywords;   // Keywords: Black Ops III contents keywords of a tool mesh
+        bool Known = false, Rejected = false, FromRow = false;
+        uint64_t RowKey = 0;
+        uint32_t Contents = 0;
+    };
+
+    MeshTool ToolOfMesh(const Collision& Col, const ToolNames& Tools, int32_t Clip)
+    {
+        MeshTool T;
+        if (!Col.TriangleLabelIsClipMaterial || Clip < 0 || static_cast<size_t>(Clip) >= Col.Materials.size()) return T;
+        T.Known = true;
+        Brush B;
+        BrushSide S;
+        B.Contents = Col.Materials[static_cast<size_t>(Clip)].second;
+        T.Contents = B.Contents;
+        // the clip material's own name is the source game's (caulk_shadow, clip_missile_nomark, clip_nosight_metal on mp_crash: not Black Ops III tool materials): the contents name the tool
+        S.Material = "tool";
+        S.Contents = B.Contents;   // the tool-by-properties table needs the pair, not the surface alone
+        S.Surface = static_cast<size_t>(Clip) < Col.MaterialSurface.size() ? Col.MaterialSurface[static_cast<size_t>(Clip)] : 0;
+        uint64_t Key = 0;
+        T.Name = Tools.Of(B, S, &Key);
+        T.FromRow = Key != 0;
+        T.RowKey = Key;
+        if (!ClipOrCaulk(T.Name))
+        {
+            T.Rejected = true;
+            T.Name = "clip_full";
+        }
+        else if (Tools.Keywords)
+            T.Keywords = ContentsKeywords(B.Contents);   // Black Ops III: the contents keywords, as a brush (stock colliding meshes carry e.g. contents weaponClip detail;)
+        return T;
+    }
 
     // A drawn material's name in the .map: as the model files name it (its GDT asset name with a
     // GDT, which then lists it)
@@ -382,6 +452,13 @@ namespace
             }
         }
         const std::string Keywords = Tools.Keywords && Only.empty() ? ContentsKeywords(Moved.Contents) : std::string();
+        // a side's tool name; a profile row that named it (H1: 0x2080 clip_weapon) is counted per row
+        const auto ToolOfSide = [&](const BrushSide& Side) {
+            uint64_t Row = 0;
+            std::string Name = Tools.Of(Moved, Side, &Row);
+            if (Row != 0) Stats.BrushToolRows[Row]++;
+            return Name;
+        };
 
         // the sides' planes (unit normal, distance), to match hull faces to
         std::vector<std::pair<V3, double>> SidePlanes;
@@ -500,7 +577,7 @@ namespace
             for (size_t K = 0; K < Faces.size(); K++)
                 if (Faces[K].Side != (size_t)-1)
                 {
-                    Names[K] = Only.empty() ? Tools.Of(Moved, Moved.Sides[Faces[K].Side]) : Only;
+                    Names[K] = Only.empty() ? ToolOfSide(Moved.Sides[Faces[K].Side]) : Only;
                     Counts[Names[K]]++;
                 }
             // a face on no side: the brush's most common material (else the brush's own tool material)
@@ -508,7 +585,7 @@ namespace
             size_t Most = 0;
             for (const auto& [Name, N] : Counts)
                 if (N > Most) Common = Name, Most = N;
-            if (Common.empty()) Common = Only.empty() ? Tools.Of(Moved, Moved.Sides.empty() ? BrushSide() : Moved.Sides[0]) : Only;
+            if (Common.empty()) Common = Only.empty() ? ToolOfSide(Moved.Sides.empty() ? BrushSide() : Moved.Sides[0]) : Only;
             for (size_t K = 0; K < Faces.size(); K++)
                 if (Faces[K].Side == (size_t)-1)
                 {
@@ -522,7 +599,8 @@ namespace
             if (Tex.Drawn && Tex.Stats)
             {
                 RadiantTextureStats& TS = *Tex.Stats;
-                const auto Solid = [](const std::string& Name) { return Name == "caulk" || Name == "clip_full"; };
+                // a solid tool side is one a drawn surface may stand for: caulk, clip_full, or the tool a profile row gives the contents of such a brush (H1 0x2080: clip_weapon)
+                const auto Solid = [&Tools](const std::string& Name) { return Name == "caulk" || Name == "clip_full" || Tools.IsRowTool(Name); };
                 bool Any = false;
                 for (size_t K = 0; K < Faces.size(); K++)
                 {
@@ -612,6 +690,183 @@ namespace
     }
 #endif
 
+    // The collision triangles as meshes that carry the drawn surface (MapCollisionMeshes.h). The world's drawn triangles that a collision triangle takes its data from, and that no
+    // brush side draws already, leave the render pass (Stats.CollisionTaken), so collision + render pass + brush side + misc_model partition the world's triangles.
+    // A mesh with no twin material is written with the tool material clip_full, which is what the prisms were written with; the clip map's real contents of such a mesh are
+    // not read (the label is the game's flag group where it gives one). Returns after writing; coverage and accounting failures go to Stats like the render pass's.
+    void WriteCollisionMeshes(std::string& Out, const MapScene& Scene, const DrawnWorld& Drawn, RadiantGdt* Gdt, RadiantStats& Stats, size_t& Number, const ToolNames& Tools)
+    {
+        const Collision& Col = Scene.Collision;
+        const size_t Ct = Col.Triangles.size() / 3;
+        if (Ct == 0) return;
+        std::vector<RenderTriangle> Render;
+        struct Where
+        {
+            uint32_t Object, Surface, Triangle;
+        };
+        std::vector<Where> At;
+        std::vector<std::string> Mats;
+        std::map<std::string, int32_t> MatId;
+        Stats.CollisionTaken.assign(Scene.Objects.size(), {});
+        const int Winding = WindingOf(Scene.Game);
+        for (size_t Oi = 0; Oi < Scene.Objects.size(); Oi++)
+        {
+            const Mesh& M = Scene.Objects[Oi];
+            Stats.CollisionTaken[Oi].resize(M.Surfaces.size());
+            if (DrawnWorld::Owner(M.Name) != 0) continue;
+            for (size_t Si = 0; Si < M.Surfaces.size(); Si++)
+            {
+                const Surface& S = M.Surfaces[Si];
+                Stats.CollisionTaken[Oi][Si].assign(S.Indices.size() / 3, 0);
+                const bool Decal = IsDecalSurface(Scene, S);
+                for (size_t K = 0; K + 2 < S.Indices.size(); K += 3)
+                {
+                    // only the triangles the render pass would write (a patch fate) can explain a collision triangle
+                    if (FateOf(S, K / 3) != Fate::Patch) continue;
+                    RenderTriangle T;
+                    V3 P[3], Vn = { 0, 0, 0 };
+                    bool Normals = true;
+                    for (int J = 0; J < 3; J++)
+                    {
+                        const Vertex& V = S.Vertices[S.Indices[K + static_cast<size_t>(J)]];
+                        for (int A = 0; A < 3; A++) T.Position[static_cast<size_t>(J) * 3 + static_cast<size_t>(A)] = V.Pos[A];
+                        P[J] = { V.Pos[0], V.Pos[1], V.Pos[2] };
+                        T.Corner[J].U = V.Uv[0];
+                        T.Corner[J].V = V.Uv[1];
+                        std::memcpy(T.Corner[J].Color, V.Color, 4);
+                        Normals = Normals && V.NormalRead;
+                        for (int A = 0; A < 3; A++) Vn[static_cast<size_t>(A)] += V.Normal[A];
+                    }
+                    const V3 Cr = Cross(Sub(P[1], P[0]), Sub(P[2], P[0]));
+                    const double CrLen = Length(Cr);
+                    T.Area = CrLen / 2;
+                    T.Front = Mul(Cr, Winding / (CrLen > 0 ? CrLen : 1.0));
+                    if (Normals && Length(Vn) > 0.5) T.Front = Mul(Vn, 1.0 / Length(Vn));
+                    T.Normal = Normals ? Vn : V3{ 0, 0, 0 };
+                    T.Decal = Decal;
+                    T.DrawnByBrush = Drawn.Removed(Oi, Si, K / 3);
+                    const auto Id = MatId.emplace(S.Material, static_cast<int32_t>(Mats.size()));
+                    if (Id.second) Mats.push_back(S.Material);
+                    T.Material = Id.first->second;
+                    Render.push_back(T);
+                    At.push_back({ static_cast<uint32_t>(Oi), static_cast<uint32_t>(Si), static_cast<uint32_t>(K / 3) });
+                }
+            }
+        }
+        const CollisionTwins Twins = MatchTwins(Col.Vertices, Col.Triangles, Render);
+        // the clip material's surface word against the twin's material surface word (the game's words, equal for BO4; MWR keeps a type index where the material keeps a bit: not counted equal)
+        if (!Col.TriangleLabel.empty() && Col.MaterialSurface.size() == Col.Materials.size())
+            for (size_t C = 0; C < Ct; C++)
+            {
+                const int32_t Label = Col.TriangleLabel[C], Twin = Twins.Twin[C];
+                if (Label < 0 || static_cast<size_t>(Label) >= Col.MaterialSurface.size() || Twin < 0) continue;
+                const auto Mat = Scene.Materials.find(Mats[static_cast<size_t>(Render[static_cast<size_t>(Twin)].Material)]);
+                if (Mat == Scene.Materials.end() || Mat->second.SurfaceFlags < 0) continue;
+                Stats.CollisionSurfaceCompared++;
+                Stats.CollisionSurfaceAgree += static_cast<uint32_t>(Mat->second.SurfaceFlags) == Col.MaterialSurface[static_cast<size_t>(Label)] ? 1 : 0;
+            }
+        const CollisionSoupResult Soup = CollisionSoup(Col.Vertices, Col.Triangles, Col.TriangleLabel, Render, Twins);
+        std::vector<std::string> LabelNames(Soup.LabelOf.size());
+        for (size_t L = 0; L < LabelNames.size(); L++)
+            LabelNames[L] = (Soup.LabelOf[L].first < 0 ? std::string("unlabelled") : std::to_string(Soup.LabelOf[L].first)) + (Soup.LabelOf[L].second < 0 ? " no twin" : " material " + std::to_string(Soup.LabelOf[L].second));
+
+        RenderMeshOptions Options;
+        Options.Collision = true;
+        Options.VertexOrderBorders = false;
+        const auto Started = std::chrono::steady_clock::now();
+        RenderMeshResult Meshes = BuildRenderMeshes(Soup.Soup, LabelNames, Options);
+        Stats.MeshMilliseconds += static_cast<size_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - Started).count());
+        const RenderMeshCounters& C = Meshes.Count;
+        if (C.TrianglesIn != C.Covered + C.CopiesRemoved + C.ContainedRemoved + C.CollapsedByWeld)
+        {
+            Meshes.Count.AccountingFailed++;
+            Meshes.CoverageLines.push_back(std::format("collision: {} triangles in are not {} covered + {} copies + {} contained + {} collapsed by the weld\n", C.TrianglesIn, C.Covered, C.CopiesRemoved, C.ContainedRemoved,
+                                                       C.CollapsedByWeld));
+        }
+        // A render triangle leaves the render pass only after its collision triangle was written in a mesh of its material with attributes; otherwise it stays, non-colliding
+        const RenderTaken Taken = TakenFromRenderPass(Twins, Render, Meshes);
+        for (size_t T = 0; T < Render.size(); T++)
+            if (Taken.Taken[T]) Stats.CollisionTaken[At[T].Object][At[T].Surface][At[T].Triangle] = 1;
+        // Six places where a collision mesh and the render pass meet, for the owner to look at in Radiant: render triangles that left the pass for a collision mesh, evenly spaced in
+        // the order met; the camera stands 64 units out along the triangle's front and looks at its centre (<map>.ownercheck.txt)
+        {
+            std::vector<size_t> Left;
+            for (size_t T = 0; T < Render.size(); T++)
+                if (Taken.Taken[T]) Left.push_back(T);
+            for (size_t K = 0; K < 6 && !Left.empty(); K++)
+            {
+                const RenderTriangle& T = Render[Left[(Left.size() * (2 * K + 1)) / 12]];
+                std::array<double, 3> Centre = { 0, 0, 0 };
+                for (size_t J = 0; J < 3; J++)
+                    for (size_t A = 0; A < 3; A++) Centre[A] += T.Position[J * 3 + A] / 3.0;
+                Stats.OwnerCheckLines.push_back(std::format("position {}: look at ({}, {}, {}) from ({}, {}, {}); material {}; a collision mesh and the render pass meet here", K + 1, RadiantNumber(Centre[0]), RadiantNumber(Centre[1]),
+                                                            RadiantNumber(Centre[2]), RadiantNumber(Centre[0] + (T.Front[0] * 64)), RadiantNumber(Centre[1] + (T.Front[1] * 64)), RadiantNumber(Centre[2] + (T.Front[2] * 64)),
+                                                            T.Material >= 0 ? Mats[static_cast<size_t>(T.Material)] : std::string("?")));
+            }
+        }
+        std::vector<std::string> Written(Mats.size());
+        for (size_t M = 0; M < Mats.size(); M++) Written[M] = MaterialName(Mats[M], Gdt);
+        std::map<std::string, size_t> ToolMeshes;   // the tool meshes by the name they got and the contents they came from
+        size_t ToolRejected = 0;                    // tool names the contents mapping gave that are not a clip or caulk (sky, trigger, mantle_on ...): written as clip_full
+        std::map<uint64_t, size_t> ToolApproximated;   // tool meshes named by a profile row that is an approximation, by the contents
+        for (const RenderMesh& R : Meshes.Meshes)
+        {
+            MeshTextOptions Text;
+            Text.NonColliding = false;
+            Text.Prefix = "// brush " + std::to_string(Number++) + "\n {\n";
+            // A mesh with a drawn material and attributes is the surface. Any other is a tool mesh (its surface, if any, stays in the render pass), named by ToolOfMesh.
+            std::string Material = "clip_full";
+            const int32_t Clip = R.Label >= 0 && static_cast<size_t>(R.Label) < Soup.LabelOf.size() ? Soup.LabelOf[static_cast<size_t>(R.Label)].first : -1;
+            if (R.Material >= 0 && R.Mesh.HasData())
+                Material = Written[static_cast<size_t>(R.Material)];
+            else
+            {
+                const MeshTool Tool = ToolOfMesh(Col, Tools, Clip);
+                Material = Tool.Name;
+                Text.Contents = Tool.Keywords;
+                ToolRejected += Tool.Rejected ? 1 : 0;
+                ToolMeshes[Material + (Tool.Known ? std::format(" (contents {:#x})", Tool.Contents) : std::string(" (label not a clip material)"))]++;
+                if (Tool.FromRow && Col.ClipToolApproximation.count(Tool.RowKey) != 0) ToolApproximated[Tool.RowKey]++;
+            }
+            Out += MeshText(R.Mesh, Material, R.ReplaceUv, Text, &Stats.MeshTextMaxAbsT) + " }\n";
+        }
+        {
+            std::string Tools_;
+            for (const auto& [Name, N] : ToolMeshes) Tools_ += (Tools_.empty() ? "" : ", ") + Name + " " + std::to_string(N);
+            Stats.MeshLines.push_back("collision tool meshes by name (contents of their clip material): " + (Tools_.empty() ? std::string("none") : Tools_));
+            Stats.CollisionToolSummary = Tools_;
+        }
+        for (const auto& [Contents, N] : ToolApproximated)
+            Stats.Unresolved.push_back(std::format("approximation: {} collision tool meshes with contents {:#x} are written as {}: {}", N, Contents & 0xFFFFFFFFu, Col.ClipToolByContents.at(Contents), Col.ClipToolApproximation.at(Contents)));
+        Stats.CollisionTriangles = Ct;
+        Stats.CollisionTwinned = Twins.Twinned;
+        Stats.CollisionAmbiguous = Twins.Ambiguous;
+        Stats.CollisionDecalOnly = Twins.DecalOnly;
+        Stats.CollisionDecalBeside = Twins.DecalBeside;
+        Stats.CollisionTwinDrawnByBrush = Twins.DrawnByBrushOnly;
+        Stats.CollisionExhausted = Twins.Exhausted;
+        Stats.CollisionRenderStayed = Taken.Stayed;
+        Stats.CollisionToolRejected = ToolRejected;
+        Stats.CollisionRenderTaken = Taken.Count;
+        Stats.CollisionRenderCandidates = Render.size();
+        Stats.CollisionMesh = Meshes.Count;
+        Stats.Patches += Meshes.Count.Meshes;   // map_radiant_patches counts the collision meshes too
+        Stats.PatchesColoured += Meshes.Count.MeshesColoured;
+        // the failures go through the same gate as the render pass's
+        Stats.Mesh.CoverageMissing += Meshes.Count.CoverageMissing;
+        Stats.Mesh.CoverageLeftover += Meshes.Count.CoverageLeftover;
+        Stats.Mesh.LabelsFailed += Meshes.Count.LabelsFailed;
+        Stats.Mesh.AccountingFailed += Meshes.Count.AccountingFailed;
+        Stats.MeshLines.push_back(std::format("collision: {} triangles, {} with a render twin ({} ambiguous: the largest surface taken; {} twins drawn by a brush side; {} only under a decal, a tool mesh; {} with a decal beside their surface twin), "
+                                              "{} render triangles leave the render pass; {} meshes ({} grids: {} fans, {} lone triangles, {} cells), covered {}, removed with proof {} copies + {} contained + {} collapsed by the weld, coverage MISSING {} LEFTOVER {}; "
+                                              "{} meshes without a material (clip_full), {} without attributes (running coordinate); facing turned {}, kept {}, unknown {}, against the vertex normals {}; borders cut {} by texture, {} by colour and {} by facing; "
+                                              "weld tolerance {} ({}); labels: {}",
+                                              Ct, Twins.Twinned, Twins.Ambiguous, Twins.DrawnByBrushOnly, Twins.DecalOnly, Twins.DecalBeside, Taken.Count, C.Meshes, C.Grids, C.Fans, C.LoneTriangles, C.Cells, C.Covered, C.CopiesRemoved,
+                                              C.ContainedRemoved, C.CollapsedByWeld, C.CoverageMissing, C.CoverageLeftover, C.MeshesNoMaterial, C.MeshesNoAttributes, C.Flipped, C.FacingKept, C.FacingUnknown, C.FacingAgainst, C.BordersCutTexture,
+                                              C.BordersCutColour, C.BordersCutFacing, C.WeldTolerance, C.WeldReason, Col.TriangleLabel.empty() ? "none read (the twin's material)" : "the game's partitions"));
+        for (std::string& Lines : Meshes.CoverageLines) Stats.CoverageLines.push_back(std::move(Lines));
+    }
+
     // One pass of WritePatches: the kept triangles of one owner's surfaces (decals, or not) as a RenderSoup, through the mesher (MapRenderMeshes.h), written as meshes
     // (nonColliding: the clip map's brushes collide). Each vertex keeps its position, colour ("c", left out when white), UV ("t": UV x 1024) and the lightmap
     // coordinates of the mesh's plane (a texel per 16 units, as "16 8" in the size line says).
@@ -620,6 +875,7 @@ namespace
         const int Winding = WindingOf(Scene.Game);
         RenderSoup Soup;
         std::vector<std::string> Names;
+        std::vector<int64_t> Sorts;   // per label: a decal label's decal sort, -1 where none was read (or not a decal)
         std::map<std::string, int> Ids;
         for (size_t Oi = 0; Oi < Scene.Objects.size(); Oi++)
         {
@@ -629,19 +885,24 @@ namespace
             {
                 const Surface& S = M.Surfaces[Si];
                 if (IsDecalSurface(Scene, S) != Decal) continue;
-                int Label = -1;
+                bool Joined = false;
                 size_t Base = 0;
                 for (size_t K = 0; K + 2 < S.Indices.size(); K += 3)
                 {
-                    if (Drawn.Removed(Oi, Si, K / 3)) continue;
+                    // The world's patch-fate triangles are accounted for: taken by a collision mesh, drawn by a brush side, or in this pass (Stats.RenderWorld*); they add up to the
+                    // candidates the collision pass counted (checked after the world's passes)
+                    const bool TakenByCollision = Owner == 0 && Oi < Stats.CollisionTaken.size() && Si < Stats.CollisionTaken[Oi].size() && K / 3 < Stats.CollisionTaken[Oi][Si].size() && Stats.CollisionTaken[Oi][Si][K / 3];
+                    const bool ByBrush = Drawn.Removed(Oi, Si, K / 3);
+                    if (Owner == 0 && K / 3 < S.TriangleSort.size()) (Decal ? (S.TriangleSort[K / 3] ? Stats.DecalSortNonzeroOnDecal : Stats.DecalSortZeroOnDecal) : (S.TriangleSort[K / 3] ? Stats.DecalSortNonzeroOnSurface : Stats.DecalSortZeroOnSurface))++;   // is +88 nonzero only on decals?
                     const Fate F = FateOf(S, K / 3);
+                    if (Owner == 0 && F == Fate::Patch) (TakenByCollision ? Stats.RenderWorldTaken : ByBrush ? Stats.RenderWorldByBrush : Stats.RenderWorldInPass)++;
+                    if (TakenByCollision || ByBrush) continue;
                     if (F == Fate::None) Stats.TrianglesDegenerate++;
                     if (F != Fate::Patch) continue;
-                    if (Label < 0)
+                    // the surface's vertices join the soup once; the triangles name them
+                    if (!Joined)
                     {
-                        // the surface's vertices join the soup once; the triangles name them
-                        Label = Ids.emplace(S.Material, static_cast<int>(Names.size())).first->second;
-                        if (static_cast<size_t>(Label) == Names.size()) Names.push_back(S.Material);
+                        Joined = true;
                         Base = Soup.Corners.size();
                         for (const Vertex& V : S.Vertices)
                         {
@@ -652,6 +913,14 @@ namespace
                             std::memcpy(C.Color, V.Color, 4);
                             Soup.Corners.push_back(C);
                         }
+                    }
+                    // decals are keyed by (material, the triangle's decal sort): two layers of one material are never one mesh
+                    const int64_t Sort = Decal && K / 3 < S.TriangleSort.size() ? static_cast<int64_t>(S.TriangleSort[K / 3]) : -1;
+                    const int Label = Ids.emplace(Sort >= 0 ? S.Material + " decal sort " + std::to_string(Sort) : S.Material, static_cast<int>(Names.size())).first->second;
+                    if (static_cast<size_t>(Label) == Names.size())
+                    {
+                        Names.push_back(S.Material);
+                        Sorts.push_back(Sort);
                     }
                     V3 P[3], Vn = { 0, 0, 0 };
                     bool Normals = true;   // the vertex normals count only when all three corners have one that was read
@@ -684,7 +953,7 @@ namespace
         RenderMeshResult Meshes = BuildRenderMeshes(Soup, Names, Options);
         Stats.MeshMilliseconds += static_cast<size_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - Started).count());
         // triangles in = covered + removed with a proof, per owner and kind; a mismatch fails the export like a coverage failure
-        if (Meshes.Count.TrianglesIn != Meshes.Count.Covered + Meshes.Count.CopiesRemoved + Meshes.Count.CollapsedByWeld)
+        if (Meshes.Count.TrianglesIn != Meshes.Count.Covered + Meshes.Count.CopiesRemoved + Meshes.Count.ContainedRemoved + Meshes.Count.CollapsedByWeld)
         {
             Meshes.Count.AccountingFailed++;
             Meshes.CoverageLines.push_back(std::format("owner {} {}: {} triangles in are not {} covered + {} copies removed + {} collapsed by the weld\n", Owner, Decal ? "decals" : "surfaces", Meshes.Count.TrianglesIn,
@@ -696,6 +965,22 @@ namespace
         {
             MeshTextOptions Text;
             Text.Prefix = "// brush " + std::to_string(Number++) + "\n {\n";
+            // a decal's editor layer from the game's sort (the names the game has evidence for); a sort with no name, or none read, writes no layer and is counted
+            if (Decal)
+            {
+                const int64_t Sort = Sorts[static_cast<size_t>(R.Label)];
+                const auto Found = Sort > 0 ? Scene.DecalLayerNames.find(Sort) : Scene.DecalLayerNames.end();
+                if (Found != Scene.DecalLayerNames.end())
+                {
+                    Text.DecalLayer = Found->second;
+                    Stats.DecalMeshesLayered++;
+                    Stats.DecalLayerMeshes[Found->second]++;
+                }
+                else if (Sort > 0)
+                    Stats.DecalMeshesSortUnnamed++;
+                else
+                    Stats.DecalMeshesNoSort++;
+            }
             Out += MeshText(R.Mesh, Written[static_cast<size_t>(R.Label)], R.ReplaceUv, Text, &Stats.MeshTextMaxAbsT) + " }\n";
         }
         Stats.Patches += Meshes.Count.Meshes;
@@ -859,9 +1144,7 @@ namespace
                                 { "map_radiant_brushes_dropped", Stats.BrushesDropped },
                                 { "map_radiant_brushes_unsound", Stats.BrushesUnsound },
                                 { "map_radiant_trigger_brushes", Stats.TriggerBrushes },
-                                { "map_radiant_triangles", Stats.Triangles },
-                                { "map_radiant_triangles_dropped", Stats.TrianglesDropped },
-                                { "map_radiant_triangles_duplicate", Stats.TrianglesDuplicate },
+                                // (map_radiant_triangles, _dropped and _duplicate counted the collision prisms; there are none since M2c, so they are gone: the collision triangles are map_radiant_collision_triangles)
                                 { "map_radiant_entities", Stats.Entities },
                                 { "map_radiant_brush_entities", Stats.BrushEntities },
                                 { "map_radiant_brush_entities_empty", Stats.BrushEntitiesEmpty },
@@ -924,6 +1207,38 @@ namespace
                                                                 { "map_radiant_mesh_decal_overlap_partial", M.OverlapPartial },
                                                                 { "map_radiant_mesh_decal_overlap_contained", M.OverlapContained },
                                                                 { "map_radiant_mesh_ms", Stats.MeshMilliseconds },
+                                                                { "map_radiant_decal_meshes_layered", Stats.DecalMeshesLayered },
+                                                                { "map_radiant_decal_meshes_sort_unnamed", Stats.DecalMeshesSortUnnamed },
+                                                                { "map_radiant_decal_meshes_no_sort", Stats.DecalMeshesNoSort },
+                                                                { "map_radiant_decal_sort_nonzero_on_decal_triangles", Stats.DecalSortNonzeroOnDecal },
+                                                                { "map_radiant_decal_sort_zero_on_decal_triangles", Stats.DecalSortZeroOnDecal },
+                                                                { "map_radiant_decal_sort_nonzero_on_surface_triangles", Stats.DecalSortNonzeroOnSurface },
+                                                                { "map_radiant_decal_sort_zero_on_surface_triangles", Stats.DecalSortZeroOnSurface },
+                                                                { "map_radiant_collision_triangles", Stats.CollisionTriangles },
+                                                                { "map_radiant_collision_twinned", Stats.CollisionTwinned },
+                                                                { "map_radiant_collision_twin_ambiguous", Stats.CollisionAmbiguous },
+                                                                { "map_radiant_collision_twin_decal_only", Stats.CollisionDecalOnly },
+                                                                { "map_radiant_collision_twin_decal_beside", Stats.CollisionDecalBeside },
+                                                                { "map_radiant_collision_twin_drawn_by_brush", Stats.CollisionTwinDrawnByBrush },
+                                                                { "map_radiant_collision_render_taken", Stats.CollisionRenderTaken },
+                                                                { "map_radiant_collision_render_stayed", Stats.CollisionRenderStayed },
+                                                                { "map_radiant_collision_twin_surface_compared", Stats.CollisionSurfaceCompared },
+                                                                { "map_radiant_collision_twin_surface_agree", Stats.CollisionSurfaceAgree },
+                                                                { "map_radiant_collision_twin_exhausted", Stats.CollisionExhausted },
+                                                                { "map_radiant_cmesh_tool_rejected", Stats.CollisionToolRejected },
+                                                                { "map_radiant_brush_sides_named_by_profile_row", [&Stats] { size_t N = 0; for (const auto& [Key, Count] : Stats.BrushToolRows) N += Count; return N; }() },
+                                                                { "map_radiant_collision_render_candidates", Stats.CollisionRenderCandidates },
+                                                                { "map_radiant_render_world_taken", Stats.RenderWorldTaken },
+                                                                { "map_radiant_render_world_by_brush", Stats.RenderWorldByBrush },
+                                                                { "map_radiant_render_world_in_pass", Stats.RenderWorldInPass },
+                                                                { "map_radiant_cmesh_meshes", Stats.CollisionMesh.Meshes },
+                                                                { "map_radiant_cmesh_covered", Stats.CollisionMesh.Covered },
+                                                                { "map_radiant_cmesh_copies_removed", Stats.CollisionMesh.CopiesRemoved },
+                                                                { "map_radiant_cmesh_contained_removed", Stats.CollisionMesh.ContainedRemoved },
+                                                                { "map_radiant_cmesh_no_material", Stats.CollisionMesh.MeshesNoMaterial },
+                                                                { "map_radiant_cmesh_no_attributes", Stats.CollisionMesh.MeshesNoAttributes },
+                                                                { "map_radiant_cmesh_facing_against", Stats.CollisionMesh.FacingAgainst },
+                                                                { "map_radiant_cmesh_facing_unknown", Stats.CollisionMesh.FacingUnknown },
                                                                 { "map_radiant_mesh_owners_welded", Stats.OwnersWelded },
                                                                 { "map_radiant_mesh_owners_not_separated", Stats.OwnersNotSeparated },
                                                                 { "map_radiant_mesh_max_abs_t", ReportCounter(Stats.MeshTextMaxAbsT) } });
@@ -1386,6 +1701,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         std::error_code Gone;
         fs::remove(fs::path(Path).replace_extension(".coverage.txt"), Gone);
         fs::remove(fs::path(Path).replace_extension(".meshes.txt"), Gone);
+        fs::remove(fs::path(Path).replace_extension(".ownercheck.txt"), Gone);
     }
     const std::string Map = ExportNaming::SafeFileName(Path.stem().string());
     const fs::path Root = Path.parent_path() / (Map + "_radiant");
@@ -1463,76 +1779,13 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
     Blocks.back().BodyEnd = Out.size();
     Out += "}\n";
 
-    // the collision triangles (patches, terrain): each a prism Thick units deep behind its face
-    // (they face out), in a func_group (the world's at compile time). A triangle given twice (the
-    // same corners) is written once: facing the same way, a copy; facing the other way (a sheet
-    // colliding on both sides), the one facing up, else the first.
-    constexpr double Thick = 2.0;   // how deep a prism is
-    const auto& Tv = Scene.Collision.Vertices;
-    const auto Prisms = [&](const std::vector<uint32_t>& Tris, size_t& Number) {
-        std::map<std::array<float, 9>, size_t> Seen;   // corners, sorted -> the triangle written
-        std::vector<char> Kept(Tris.size() / 3, 1);
-        const auto Corner = [&](size_t T, int J) {
-            const size_t I = (size_t)Tris[T * 3 + J] * 3;
-            return V3{ Tv[I], Tv[I + 1], Tv[I + 2] };
-        };
-        const auto Up = [&](size_t T) {
-            return Cross(Sub(Corner(T, 1), Corner(T, 0)), Sub(Corner(T, 2), Corner(T, 0)))[2] > 0;
-        };
-        for (size_t T = 0; T < Kept.size(); T++)
-        {
-            std::array<std::array<float, 3>, 3> C;
-            for (int J = 0; J < 3; J++)
-                for (int A = 0; A < 3; A++) C[J][A] = Tv[(size_t)Tris[T * 3 + J] * 3 + A];
-            std::sort(C.begin(), C.end());
-            std::array<float, 9> Key;
-            for (int J = 0; J < 9; J++) Key[J] = C[J / 3][J % 3];
-            const auto [It, New] = Seen.emplace(Key, T);
-            if (New) continue;
-            Stats.TrianglesDuplicate++;
-            // the other way round and facing up where the first does not: this one instead
-            const size_t First = It->second;
-            const V3 A = Cross(Sub(Corner(First, 1), Corner(First, 0)), Sub(Corner(First, 2), Corner(First, 0)));
-            const V3 B = Cross(Sub(Corner(T, 1), Corner(T, 0)), Sub(Corner(T, 2), Corner(T, 0)));
-            if (Dot(A, B) < 0 && Up(T) && !Up(First))
-            {
-                Kept[First] = 0;
-                It->second = T;
-            }
-            else
-                Kept[T] = 0;
-        }
-        for (size_t T = 0; T < Kept.size(); T++)
-        {
-            if (!Kept[T]) continue;
-            V3 P[3];
-            for (int J = 0; J < 3; J++) P[J] = Corner(T, J);
-            Brush B;
-            if (!Prism(P, Thick, B))
-            {
-                Stats.TrianglesDropped++;
-                continue;
-            }
-            // counted as triangles, not as the clip map's brushes
-            const size_t Dropped = Stats.BrushesDropped, Unsound = Stats.BrushesUnsound;
-            if (WriteBrush(Out, B, Number, nullptr, nullptr, Tools, "clip_full", Stats, { Tex.Drawn, ForGdt, 0, &Stats.PrismTextures, &Hidden }))
-            {
-                Number++;
-                Stats.Brushes--, Stats.Triangles++;
-            }
-            else
-            {
-                Stats.BrushesDropped = Dropped, Stats.BrushesUnsound = Unsound;
-                Stats.TrianglesDropped++;
-            }
-        }
-    };
     if (!Scene.Collision.Triangles.empty())
     {
         Begin(nullptr, "func_group");
         Blocks.back().Part = PrefabPart::Patches;
         BrushNumber = 0;
-        Prisms(Scene.Collision.Triangles, BrushNumber);
+        // the collision triangles (patches, terrain) as meshes that carry the drawn surface, colliding, in a func_group (the world's at compile time)
+        WriteCollisionMeshes(Out, Scene, Drawn, ForGdt, Stats, BrushNumber, Tools);
         Out += "}\n";
     }
 
@@ -1607,6 +1860,13 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         // entities of a split map add up to the unsplit one's
         WritePatches(Group, Scene, Drawn, 0, ForGdt, Stats, Number, PatchKind::NotDecal);
         WritePatches(DecalGroup, Scene, Drawn, 0, ForGdt, Stats, DecalNumber, PatchKind::Decal);
+        // the world's patch-fate triangles: candidates = taken by a collision mesh + drawn by a brush side + written by the render pass (+ the ones the collision pass never saw: none)
+        if (Stats.CollisionTriangles > 0 && Stats.CollisionRenderCandidates != Stats.RenderWorldTaken + Stats.RenderWorldByBrush + Stats.RenderWorldInPass)
+        {
+            Stats.Mesh.AccountingFailed++;
+            Stats.CoverageLines.push_back(std::format("world render triangles: {} candidates are not {} taken by collision meshes + {} drawn by a brush side + {} in the render pass\n", Stats.CollisionRenderCandidates,
+                                                      Stats.RenderWorldTaken, Stats.RenderWorldByBrush, Stats.RenderWorldInPass));
+        }
         for (const uint32_t O : Owners)
             if (!Patched.count(O))
             {
@@ -1775,6 +2035,13 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         File << Out;
     else if (!WritePrefabs(Out, Blocks, Prefabs, Path, File, Stats, Error))
         return false;
+    if (Stats.DecalMeshesLayered + Stats.DecalMeshesSortUnnamed + Stats.DecalMeshesNoSort > 0)
+    {
+        std::string Layers;
+        for (const auto& [Name, N] : Stats.DecalLayerMeshes) Layers += (Layers.empty() ? "" : ", ") + Name + " " + std::to_string(N);
+        Stats.MeshLines.push_back(std::format("decal layers: {} meshes with an editor layer ({}); {} with a decal sort that has no evidenced layer name (no layer written); {} with no sort read or sort 0",
+                                              Stats.DecalMeshesLayered, Layers, Stats.DecalMeshesSortUnnamed, Stats.DecalMeshesNoSort));
+    }
     // The mesh coverage check (PatchCoverage): every drawn triangle is in a mesh or removed with a proof. A material that fails is listed here, and the export fails
     // (below, once its files are written): MISSING and LEFTOVER must be 0.
     if (!Stats.MeshLines.empty())
@@ -1782,6 +2049,23 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         std::ofstream Lines(fs::path(Path).replace_extension(".meshes.txt"), std::ios::binary);
         for (const std::string& Line : Stats.MeshLines) Lines << Line << "\n";
     }
+    // <map>.ownercheck.txt: the files to open in Radiant, the counts to expect, and six places to look at (collision mesh and render pass meet there)
+    if (Stats.CollisionTriangles > 0)
+    {
+        std::ofstream Check(fs::path(Path).replace_extension(".ownercheck.txt"), std::ios::binary);
+        Check << "files: " << Path.filename().string() << "\n";
+        for (const RadiantPrefabFile& P : Stats.PrefabFiles) Check << "files: " << P.File << "\n";
+        Check << "expect: " << Stats.CollisionMesh.Meshes << " colliding collision meshes (" << Stats.CollisionTriangles << " collision triangles, " << Stats.CollisionTwinned << " with a render twin), "
+              << Stats.RenderWorldTaken << " world render triangles left the render pass, " << Stats.Mesh.Meshes << " non-colliding render meshes, " << Stats.CollisionMesh.MeshesNoMaterial
+              << " tool meshes (" << Stats.CollisionToolSummary << "), no brush prisms\n";
+        for (const std::string& Line : Stats.OwnerCheckLines) Check << Line << "\n";
+        Check << "check for the owner: the " << Stats.CollisionMesh.MeshesNoMaterial << " tool meshes (collision triangles with no render twin) keep the collision winding, which GrayWolf's reader turns to face out along (b - a) x (c - a); "
+                 "HydraX's export leaves the stored winding, so its tool meshes can face the other way from these; its own report turns more meshes against the render fronts than it keeps, so the stored winding is mostly the wrong way round and "
+                 "this one is the likelier. Whether patch collision is one-sided in the game is unknown: look at a tool mesh from both sides with /debugRenderCollision 1.\n";
+    }
+    for (const auto& [Key, N] : Stats.BrushToolRows)
+        if (const auto Approx = Scene.Collision.ClipToolApproximation.find(Key); Approx != Scene.Collision.ClipToolApproximation.end())
+            Stats.Unresolved.push_back(std::format("approximation: {} brush sides with contents {:#x} are written as {}: {}", N, Key & 0xFFFFFFFFu, Scene.Collision.ClipToolByContents.at(Key), Approx->second));
     const bool CoverageFailed = !Stats.CoverageLines.empty();
     if (CoverageFailed)
     {
@@ -2244,7 +2528,57 @@ int RadiantWriterSelfTest(std::string& Failures)
         for (size_t At = Text.find("\n  mesh\n"); At != std::string::npos; At = Text.find("\n  mesh\n", At + 1)) Meshes++;
         Check(Ok && Meshes == 1 && Stats.Patches == 1 && Stats.Mesh.TrianglesIn == 12 && Stats.Mesh.Covered == 12 && Stats.Mesh.CoverageMissing == 0 && Stats.Mesh.CoverageLeftover == 0 && Stats.PatchesFacingAgainst == 0,
               "a drawn grid of quads is one mesh with every triangle covered and no facing against the normals", Error + " " + std::to_string(Meshes) + " " + std::to_string(Stats.Patches));
-        Check(Text.find("   lightmap_gray\n   3 4 16 8\n") != std::string::npos || Text.find("   lightmap_gray\n   4 3 16 8\n") != std::string::npos, "the size line is the grid's 4 x 3 points", Text.substr(0, 400));
+        Check(Text.find("  toolFlags;\n") != std::string::npos && (Text.find("   lightmap_gray\n   3 4 0 8\n") != std::string::npos || Text.find("   lightmap_gray\n   4 3 0 8\n") != std::string::npos),
+              "the size line is the grid's 4 x 3 points and 0 8, after a toolFlags line (the stock layout)", Text.substr(0, 400));
+        // the tool name of a mesh from contents: the contents that name a sky, a trigger or a mantle are not clip or caulk, so a mesh is not given them (WriteCollisionMeshes counts and replaces them)
+        {
+            Collision Empty;
+            const ToolNames Names(Empty);
+            Brush B;
+            BrushSide S;
+            S.Material = "tool";
+            const auto OfContents = [&](uint32_t Contents) {
+                B.Contents = Contents;
+                return Names.Of(B, S);
+            };
+            Check(!ClipOrCaulk(OfContents(0x800)) && !ClipOrCaulk(OfContents(0x40000000)) && !ClipOrCaulk(OfContents(0x1000000)), "contents of a sky, a trigger and a mantle name no clip or caulk",
+                  OfContents(0x800) + " " + OfContents(0x40000000) + " " + OfContents(0x1000000));
+            Check(OfContents(0x1) == "clip_full" && OfContents(0x30680) == "clip" && ClipOrCaulk("clip_weapon") && ClipOrCaulk("caulk") && !ClipOrCaulk("trigger"), "solid contents name clip_full, player and monster clip name clip", OfContents(0x1) + " " + OfContents(0x30680));
+        }
+        // the tool of a mesh through the mesh path: the pair (surface 0xD440A0, contents 0x20430600) names metal_clip only when the side carries the contents too; a profile row names a brush
+        // side and a mesh alike; a rejected name gets clip_full and no contents keywords
+        {
+            SurfaceTypes::Names Book;
+            Book.Parse("surface_mask|x|0x3F00000\nsurface|a|0x100000\nclip_match|metal_clip|0x20430600||0xD440A0\nclip_tool|clip_weapon|0x2080|BO3 cannot say missile\n");
+            Collision Col;
+            Col.TriangleLabelIsClipMaterial = true;
+            Col.ContentsKeywords = true;
+            Col.Materials = { { std::string(), 0x20430600u }, { std::string(), 0x40002080u }, { std::string(), 0x2080u } };   // 1: a trigger whose other bits have keywords
+            Col.MaterialSurface = { 0xD440A0u, 0xD440A0u, 0x440A0u };
+            Col.ClipToolMatch = [&Book](uint32_t Surface, uint32_t Contents) { return Book.ClipMatch(Surface, Contents); };
+            for (const auto& Row : Book.ClipTools()) Col.ClipToolByContents[ClipToolKey(Row.Surface, Row.Contents)] = Row.Tool;
+            const ToolNames Names(Col);
+            const MeshTool Metal = ToolOfMesh(Col, Names, 0), Trigger = ToolOfMesh(Col, Names, 1), Weapon = ToolOfMesh(Col, Names, 2), Unknown = ToolOfMesh(Col, Names, 9);
+            Check(Metal.Name == "metal_clip" && Metal.Known && !Metal.Rejected, "a tool mesh with surface 0xD440A0 and contents 0x20430600 is metal_clip (the side carries its contents)", Metal.Name);
+            Check(Trigger.Rejected && Trigger.Name == "clip_full" && Trigger.Keywords.empty(), "a rejected tool name falls back to clip_full with no contents keywords", Trigger.Name + " '" + Trigger.Keywords + "'");
+            Check(Weapon.Name == "clip_weapon" && Weapon.FromRow && !Metal.FromRow && !Unknown.Known && Unknown.Name == "clip_full", "a profile row names a tool mesh; an unread label is clip_full", Weapon.Name);
+            BrushSide Side;
+            Brush Solid;
+            Solid.Contents = 0x2080;
+            uint64_t Row = 0;
+            Check(Names.Of(Solid, Side, &Row) == "clip_weapon" && Row != 0, "a brush with the contents of a profile row gets the same tool as a mesh", Names.Of(Solid, Side));
+        }
+        // a table count the zone cannot hold is refused and counted, not walked
+        {
+            const std::vector<uint8_t> Zone(256, 0);
+            std::map<std::string, size_t> Counters;
+            uint32_t Bad = 0xFFFFFFFFu, Fits = 10, None = 0, Past = 10;
+            const int64_t A = BoundedTable(Zone, 16, Bad, 16, Counters), B2 = BoundedTable(Zone, 16, Fits, 16, Counters), C = BoundedTable(Zone, 16, None, 16, Counters), D = BoundedTable(Zone, 300, Past, 16, Counters);
+            Check(A == -1 && Bad == 0 && B2 == 16 && Fits == 10 && C == -1 && D == -1 && Counters["collision_table_count_bad"] == 2, "a table count the zone cannot hold is counted and refused", std::to_string(Counters["collision_table_count_bad"]));
+            uint32_t NullPointer = 0xFFFFFFFFu;
+            const size_t BadBefore = Counters["collision_table_count_bad"];
+            Check(BoundedTable(Zone, -1, NullPointer, 16, Counters) == -1 && NullPointer == 0 && Counters["collision_table_count_bad"] == BadBefore, "a count with a null pointer is cleared (nothing is allocated from it) and is no bad count", std::to_string(NullPointer));
+        }
         Check(fs::exists(fs::path(Map).replace_extension(".meshes.txt")) && !fs::exists(fs::path(Map).replace_extension(".coverage.txt")), "the owner is listed in <map>.meshes.txt and no coverage failure file is made");
     }
     fs::remove_all(Dir, Ec);

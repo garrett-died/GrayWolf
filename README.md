@@ -312,8 +312,8 @@ ceiling of 38.8 dB, against stock sources that are not copies of an earlier expo
 yet**: loading the output in the Asset Property Editor, linking it, or seeing it in game; `--target
 modtools` has not been run on a real install; Black Ops 6 and Black Ops 7 are untested, since their
 data was not installed; `.dds` output keeps the game's two-channel normals; 5 Cold War images
-with no material role stay unconverted. Radiant maps have no Black Ops 4 terrain yet, and collision
-triangles are thin brushes. See [docs/BO3-CONVERSION.md](docs/BO3-CONVERSION.md).
+with no material role stay unconverted. Radiant maps have no Black Ops 4 terrain yet. See
+[docs/BO3-CONVERSION.md](docs/BO3-CONVERSION.md).
 
 **Checking the output.** Every `--target` run ends with `bo3-verify`, which can also be run by hand:
 

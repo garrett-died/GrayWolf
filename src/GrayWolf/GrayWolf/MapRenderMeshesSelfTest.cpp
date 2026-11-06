@@ -92,13 +92,10 @@ int RenderMeshesSelfTest(std::string& Failures)
         M.Points = { { 0, 0, 0 }, { 0, 4, 0 }, { 8, 0, 0 }, { 8, 4, 0 } };
         MeshTextOptions Stock;
         Stock.NonColliding = false;
-        Stock.ToolFlags = true;
-        Stock.LightmapSize = 0;
-        Stock.LightmapCoords = false;
         const std::string Text = MeshText(M, "snow", false, Stock);
         Check(Contains(Text, "  mesh\n  {\n  toolFlags;\n   snow\n   lightmap_gray\n   2 2 0 8\n   (\n") && Contains(Text, "\tv 8 4 0 t 128 -64 0 0\n"), "the writer emits the stock mesh layout", Text);
     }
-    // the layout this export writes: nonColliding, the size line "16 8", the lightmap pair of the plane (a texel per 16 units)
+    // the layout this export writes (the defaults: the stock zm_giant_geo.map layout): nonColliding, toolFlags, the size line "W H 0 8", the lightmap pair "0 0"
     {
         MapMesh M;
         M.GroupCount = 2;
@@ -108,9 +105,21 @@ int RenderMeshesSelfTest(std::string& Failures)
         MeshTextOptions Here;
         Here.Prefix = "// brush 7\n {\n";
         const std::string Text = MeshText(M, "mtl", false, Here);
-        Check(Text.rfind("// brush 7\n {\n  mesh\n  {\n  contents nonColliding;\n   mtl\n   lightmap_gray\n   2 2 16 8\n   (\n\tv 0 0 0 t 512 256 0 0\n\tv 8 0 0 c 10 20 30 40 t 1024 256 0.5 0\n   )\n", 0) == 0 &&
-                  Contains(Text, "\tv 0 8 0 t 512 1024 0 -0.5\n"),
-              "a mesh as this export writes it: size line 16 8, colour only when not white, t = UV x 1024, the lightmap pair", Text);
+        Check(Text.rfind("// brush 7\n {\n  mesh\n  {\n  contents nonColliding;\n  toolFlags;\n   mtl\n   lightmap_gray\n   2 2 0 8\n   (\n\tv 0 0 0 t 512 256 0 0\n\tv 8 0 0 c 10 20 30 40 t 1024 256 0 0\n   )\n", 0) == 0 &&
+                  Contains(Text, "\tv 0 8 0 t 512 1024 0 0\n"),
+              "a mesh as this export writes it by default: toolFlags in stock position, size line W H 0 8, colour only when not white, t = UV x 1024, lightmap pair 0 0", Text);
+    }
+
+    // a decal mesh's editor layer: decalLayerSort and decalEditorSort after the rows, inside the mesh (stock zm_giant_geo.map, HydraX IwMapWriter); none without a layer
+    {
+        MapMesh M;
+        M.GroupCount = 2;
+        M.GroupSize = 2;
+        M.Points = { { 0, 0, 0 }, { 0, 4, 0 }, { 8, 0, 0 }, { 8, 4, 0 } };
+        MeshTextOptions Layered;
+        Layered.DecalLayer = "Grunge";
+        const std::string With = MeshText(M, "decal", false, Layered), Without = MeshText(M, "decal", false);
+        Check(Contains(With, "   )\n   decalLayerSort \"Grunge\"\n   decalEditorSort -1\n  }\n") && !Contains(Without, "decalLayerSort") && !Contains(Without, "decalEditorSort"), "a decal layer is written after the rows as decalLayerSort and decalEditorSort -1, and only when there is one", With);
     }
 
     // ---- one flat grid becomes one mesh and every triangle is accounted for

@@ -51,6 +51,18 @@ namespace SurfaceTypes
         // A `bo3_unused|<name>|<value>` row: the game names this surface type but no stock BO3 material entry uses it (HydraX writes
         // <none> for the BO4 player and riotshield). Per game, as data: the t7 table has no such row, BO3 keeps both.
         bool UnusedInBo3(const std::string& SurfaceName) const;
+        // `clip_tool|<BO3 tool material>|<exact clip contents word>|<what BO3 cannot express>` rows: the tool material a collision mesh whose clip material has exactly these contents is named, as data of the
+        // game's profile (the writer's contents mapping for brushes is used for the rest). The fourth field is the approximation, reported.
+        struct ClipToolRow
+        {
+            uint32_t Contents;
+            std::string Tool, Approximation;
+            int64_t Surface = -1;   // the clip material's surface word the row needs, -1: any
+        };
+        const std::vector<ClipToolRow>& ClipTools() const { return ClipToolRows; }
+        // `clip_match|<tool>|<contents>||<surface>` rows (Black Ops 4): the tool a (surface, contents) pair is named by, by properties: the tool whose declared surface bits equal the pair's and whose contents (the
+        // compile-added ones ignored) are all set in the pair's, fewest extra contents bits first; a tie among different names, or no match, gives an empty name (HydraX ToolMaterialProperties.Match).
+        std::string ClipMatch(uint32_t Surface, uint32_t Contents) const;
 
     private:
         uint32_t TypeMask = 0, OpaqueBit = 0, DecalBit = 0;
@@ -64,6 +76,8 @@ namespace SurfaceTypes
         std::vector<std::string> Games;
         std::vector<std::pair<uint32_t, std::string>> Types;
         std::vector<std::string> Unused;
+        std::vector<ClipToolRow> ClipToolRows;
+        std::vector<ClipToolRow> ClipMatchRows;
     };
 
     // The profile's table (zonekit/profiles/<profile>/flag_names.txt, found as the other profile files are); null when there is none.

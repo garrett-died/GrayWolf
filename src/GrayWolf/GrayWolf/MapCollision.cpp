@@ -159,6 +159,12 @@ namespace
                 if (L.SideSurface >= 0) Out1.Surface = At<uint32_t>(Img, S + L.SideSurface);
                 Out.Sides.push_back(Out1);
             }
+            if (L.CheckContentsUnion)
+            {
+                uint32_t Union = 0;
+                for (const BrushSide& Side : Out.Sides) Union |= Side.Contents;
+                Counters[Union == Out.Contents ? "collision_union_match" : (Union & Out.Contents) == Union ? "collision_union_subset" : (Union & Out.Contents) == Out.Contents ? "collision_union_superset" : "collision_union_other"]++;
+            }
             // the corners: a brush whose pointer or count does not read keeps its sides alone
             if (L.BrushVertexCount >= 0 && L.BrushVertices >= 0)
             {
@@ -219,6 +225,57 @@ namespace
     };
 }
 
+int64_t BoundedTable(ByteView Img, int64_t Where, uint32_t& Count, int64_t RecordSize, std::map<std::string, size_t>& Counters)
+{
+    if (Where < 0) Count = 0;   // a null or unread pointer: no records, whatever the count says
+    if (Count == 0) return -1;
+    if (RecordSize <= 0 || Where >= static_cast<int64_t>(Img.size()) || static_cast<int64_t>(Count) > (static_cast<int64_t>(Img.size()) - Where) / RecordSize)
+    {
+        Counters["collision_table_count_bad"]++;
+        Count = 0;
+        return -1;
+    }
+    return Where;
+}
+
+TreeWalk WalkCollisionTree(ByteView Img, const ClipLayout& L, int64_t Parts, uint32_t PartCount, int64_t Trees, uint32_t TreeCount, size_t MaterialCount, std::map<std::string, size_t>& Counters)
+{
+    TreeWalk W;
+    W.Material.assign(PartCount, -1);
+    W.Node.assign(PartCount, -1);
+    std::vector<uint8_t> Reached(PartCount, 0);
+    for (uint32_t K = 0; Trees >= 0 && Parts >= 0 && K < TreeCount; K++)
+    {
+        const int64_t Node = Trees + (int64_t)K * L.TreeSize;
+        if (Node + L.TreeSize > (int64_t)Img.size()) break;
+        if (At<uint16_t>(Img, Node + L.TreeChildren) != 0) continue;
+        Counters["collision_tree_leaves"]++;
+        const uint32_t Part = At<uint32_t>(Img, Node + L.TreePartition);
+        const uint32_t Material = At<uint16_t>(Img, Node + L.TreeMaterial);
+        if (Part >= PartCount)
+        {
+            Counters["collision_tree_partition_out_of_range"]++;
+            continue;
+        }
+        if (Reached[Part]++)
+        {
+            Counters["collision_tree_partition_reached_twice"]++;
+            if (W.Material[Part] != static_cast<int32_t>(Material)) Counters["collision_tree_partition_material_conflict"]++;
+            continue;   // the first leaf in the table keeps it
+        }
+        if (Material >= MaterialCount)
+            Counters["collision_tree_material_out_of_range"]++;
+        else
+            W.Material[Part] = static_cast<int32_t>(Material);
+        W.Node[Part] = Node;
+        W.LeafTriangles += At<uint8_t>(Img, Parts + (int64_t)Part * L.PartitionSize + L.PartitionTris);
+    }
+    for (uint32_t P = 0; P < PartCount; P++)
+        if (!Reached[P]) Counters["collision_tree_partition_unreached"]++;
+    if (Trees < 0) Counters["collision_tree_unread"]++;
+    return W;
+}
+
 bool ReadCollision(Collision& Out, const ClipSource& Src, int64_t ClipMap, const ClipLayout& L, std::map<std::string, size_t>& Counters)
 {
     if (!Src.Image || ClipMap < 0) return false;
@@ -232,7 +289,11 @@ bool ReadCollision(Collision& Out, const ClipSource& Src, int64_t ClipMap, const
     Out = Collision();
     Out.Triggers = std::move(Triggers);
     Out.ClipBrushes = World.BrushCount;
-    for (size_t K = 0; K < World.Materials.size(); K++) Out.Materials.emplace_back(World.Materials[K], World.MaterialFlags[K].second);
+    for (size_t K = 0; K < World.Materials.size(); K++)
+    {
+        Out.Materials.emplace_back(World.Materials[K], World.MaterialFlags[K].second);
+        Out.MaterialSurface.push_back(World.MaterialFlags[K].first);
+    }
 
     // the brush models: their own tables, or the brushes their leaf's node tree reaches
     const uint32_t ModelCount = L.ModelCount >= 0 ? At<uint32_t>(Img, ClipMap + L.ModelCount) : 0;
@@ -283,19 +344,46 @@ bool ReadCollision(Collision& Out, const ClipSource& Src, int64_t ClipMap, const
     const uint32_t Vertices = Holder >= 0 && L.VertexCount >= 0 ? At<uint32_t>(Img, Holder + L.VertexCount) : 0;
     const uint32_t Triangles = Holder >= 0 && L.TriangleCount >= 0 ? At<uint32_t>(Img, Holder + L.TriangleCount) : 0;
     const int64_t V = Vertices ? R.Follow(Holder + L.Vertices) : -1, T = Triangles ? R.Follow(Holder + L.Triangles) : -1;
+    // A table of Count records at the pointer: the count is what the zone can hold, or the table is unread (a bad count is counted, never walked). Returns where the records start, -1 for none.
+    const auto TableAt = [&](int64_t CountAt, int64_t PointerAt, int64_t RecordSize, uint32_t& Count) -> int64_t {
+        Count = At<uint32_t>(Img, Holder + CountAt);
+        return Count == 0 ? -1 : BoundedTable(Img, R.Follow(Holder + PointerAt), Count, RecordSize, Counters);
+    };
+    // the partition table is read once (a bad count is counted once)
+    uint32_t PartTableCount = 0;
+    const int64_t PartTable = L.PartitionCount >= 0 && Holder >= 0 ? TableAt(L.PartitionCount, L.Partitions, L.PartitionSize, PartTableCount) : -1;
+    // a clip material index per partition, from the AABB tree's leaves; -1 where no leaf names the partition (unknown, never zero). Checked and counted: every partition must be
+    // reached by a leaf (WalkCollisionTree), the triangles over the leaves must add up to the triangle count, every material index must be in range.
+    std::vector<int32_t> PartitionMaterial, TriangleMaterial;
+    std::vector<int64_t> PartitionNode;
+    if (L.PartitionCount >= 0 && L.TreeCount >= 0 && Triangles)
+    {
+        const uint32_t PartCount = PartTableCount;
+        const int64_t Parts = PartTable;
+        uint32_t TreeCount = 0;
+        const int64_t Trees = TableAt(L.TreeCount, L.Trees, L.TreeSize, TreeCount);
+        TreeWalk W = WalkCollisionTree(Img, L, Parts, PartCount, Trees, TreeCount, World.Materials.size(), Counters);
+        if (W.LeafTriangles != Triangles) Counters["collision_tree_triangle_sum_mismatch"]++;
+        Counters["collision_tree_leaf_triangles"] += W.LeafTriangles;
+        PartitionMaterial = std::move(W.Material);
+        PartitionNode = std::move(W.Node);
+        TriangleMaterial.assign(Triangles, -1);
+    }
     // each triangle's vertex base, from the partition holding it
     std::vector<uint32_t> Base;
     if (L.PartitionCount >= 0 && Triangles)
     {
         Base.assign(Triangles, 0);
-        const uint32_t Count = At<uint32_t>(Img, Holder + L.PartitionCount);
-        const int64_t Parts = Count ? R.Follow(Holder + L.Partitions) : -1;
+        const uint32_t Count = PartTableCount;
+        const int64_t Parts = PartTable;
         for (uint32_t P = 0; Parts >= 0 && P < Count; P++)
         {
             const int64_t Rec = Parts + (int64_t)P * L.PartitionSize;
             const uint32_t First = At<uint32_t>(Img, Rec + L.PartitionFirstTri), N = At<uint8_t>(Img, Rec + L.PartitionTris);
-            const uint32_t Segment = At<uint8_t>(Img, Rec + L.PartitionSegment) * (uint32_t)L.SegmentVertices;
-            for (uint32_t K = First; K < First + N && K < Triangles; K++) Base[K] = Segment;
+            const uint32_t Segment = (L.PartitionSegmentBytes == 2 ? At<uint16_t>(Img, Rec + L.PartitionSegment) : At<uint8_t>(Img, Rec + L.PartitionSegment)) * (uint32_t)L.SegmentVertices;
+            for (uint32_t K = First; K - First < N && K < Triangles; K++) Base[K] = Segment;
+            if (!TriangleMaterial.empty() && P < PartitionMaterial.size())
+                for (uint32_t K = First; K - First < N && K < Triangles; K++) TriangleMaterial[K] = PartitionMaterial[P];
         }
         if (Parts < 0) Counters["collision_partitions_unread"]++;
     }
@@ -315,10 +403,65 @@ bool ReadCollision(Collision& Out, const ClipSource& Src, int64_t ClipMap, const
                        (Base.empty() ? 0 : Base[K]);
             if (I[0] >= Vertices || I[1] >= Vertices || I[2] >= Vertices)
             {
-                Counters["collision_triangles_unread"]++;
+                // a number outside the vertices: loud, never read as segment 0 (the counters are in the report; the rest of the triangles are not read)
+                Counters["collision_triangles_unread"] += Triangles - K;
+                Counters["collision_index_out_of_range"]++;
                 break;
             }
             Out.Triangles.insert(Out.Triangles.end(), { I[0], I[2], I[1] });
+        }
+        // the leaf's bounds (midpoint at 0, half size at 16) contain its partition's triangles: counted, never assumed
+        if (!PartitionNode.empty() && L.PartitionCount >= 0)
+        {
+            const uint32_t PartCount = PartTableCount;
+            const int64_t Parts = PartTable;
+            const size_t TriangleTotal = Out.Triangles.size() / 3;
+            for (uint32_t P = 0; Parts >= 0 && P < PartCount && P < PartitionNode.size(); P++)
+            {
+                if (PartitionNode[P] < 0) continue;
+                const int64_t Rec = Parts + (int64_t)P * L.PartitionSize;
+                const uint32_t First = At<uint32_t>(Img, Rec + L.PartitionFirstTri), N = At<uint8_t>(Img, Rec + L.PartitionTris);
+                float Mid[3], Half[3];
+                for (int A = 0; A < 3; A++) Mid[A] = At<float>(Img, PartitionNode[P] + A * 4), Half[A] = At<float>(Img, PartitionNode[P] + 16 + A * 4);
+                for (uint32_t K = First; K - First < N && K < TriangleTotal; K++)
+                {
+                    bool Inside = true;
+                    for (int J = 0; J < 3; J++)
+                        for (int A = 0; A < 3; A++)
+                            Inside = Inside && std::fabs(Out.Vertices[static_cast<size_t>(Out.Triangles[K * 3 + static_cast<size_t>(J)]) * 3 + static_cast<size_t>(A)] - Mid[A]) <= Half[A] + 0.05f;
+                    Counters[Inside ? "collision_tree_triangles_inside_leaf_bounds" : "collision_tree_triangles_outside_leaf_bounds"]++;
+                }
+            }
+        }
+        if (!TriangleMaterial.empty())
+        {
+            TriangleMaterial.resize(Out.Triangles.size() / 3, -1);
+            Out.TriangleLabel = std::move(TriangleMaterial);
+            Out.TriangleLabelIsClipMaterial = true;
+        }
+        // a label per triangle from the partitions that hold one (LabelCount); a triangle no partition names stays -1 (unknown, never zero)
+        if (L.LabelCount >= 0 && !Out.Triangles.empty())
+        {
+            const size_t TriangleTotal = Out.Triangles.size() / 3;
+            Out.TriangleLabel.assign(TriangleTotal, -1);
+            Out.TriangleLabelIsClipMaterial = true;   // the labels index the clip map's materials (names, contents and surface words of the per-map table)
+            uint32_t Count = 0;
+            const int64_t Parts = TableAt(L.LabelCount, L.Labels, L.LabelSize, Count);
+            for (uint32_t P = 0; Parts >= 0 && P < Count; P++)
+            {
+                const int64_t Rec = Parts + (int64_t)P * L.LabelSize;
+                const uint32_t First = At<uint32_t>(Img, Rec + L.LabelFirst), N = At<uint8_t>(Img, Rec + L.LabelTris);
+                const int32_t Label = At<uint16_t>(Img, Rec + L.LabelValue);
+                if (static_cast<uint64_t>(First) + N > TriangleTotal)
+                {
+                    // a partition outside the triangles: no label is trusted (HydraX reads none for the whole map)
+                    Out.TriangleLabel.assign(TriangleTotal, -1);
+                    Counters["collision_labels_unread"]++;
+                    break;
+                }
+                for (uint32_t K = First; K < First + N; K++) Out.TriangleLabel[K] = Label;
+            }
+            if (Parts < 0) Counters["collision_labels_unread"]++;
         }
     }
     else if (Triangles)

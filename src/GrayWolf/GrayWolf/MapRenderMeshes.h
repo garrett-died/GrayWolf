@@ -19,6 +19,7 @@ namespace Maps
     {
         float U = 0, V = 0;
         uint8_t Color[4] = { 255, 255, 255, 255 };
+        bool HasData = true;   // false: no render triangle sits on this collision corner (U, V and Color are not data); it joins every neighbour and is nobody's source
     };
 
     // The kept triangles of one owner, all materials together. Positions and Corners have one entry per vertex (three floats a vertex in Positions);
@@ -33,6 +34,9 @@ namespace Maps
         std::vector<std::array<double, 3>> Front;
         // the sum of the three vertex normals (zero when the reader gave none): what the facing counters compare with
         std::vector<std::array<double, 3>> Normal;
+        // collision soups: the render material (an id of the caller's) of the twin each triangle took its corners from, -1 for none; empty: every corner is the mesh's own. A mesh's
+        // point takes data only from a corner whose twin has the mesh's material (the majority of its triangles' twins), never a neighbouring material
+        std::vector<int32_t> TwinMaterial;
     };
 
     struct RenderMeshOptions
@@ -47,12 +51,15 @@ namespace Maps
         // x about 100 bytes (1.6 GB at the default) whatever the thread count, and which material is capped does not depend on it (the output equals for 1 and 4 threads).
         int64_t MaxCandidates = 2000000;
         int FailLabel = -1;                  // tests only: the material whose worker throws, to prove the exception reaches the caller
+        bool Collision = false;              // collision triangles: colliding meshes, contained triangles of the same label and facing removed with a proof, points without data allowed
     };
 
     struct RenderMeshCounters
     {
         size_t TrianglesIn = 0, CopiesRemoved = 0, CollapsedByWeld = 0, Covered = 0;
         size_t CopiesKeptFront = 0, CopiesKeptUv = 0, CopiesKeptColour = 0;   // triangles with the corners of another that differ in front, texture coordinate or colour: kept
+        size_t ContainedRemoved = 0;         // collision: triangles inside a larger one of the same label and facing, removed with a proof
+        size_t MeshesNoAttributes = 0, MeshesNoMaterial = 0;   // collision: meshes with a point none of whose twins has the mesh's material (written with the running coordinate); meshes whose triangles have no twin
         size_t CellsBothDiagonals = 0, CellsBothDiagonalsNonPlanar = 0;       // cells whose two diagonals are both input triangles (credited to two grids)
         int64_t MaxCandidatePotential = 0;   // the most pairs sharing an edge any one material had (the mesher cap counts these)
         size_t Grids = 0, Fans = 0, LoneTriangles = 0, Cells = 0;
@@ -78,6 +85,8 @@ namespace Maps
     {
         MapMesh Mesh;          // points with render data (U, V, colour)
         int Label = 0;
+        int32_t Material = -1;    // collision: the render material most of its triangles' twins have (ties: the lowest id), -1 when none has a twin
+        std::vector<int32_t> Triangles;   // collision: the soup triangles the mesh covers (every piece of a split grid holds the grid's)
         bool ReplaceUv = false;   // DegenerateMeshUv: write the running coordinate instead of the copied one
     };
 
@@ -97,9 +106,11 @@ namespace Maps
     {
         std::string Prefix;            // before the "mesh" line (the brush number comment and the brace)
         bool NonColliding = true;      // "contents nonColliding;"
-        bool ToolFlags = false;        // the stock layout's "toolFlags;" line
-        int LightmapSize = 16;         // the third number of the size line
-        bool LightmapCoords = true;    // each vertex ends with its plane's texture axes (a texel per 16 units); else "0 0"
+        bool ToolFlags = true;         // the stock layout's "toolFlags;" line (zm_giant_geo.map: every mesh; HydraX IwMapWriter writes it too)
+        int LightmapSize = 0;          // the third number of the size line (stock: W H 0 8 in most meshes; HydraX writes 0)
+        bool LightmapCoords = false;   // each vertex ends with its plane's texture axes (a texel per LightmapSize units); else "0 0" as HydraX writes
+        std::string DecalLayer;        // a decal mesh's editor layer: decalLayerSort "<name>" and decalEditorSort -1 after the rows (stock and HydraX IwMapWriter); empty: none
+        std::string Contents;          // Black Ops III contents keywords after nonColliding (a tool mesh: contents weaponClip detail;); empty: none
     };
     // The text of a mesh named Material; ReplaceUv writes the running coordinate in place of the copied one. Statistics: the largest |t| is returned in MaxAbsT when not null.
     std::string MeshText(const MapMesh& Mesh, const std::string& Material, bool ReplaceUv, const MeshTextOptions& Options = {}, double* MaxAbsT = nullptr);

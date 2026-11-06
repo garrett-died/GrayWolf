@@ -52,6 +52,7 @@
 #include "ImageRoles.h"
 #include "MaterialGdt.h"
 #include "MapMesh.h"
+#include "MapCollisionMeshes.h"
 #include "MapRenderMeshes.h"
 #include "MapRadiantRules.h"
 #include "MapRadiantWriter.h"
@@ -1027,6 +1028,7 @@ static int SelfTest(std::string& Failures)
     // The map mesh module (weld, overlap, mesher, coverage, texture fits): HydraX parity cases and the scale checks
     Failed += Maps::MeshSelfTest(Failures);
     Failed += Maps::RenderMeshesSelfTest(Failures);
+    Failed += Maps::CollisionMeshesSelfTest(Failures);
 
     return Failed;
 }

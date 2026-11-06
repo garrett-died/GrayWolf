@@ -189,6 +189,12 @@
     <ClCompile Include="MapRenderMeshes.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MapCollisionMeshes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MapCollisionMeshesSelfTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="MapRenderMeshesSelfTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

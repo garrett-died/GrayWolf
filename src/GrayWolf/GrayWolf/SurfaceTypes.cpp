@@ -5,6 +5,7 @@
 #include "ExportNaming.h"
 #include "ZoneTableWalker.h"
 
+#include <bit>
 #include <algorithm>
 #include <filesystem>
 #include <format>
@@ -57,6 +58,8 @@ bool Names::Parse(std::string_view Text)
         std::string Kind, Name, Value, Target;
         if (!std::getline(Fields, Kind, '|') || !std::getline(Fields, Name, '|') || !std::getline(Fields, Value, '|')) continue;
         std::getline(Fields, Target, '|');   // the optional fourth field: a surface_bit row's BO3 name
+        std::string SurfaceField;
+        std::getline(Fields, SurfaceField, '|');   // the optional fifth field: a clip_tool row's surface word
         uint32_t Word = 0;
         if (!ParseWord(Value, Word)) continue;
         if (Kind == "surface_bits") BitSet = true;
@@ -65,6 +68,16 @@ bool Names::Parse(std::string_view Text)
         else if (Kind == "game" && !Name.empty()) Games.push_back(Name);
         else if (Kind == "surface" && !Name.empty()) Types.emplace_back(Word, Name);
         else if (Kind == "bo3_unused" && !Name.empty()) Unused.push_back(Name);
+        else if (Kind == "clip_match" && !Name.empty())
+        {
+            uint32_t Surface = 0;
+            ClipMatchRows.push_back({ Word, Name, std::string(), ParseWord(SurfaceField, Surface) ? static_cast<int64_t>(Surface) : -1 });
+        }
+        else if (Kind == "clip_tool" && !Name.empty())
+        {
+            uint32_t Surface = 0;
+            ClipToolRows.push_back({ Word, Name, Target, ParseWord(SurfaceField, Surface) ? static_cast<int64_t>(Surface) : -1 });
+        }
         else if (Kind == "render" && Name == "opaque") OpaqueBit = Word;
         else if (Kind == "render" && Name == "decal") DecalBit = Word;
     }
@@ -84,6 +97,31 @@ Names::BitState Names::DecodeBits(uint64_t Word, std::string& Name, std::string&
             return BitState::Named;
         }
     return BitState::Unnamed;
+}
+
+std::string Names::ClipMatch(uint32_t Surface, uint32_t Contents) const
+{
+    // the surface bits some declaration names; the others (BO4 sets e.g. 0x8 on its caulk) are ignored when comparing; the contents the compiler adds whatever the material (detail, depthPrime, structural, solid, transparent)
+    constexpr uint32_t DeclaredSurface = 0x38000000u | 0x03F00000u | 0x4000000u | 0x80000000u | 0xF9B7u | 0xF0000u;
+    constexpr uint32_t CompileContents = 0x1u | 0x100000u | 0x8000000u | 0x10000000u | 0x20000000u;
+    std::string Best;
+    int BestExtra = 1 << 30;
+    bool Tie = false;
+    for (const ClipToolRow& Row : ClipMatchRows)
+    {
+        if (Row.Surface < 0 || (static_cast<uint32_t>(Row.Surface) & DeclaredSurface) != (Surface & DeclaredSurface)) continue;
+        if (((Row.Contents & ~CompileContents) & ~Contents) != 0) continue;
+        const int Extra = std::popcount((Contents & ~CompileContents) & ~Row.Contents);
+        if (Extra < BestExtra)
+        {
+            Best = Row.Tool;
+            BestExtra = Extra;
+            Tie = false;
+        }
+        else if (Extra == BestExtra && Row.Tool != Best)
+            Tie = true;
+    }
+    return Tie ? std::string() : Best;
 }
 
 bool Names::UnusedInBo3(const std::string& SurfaceName) const
@@ -272,6 +310,25 @@ int SelfTest(std::string& Failures)
     }
     const Names* Bo4 = For("bo4");
     Check(Bo4 != nullptr && Bo4->HasRenderBits(), "the bo4 table has the render bits");
+    // the clip rows: the profile's tool for exact clip contents (and, when the row names one, a surface word)
+    {
+        Names Mini;
+        Mini.Parse("surface_mask|x|0x3F00000\nsurface|a|0x100000\nclip_tool|clip_player|0x20010000||0x440a0\nclip_tool|clip_weapon|0x2080|BO3 cannot say missile\n");
+        Check(Mini.ClipTools().size() == 2 && Mini.ClipTools()[0].Tool == "clip_player" && Mini.ClipTools()[0].Contents == 0x20010000u && Mini.ClipTools()[0].Surface == 0x440a0 && Mini.ClipTools()[1].Surface == -1 && Mini.ClipTools()[1].Approximation == "BO3 cannot say missile",
+              "clip_tool rows: tool, exact contents, optional surface word, approximation");
+        // clip_match: the tool of the properties: an exact pair, the one with the fewest extra contents bits, a tie names nothing, another surface names nothing
+        {
+            Names Match;
+            Match.Parse("surface_mask|x|0x3F00000\nsurface|a|0x100000\nclip_match|metal_clip|0x20430600||0xD440A0\nclip_match|metal_clip_full|0x204336C0||0xD440A0\nclip_match|rock_clip|0x20430600||0x11440A0\nclip_match|stone_clip|0x20430600||0x11440A0\n");
+            Check(Match.ClipMatch(0xD440A0, 0x20430600) == "metal_clip" && Match.ClipMatch(0xD440A0, 0x204336C0) == "metal_clip_full" && Match.ClipMatch(0x11440A0, 0x20430600).empty() && Match.ClipMatch(0x15440A0, 0x20430600).empty(),
+                  "clip_match names the tool by properties: exact, fewest extra bits, a tie or another surface names nothing", Match.ClipMatch(0xD440A0, 0x204336C0));
+        }
+        const Names* H1 = For("h1");
+        bool Weapon = false;
+        if (H1 != nullptr)
+            for (const auto& Row : H1->ClipTools()) Weapon = Weapon || (Row.Tool == "clip_weapon" && Row.Contents == 0x2080u && Row.Surface == -1 && !Row.Approximation.empty());
+        Check(Weapon, "the h1 tool row names 0x2080 clip_weapon, any surface, with the approximation");
+    }
     Check(ClassOf("bo4", 0x80000a) == RenderClass::Decal && ClassOf("bo4", 0x10106) == RenderClass::NotDecal && ClassOf("bo4", 0) == RenderClass::Unread &&
           ClassOf("bo4", -1) == RenderClass::Unread && ClassOf("t7", 0x80000a) == RenderClass::Unread, "ClassOf: decal, not decal; 0, -1 and a game with no render rows are unread");
     Check(ReadAndNamesNoSurface("bo4", 0x440A0) && ReadAndNamesNoSurface("bo3", 0) && ReadAndNamesNoSurface("coldwar", 0x440A0) && !ReadAndNamesNoSurface("bo4", -1) &&

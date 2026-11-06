@@ -1092,6 +1092,7 @@ namespace
     public:
         explicit BlackOps6Game(bool Campaign) : Campaign(Campaign) {}
         const char* Id() const override { return Campaign ? "bo6sp" : "bo6"; }
+        bool UsesNameDatabase() const override { return true; }
         const char* Title() const override { return Campaign ? "Call of Duty: Black Ops 6 (campaign)" : "Call of Duty: Black Ops 6"; }
         const char* Engine() const override { return Campaign ? "BO6SP" : "BO6"; }
         std::unique_ptr<DiskGame::IDiskZone> Unopened() const override { return std::make_unique<BlackOps6Zone>(std::string(), Campaign); }

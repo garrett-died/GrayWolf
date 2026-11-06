@@ -699,6 +699,7 @@ namespace
     {
     public:
         const char* Id() const override { return "coldwar"; }
+        bool UsesNameDatabase() const override { return true; }
         const char* Title() const override { return "Call of Duty: Black Ops Cold War"; }
         const char* Engine() const override { return "T9"; }
         std::vector<std::string> Aliases() const override { return { "coldwar-disk-export" }; }

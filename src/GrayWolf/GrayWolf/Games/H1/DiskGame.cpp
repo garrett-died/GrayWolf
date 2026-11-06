@@ -16,6 +16,7 @@
 #include "Games/IW/IWSoundAliases.h"
 #include "Games/IW/IWZone.h"
 #include "Games/IW/IwEffects.h"
+#include "SurfaceTypes.h"
 #include "Games/IW/IwWeaponDefs.h"
 #include "Games/IW/IwZoneAnimOwners.h"
 #include "Games/H1/EntityKeys.h"
@@ -406,12 +407,26 @@ namespace
         M.ImageNameAt = ImageNameAt;
         M.EntityKeys = H1Keys::EntityKeys;
         M.ClipBrushes = IWZone::AwClipBrushes(), M.Triggers = 0x18;   // Advanced Warfare's shapes; MapEnts' MapTriggers at 0x18
+        // The partitions add a vertex segment to a triangle's u16 numbers (Modern Warfare Remastered, measured on mp_crash: 16-byte records, triangle count u8, border count u8,
+        // segment u16 at 2, first triangle at 4; 12,580 partitions, 154,742 triangles, 93,910 vertices, last segment 27, base = segment x 1024: every number is then in range and
+        // every vertex used). Advanced Warfare (S1) shares the rest of the layout but this was not measured on an S1 zone, so S1 keeps reading segment 0.
+        M.ClipBrushes.PartitionCount = 0x10 + 0xd8, M.ClipBrushes.Partitions = 0x10 + 0xe0, M.ClipBrushes.PartitionSize = 0x10, M.ClipBrushes.SegmentVertices = 1024, M.ClipBrushes.PartitionSegmentBytes = 2;
+        // the AABB tree: 24,449 records of 32 bytes at ClipInfo +0x48 (count at +0x40) on mp_crash; midpoint, material u16 at 12, child count u16 at 14, half size, partition at 28
+        M.ClipBrushes.TreeCount = 0x10 + 0x40, M.ClipBrushes.Trees = 0x10 + 0x48, M.ClipBrushes.TreeSize = 0x20, M.ClipBrushes.TreeMaterial = 0xc, M.ClipBrushes.TreeChildren = 0xe, M.ClipBrushes.TreePartition = 0x1c;
         return M;
     }
 
     bool MwrZone::ReadMap(Maps::MapScene& Scene, std::map<std::string, uint64_t>& Models)
     {
-        return ReadLevel(Scene, Models, Level(), GameModernWarfareRM::ReadXMaterial);
+        const bool Ok = ReadLevel(Scene, Models, Level(), GameModernWarfareRM::ReadXMaterial);
+        // the tool materials this game's clip contents name, as data of the profile (flag_names.txt, clip_tool rows)
+        if (const SurfaceTypes::Names* Names = SurfaceTypes::For("h1"))
+            for (const auto& Row : Names->ClipTools())
+            {
+                Scene.Collision.ClipToolByContents[Maps::ClipToolKey(Row.Surface, Row.Contents)] = Row.Tool;
+                if (!Row.Approximation.empty()) Scene.Collision.ClipToolApproximation[Maps::ClipToolKey(Row.Surface, Row.Contents)] = Row.Approximation;
+            }
+        return Ok;
     }
 
     class MwrGame final : public DiskGame::IDiskGame

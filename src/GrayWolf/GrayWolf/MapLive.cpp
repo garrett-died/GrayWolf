@@ -315,7 +315,7 @@ void AxisFromQuat(const float Q[4], float Axis[9])
     Axis[6] = 2 * (X * Z + Y * W);     Axis[7] = 2 * (Y * Z - X * W);     Axis[8] = 1 - 2 * (X * X + Y * Y);
 }
 
-bool WorldBuilder::Triangle(const std::string& Material, uint32_t A, uint32_t B, uint32_t C)
+bool WorldBuilder::Triangle(const std::string& Material, uint32_t A, uint32_t B, uint32_t C, int64_t Sort)
 {
     if (A == B || A == C || B == C) return true;   // degenerate: nothing to draw
     auto [It, New] = Group.try_emplace(Material, Out.Surfaces.size());
@@ -352,6 +352,7 @@ bool WorldBuilder::Triangle(const std::string& Material, uint32_t A, uint32_t B,
         Map.emplace(In[K], Local[K]);
     }
     Sf.Indices.insert(Sf.Indices.end(), Local, Local + 3);
+    if (Sort >= 0) Sf.TriangleSort.push_back(static_cast<uint32_t>(Sort));
     Count++;
     return true;
 }
@@ -398,6 +399,7 @@ size_t AddWorld(MapScene& Scene, const WorldLayout& L, const WorldBuilder::Fetch
         const uint32_t Base = U32(Sf + L.FirstVertex) / std::max(L.FirstVertexUnit, 1u) + (L.VertexBase ? L.VertexBase(Sf) : 0u),
                        BaseIndex = U32(Sf + L.BaseIndex);
         Current = Sf, CurrentBase = Base;
+        const int64_t Sort = L.DecalSort >= 0 ? static_cast<int64_t>(U32(Sf + L.DecalSort)) : -1;
         const uint16_t Tris = ExportNaming::At<uint16_t>(Img, Sf + L.TriCount);
         const uint64_t MatAddress = L.PointerSize == 4 ? ExportNaming::At<uint32_t>(Img, Sf + L.Material)
                                                        : ExportNaming::At<uint64_t>(Img, Sf + L.Material);
@@ -411,7 +413,7 @@ size_t AddWorld(MapScene& Scene, const WorldLayout& L, const WorldBuilder::Fetch
                 const uint32_t Local = ExportNaming::At<uint16_t>(Img, L.Indices + (int64_t)(I + K) * 2);
                 return L.VertexBytes ? Base + Local * L.VertexBytes : Local + Base;
             };
-            if (!Mesh.Triangle(Found->second, Idx(0), Idx(1), Idx(2))) Bad++;
+            if (!Mesh.Triangle(Found->second, Idx(0), Idx(1), Idx(2), Sort)) Bad++;
         }
     }, MoreUvs);
     return Bad;

@@ -95,11 +95,34 @@ namespace Maps
         int TriangleIndexBytes = 2;
         // the partitions that add a base to their triangles' vertex numbers (WWII): count (u32) and
         // array where the triangles are, a record's size, its triangle count (u8) and vertex
-        // segment (u8: the base is the segment times SegmentVertices) and first triangle (i32);
+        // segment (a u8, or a u16 where PartitionSegmentBytes says: Modern Warfare Remastered; the base is the segment times SegmentVertices) and first triangle (i32);
         // -1: the numbers are the vertices'
         int64_t PartitionCount = -1, Partitions = -1, PartitionSize = 0, PartitionTris = 0, PartitionSegment = 2,
                 PartitionFirstTri = 4, SegmentVertices = 0;
+        int PartitionSegmentBytes = 1;   // the segment's width: 1 (S2, as before), 2 (H1: measured)
+        // A label per triangle from the partitions (Black Ops 4): count (u32) and array in clipMap_t, a record's size, its first triangle (u32), triangle count (u8) and
+        // label (u16, an index into a table the game keeps elsewhere, not a material name). -1: the game's partition record holds none read.
+        int64_t LabelCount = -1, Labels = -1, LabelSize = 0, LabelFirst = 0, LabelTris = 0, LabelValue = 0;
+        // The partitions' clip material from the AABB tree (Infinity Ward's CollisionAabbTree, 32 bytes: midpoint, material index u16, child count u16, half size, then the
+        // first child or, in a leaf, the partition number): TreeCount (u32) and array in clipMap_t's info, a record's size. A leaf (child count 0) names one partition and the
+        // clip material (an index into the info's materials) of all its triangles. -1: none read.
+        int64_t TreeCount = -1, Trees = -1, TreeSize = 0, TreeMaterial = 0, TreeChildren = 0, TreePartition = 0;
+        // count, per brush, whether the union of its sides' contents (through the clip map's materials) equals its contents word: collision_union_match / _subset / _superset / _other
+        bool CheckContentsUnion = false;
     };
+
+    // The AABB tree's leaves (Treyarch and Infinity Ward alike, ClipLayout::Tree*) read from Img: per partition the clip material index of the first leaf that names it (-1: none,
+    // or the index out of range) and that leaf's record, and the triangles over the partitions reached. Counted in Counters (collision_tree_*): leaves, partitions reached twice
+    // and of them with another material, unreached, out of range, material out of range.
+    struct TreeWalk
+    {
+        std::vector<int32_t> Material;
+        std::vector<int64_t> Node;
+        uint64_t LeafTriangles = 0;
+    };
+    TreeWalk WalkCollisionTree(ByteView Img, const ClipLayout& L, int64_t Parts, uint32_t PartCount, int64_t Trees, uint32_t TreeCount, size_t MaterialCount, std::map<std::string, size_t>& Counters);
+    // Where the records of a table start when Count of them of RecordSize bytes fit in Img from Where on; else -1, Count 0 and collision_table_count_bad counted (a bad count is never walked).
+    int64_t BoundedTable(ByteView Img, int64_t Where, uint32_t& Count, int64_t RecordSize, std::map<std::string, size_t>& Counters);
 
     // The served zone a layout is read in: its bytes, its pointer width, and where a relocated
     // pointer's data is (-1: not in the zone).
