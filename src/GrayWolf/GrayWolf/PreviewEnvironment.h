@@ -13,6 +13,8 @@
 #include <directxtk/Effects.h>   // PBREffect (in an inline namespace: not declared ahead)
 #include <wrl/client.h>
 
+#include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -58,6 +60,41 @@ private:
     struct Impl;
     std::unique_ptr<Impl> P;
 };
+
+// A light source in memory, linear RGBA floats (alpha unused): one equirectangular panorama (Z up, +X its middle column,
+// +Y to its left), or six cube faces of the Mod Tools' naming, Width == Height each, stored ft bk lf rt up dn one after
+// the other. The axes of the six faces are in docs/hydrax-port/sky-axes.md.
+struct EnvironmentImage
+{
+    enum class Layout { LatLong, CubeFaces };
+    Layout Kind = Layout::LatLong;
+    int Width = 0, Height = 0;
+    std::vector<float> Rgba;   // LatLong: Width * Height * 4. CubeFaces: 6 * Width * Height * 4
+};
+
+// What a long bake is told: stop at the next row (Cancel), report 0..1 from the bake's thread (Progress), cut each source
+// texel to ClampTexel before anything else (0: not; a sky's sun disc would otherwise light the model twice, with the
+// sun), and scale the light by ScaleMultiplier beyond the studio sky's mean.
+struct EnvironmentBakeControl
+{
+    const std::atomic<bool>* Cancel = nullptr;
+    std::function<void(float)> Progress;
+    float ClampTexel = 0.0f;
+    float ScaleMultiplier = 1.0f;
+};
+
+// The source seen as a cube of Size per face in D3D's face order (+X -X +Y -Y +Z -Z), RGBA floats, 6 * Size * Size * 4,
+// unscaled: the first stage of the bake, kept apart so the axes can be tested without a GPU.
+bool EnvironmentSourceCube(const EnvironmentImage& Image, int Size, std::vector<float>& Rgba);
+
+// Bakes Image into OutDir\<Id>_radiance.dds and <Id>_irradiance.dds as the .hdr overload does (that one loads the file and
+// calls this). Fails with reason=cancelled when Control.Cancel was set.
+bool BakePreviewEnvironment(const EnvironmentImage& Image, const std::string& OutDir, const std::string& Id, int Size, std::string& Report,
+                            const EnvironmentBakeControl& Control = EnvironmentBakeControl());
+
+// Environments beyond those beside the exe (the Mod Tools skies baked into the cache): a baked environment is also
+// looked for in this folder. Set at start; empty: none.
+void SetExtraEnvironmentDir(const std::string& Dir);
 
 // Bakes HdrPath (an equirectangular .hdr, Z up) into OutDir\<Id>_radiance.dds and
 // <Id>_irradiance.dds, Size the radiance cube's face, its light scaled so its mean matches the

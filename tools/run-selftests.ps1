@@ -27,6 +27,7 @@ $tests = @(
     @{ Name = 'cerberus-selftest'; Args = @('cerberus-selftest') },
     @{ Name = 'ui-selftest'; Args = @('ui-selftest') },
     @{ Name = 'exr-selftest';      Args = @('exr-selftest') },
+    @{ Name = 'sky-bake-selftest'; Args = @('sky-bake-selftest') },
     # the shell rendered hidden with a made-up list: no window, a PNG written (ui-shot exits 5 when none was)
     @{ Name = 'ui-shot';           Args = @('ui-shot', (Join-Path $PSScriptRoot 'ui-shots\extract.json'), '--out', (Join-Path $Out 'ui-shot'), '--size', '900x600') }
 )

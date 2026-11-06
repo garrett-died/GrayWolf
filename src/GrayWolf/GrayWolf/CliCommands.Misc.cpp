@@ -16,6 +16,7 @@
 #include <fstream>
 
 #include "ExrReader.h"
+#include "ModToolsSky.h"
 #include "FixRoundSelfTest.h"
 #include "CliOptions.h"
 #include "CliCommands.h"
@@ -1041,6 +1042,16 @@ int RunExrSelfTest(const CliOptions& Options)
 }
 
 
+// The BO3 sky chain, axes, cache and bake (SkyBakeSelfTest.cpp): files built in a temp folder, no game data.
+int RunSkyBakeSelfTest(const CliOptions& Options)
+{
+    std::string Failures;
+    const int Failed = ModToolsSky::SelfTest(Failures);
+    CliReport(Options, std::format("{}result={}\nself_test_failures={}\n", Failures, (Failed == 0) ? "ok" : "error", Failed));
+    return (Failed == 0) ? 0 : 4;
+}
+
+
 int RunSelfTest(const CliOptions& Options)
 {
     std::string Failures;
@@ -1353,6 +1364,10 @@ void AddMiscCommands(CliCommandBuilders& B)
     B["exr-selftest"] = [](CLI::App& App, CliOptions& Options) {
         App.add_subcommand("exr-selftest", "Check the OpenEXR reader (NONE, ZIPS, ZIP, PIZ) on files built in memory")
             ->callback([&Options] { Options.ExrSelfTest = true; });
+    };
+    B["sky-bake-selftest"] = [](CLI::App& App, CliOptions& Options) {
+        App.add_subcommand("sky-bake-selftest", "Check the BO3 sky chain, the cube axes against Direct3D's faces, the cache and the bake")
+            ->callback([&Options] { Options.SkyBakeSelfTest = true; });
     };
     B["decompress-ff"] = [](CLI::App& App, CliOptions& Options) {
         auto* Sub = App.add_subcommand("decompress-ff", "Decompress a fast file and report its header/zone info");

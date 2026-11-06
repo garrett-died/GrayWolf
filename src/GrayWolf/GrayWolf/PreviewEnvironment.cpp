@@ -23,6 +23,8 @@
 #include <cmath>
 #include <filesystem>
 #include <format>
+#include <mutex>
+#include <span>
 #include <thread>
 
 using Microsoft::WRL::ComPtr;
@@ -39,6 +41,9 @@ namespace
     constexpr float kStudioMeanLuminance = 0.4787f;
 
     float Luminance(const float* C) { return 0.2126f * C[0] + 0.7152f * C[1] + 0.0722f * C[2]; }
+
+    std::string& ExtraDir() { static std::string D; return D; }
+    std::mutex& ExtraDirLock() { static std::mutex M; return M; }
 
     fs::path EnvironmentDir()
     {
@@ -139,6 +144,12 @@ float3 EnvImageLight(TextureCube<float3> rad, TextureCube<float3> irr, SamplerSt
 
 const char* PreviewEnvironmentHlsl() { return kHlsl; }
 
+void SetExtraEnvironmentDir(const std::string& Dir)
+{
+    std::lock_guard<std::mutex> Lock(ExtraDirLock());
+    ExtraDir() = Dir;
+}
+
 const std::vector<PreviewEnvironmentInfo>& PreviewEnvironments()
 {
     static const std::vector<PreviewEnvironmentInfo> List = [] {
@@ -174,7 +185,12 @@ struct PreviewEnvironment::Impl
     bool Load(const std::string& Id)
     {
         if (Id == kStudioEnvironment) return false;
-        const fs::path Dir = EnvironmentDir();
+        fs::path Dir = EnvironmentDir();
+        {
+            std::lock_guard<std::mutex> Lock(ExtraDirLock());
+            std::error_code Ec;
+            if (!ExtraDir().empty() && fs::exists(fs::path(Strings::ToUnicodeString(ExtraDir())) / (Id + "_radiance.dds"), Ec)) Dir = fs::path(Strings::ToUnicodeString(ExtraDir()));
+        }
         const auto Cube = [&](const char* Kind, ComPtr<ID3D11ShaderResourceView>& Out, int& Levels) {
             ScratchImage Img;
             TexMetadata Meta{};
@@ -344,36 +360,174 @@ namespace
     }
 }
 
+namespace
+{
+    // The six faces' axes in game space (Z up, X forward, Y left), as the Mod Tools name them (ft bk lf rt up dn): the
+    // direction the face looks along, the direction its image columns run (right) and the direction its rows run against
+    // (up). HydraX's SkyMath.FaceAxes, the same table: docs/hydrax-port/sky-axes.md.
+    constexpr float kFaceAxes[6][3][3] = {
+        { { 1, 0, 0 },  { 0, -1, 0 }, { 0, 0, 1 } },   // ft
+        { { -1, 0, 0 }, { 0, 1, 0 },  { 0, 0, 1 } },   // bk
+        { { 0, 1, 0 },  { 1, 0, 0 },  { 0, 0, 1 } },   // lf
+        { { 0, -1, 0 }, { -1, 0, 0 }, { 0, 0, 1 } },   // rt
+        { { 0, 0, 1 },  { 0, 1, 0 },  { 1, 0, 0 } },   // up
+        { { 0, 0, -1 }, { 0, -1, 0 }, { 1, 0, 0 } },   // dn
+    };
+
+    float Dot3(const float (&A)[3], const XMFLOAT3& D) { return A[0] * D.x + A[1] * D.y + A[2] * D.z; }
+
+    // A source of light by world direction: one lat-long, or six cube faces
+    struct SourceSampler
+    {
+        EnvironmentImage::Layout Kind;
+        Plane Pano;
+        std::array<Plane, 6> Faces;
+        float Clamp = 0;   // a texel brighter than this (per channel) is cut to it; 0: not
+
+        SourceSampler(const EnvironmentImage& I, float ClampTexel) : Kind(I.Kind), Clamp(ClampTexel)
+        {
+            const size_t Pitch = (size_t)I.Width * 16, PlaneFloats = (size_t)I.Width * I.Height * 4;
+            const std::span<const float> All(I.Rgba);
+            if (Kind == EnvironmentImage::Layout::LatLong) Pano = { reinterpret_cast<const uint8_t*>(All.data()), (size_t)I.Width, (size_t)I.Height, Pitch };
+            else
+                for (size_t F = 0; F < 6; F++)
+                    Faces[F] = { reinterpret_cast<const uint8_t*>(All.subspan(F * PlaneFloats).data()), (size_t)I.Width, (size_t)I.Height, Pitch };
+        }
+
+        XMVECTOR Sample(const XMFLOAT3& D) const
+        {
+            XMVECTOR C;
+            if (Kind == EnvironmentImage::Layout::LatLong) C = SampleEquirect(Pano, D);
+            else
+            {
+                int Best = 0;
+                float Bd = -2;
+                for (int F = 0; F < 6; F++)
+                {
+                    const float Dp = Dot3(kFaceAxes[F][0], D);
+                    if (Dp > Bd) { Bd = Dp; Best = F; }
+                }
+                const float S = Dot3(kFaceAxes[Best][1], D) / Bd, T = Dot3(kFaceAxes[Best][2], D) / Bd;
+                const Plane& P = Faces[Best];
+                C = P.Bilinear((S + 1) * 0.5f * P.W, (1 - T) * 0.5f * P.H, false);
+            }
+            return Clamp > 0 ? XMVectorMin(C, XMVectorReplicate(Clamp)) : C;
+        }
+
+        // The mean luminance over the sphere (lat-long: each row by its solid angle; faces: each texel by its)
+        float MeanLuminance() const
+        {
+            double Sum = 0, WSum = 0;
+            const auto Lum = [&](std::span<const float> C) {
+                float V[3] = { C[0], C[1], C[2] };
+                if (Clamp > 0) for (float& X : V) X = std::min(X, Clamp);
+                return Luminance(V);
+            };
+            if (Kind == EnvironmentImage::Layout::LatLong)
+            {
+                for (size_t y = 0; y < Pano.H; y++)
+                {
+                    const double W = std::sin(Pi * (y + 0.5) / Pano.H);
+                    double Row = 0;
+                    for (size_t x = 0; x < Pano.W; x++) Row += Lum(std::span<const float>(Pano.At(x, y), 4));
+                    Sum += W * Row; WSum += W * Pano.W;
+                }
+            }
+            else
+            {
+                for (const Plane& P : Faces)
+                    for (size_t y = 0; y < P.H; y++)
+                        for (size_t x = 0; x < P.W; x++)
+                        {
+                            const double U = 2.0 * (x + 0.5) / P.W - 1, V = 2.0 * (y + 0.5) / P.H - 1;
+                            const double W = 1.0 / std::pow(1 + U * U + V * V, 1.5);
+                            Sum += W * Lum(std::span<const float>(P.At(x, y), 4)); WSum += W;
+                        }
+            }
+            return (float)(Sum / std::max(WSum, 1e-9));
+        }
+    };
+
+    bool ImageValid(const EnvironmentImage& I)
+    {
+        if (I.Width < 1 || I.Height < 1) return false;
+        if (I.Kind == EnvironmentImage::Layout::CubeFaces && I.Width != I.Height) return false;
+        const size_t Planes = I.Kind == EnvironmentImage::Layout::CubeFaces ? 6 : 1;
+        return I.Rgba.size() == Planes * (size_t)I.Width * I.Height * 4;
+    }
+
+    // Face F of the source as a cube of Size, scaled: the cube the bake filters. Rows Pitch bytes apart.
+    void FillSourceFace(const SourceSampler& Src, int F, size_t Size, float Scale, std::span<uint8_t> Pixels, size_t Pitch, const std::atomic<bool>* Cancel)
+    {
+        ForRows(Size, [&](size_t y) {
+            if (Cancel && Cancel->load()) return;
+            const std::span<XMFLOAT4> Row(reinterpret_cast<XMFLOAT4*>(Pixels.subspan(y * Pitch).data()), Size);
+            for (size_t x = 0; x < Size; x++)
+            {
+                const XMFLOAT3 D = CubeDir(F, 2.0f * (x + 0.5f) / Size - 1, 2.0f * (y + 0.5f) / Size - 1);
+                XMVECTOR C = XMVectorScale(Src.Sample(D), Scale);
+                C = XMVectorSetW(XMVectorClamp(C, XMVectorZero(), XMVectorReplicate(60000.0f)), 1.0f);
+                XMStoreFloat4(&Row[x], C);
+            }
+        });
+    }
+}
+
+bool EnvironmentSourceCube(const EnvironmentImage& Env, int Size, std::vector<float>& Rgba)
+{
+    if (!ImageValid(Env) || Size < 1) return false;
+    const SourceSampler Src(Env, 0);
+    Rgba.assign((size_t)6 * Size * Size * 4, 0.0f);
+    for (int F = 0; F < 6; F++)
+        FillSourceFace(Src, F, (size_t)Size, 1.0f,
+                       std::span<uint8_t>(reinterpret_cast<uint8_t*>(Rgba.data()), Rgba.size() * sizeof(float)).subspan((size_t)F * Size * Size * 16), (size_t)Size * 16, nullptr);
+    return true;
+}
+
 bool BakePreviewEnvironment(const std::string& HdrPath, const std::string& OutDir, const std::string& Id, int Size, std::string& Report)
 {
-    const auto T0 = std::chrono::steady_clock::now();
-    const auto Fail = [&](const std::string& Why) { Report += "result=error\nreason=" + Why + "\n"; return false; };
-    if (Size < 16 || (Size & (Size - 1))) return Fail("--size must be a power of two, 16 or more");
-
-    // the panorama, as RGBA float
     ScratchImage Hdr, HdrFloat;
     TexMetadata Meta{};
-    if (FAILED(LoadFromHDRFile(Strings::ToUnicodeString(HdrPath).c_str(), &Meta, Hdr))) return Fail("cannot read " + HdrPath);
+    if (FAILED(LoadFromHDRFile(Strings::ToUnicodeString(HdrPath).c_str(), &Meta, Hdr)))
+    {
+        Report += "result=error\nreason=cannot read " + HdrPath + "\n";
+        return false;
+    }
     const Image* Pano = Hdr.GetImage(0, 0, 0);
     if (Meta.format != DXGI_FORMAT_R32G32B32A32_FLOAT)
     {
-        if (FAILED(Convert(*Pano, DXGI_FORMAT_R32G32B32A32_FLOAT, TEX_FILTER_DEFAULT, TEX_THRESHOLD_DEFAULT, HdrFloat))) return Fail("cannot convert the panorama");
+        if (FAILED(Convert(*Pano, DXGI_FORMAT_R32G32B32A32_FLOAT, TEX_FILTER_DEFAULT, TEX_THRESHOLD_DEFAULT, HdrFloat)))
+        {
+            Report += "result=error\nreason=cannot convert the panorama\n";
+            return false;
+        }
         Pano = HdrFloat.GetImage(0, 0, 0);
     }
-    const Plane Src = PlaneOf(*Pano);
+    EnvironmentImage Env;
+    Env.Kind = EnvironmentImage::Layout::LatLong;
+    Env.Width = (int)Pano->width;
+    Env.Height = (int)Pano->height;
+    Env.Rgba.resize(Pano->width * Pano->height * 4);
+    for (size_t y = 0; y < Pano->height; y++)
+        std::memcpy(std::span<float>(Env.Rgba).subspan(y * Pano->width * 4).data(), std::span<const uint8_t>(Pano->pixels, Pano->slicePitch).subspan(y * Pano->rowPitch).data(), Pano->width * 16);
+    return BakePreviewEnvironment(Env, OutDir, Id, Size, Report);
+}
 
-    // its mean luminance over the sphere (each row by its solid angle), the scale to the studio sky's
-    double Sum = 0, WSum = 0;
-    for (size_t y = 0; y < Src.H; y++)
-    {
-        const double W = std::sin(Pi * (y + 0.5) / Src.H);
-        double Row = 0;
-        for (size_t x = 0; x < Src.W; x++) Row += Luminance(Src.At(x, y));
-        Sum += W * Row; WSum += W * Src.W;
-    }
-    const float Mean = (float)(Sum / std::max(WSum, 1e-9));
+bool BakePreviewEnvironment(const EnvironmentImage& Env, const std::string& OutDir, const std::string& Id, int Size, std::string& Report,
+                            const EnvironmentBakeControl& Control)
+{
+    const auto T0 = std::chrono::steady_clock::now();
+    const auto Fail = [&](const std::string& Why) { Report += "result=error\nreason=" + Why + "\n"; return false; };
+    const auto Cancelled = [&] { return Control.Cancel && Control.Cancel->load(); };
+    const auto Progress = [&](float V) { if (Control.Progress) Control.Progress(V); };
+    if (Size < 16 || (Size & (Size - 1))) return Fail("--size must be a power of two, 16 or more");
+    if (!ImageValid(Env)) return Fail("the source image does not match its size");
+
+    const SourceSampler Src(Env, Control.ClampTexel);
+    const float Mean = Src.MeanLuminance();
     if (!(Mean > 0)) return Fail("the panorama is black");
-    const float Scale = kStudioMeanLuminance / Mean;
+    const float Scale = kStudioMeanLuminance / Mean * Control.ScaleMultiplier;
+    Progress(0.02f);
 
     // the panorama as a cube twice the output's size, every mip
     const size_t SrcSize = (size_t)Size * 2;
@@ -382,14 +536,9 @@ bool BakePreviewEnvironment(const std::string& HdrPath, const std::string& OutDi
     for (int F = 0; F < 6; F++)
     {
         const Image& Face = *SrcCube.GetImage(0, F, 0);
-        ForRows(SrcSize, [&](size_t y) {
-            for (size_t x = 0; x < SrcSize; x++)
-            {
-                const XMFLOAT3 D = CubeDir(F, 2.0f * (x + 0.5f) / SrcSize - 1, 2.0f * (y + 0.5f) / SrcSize - 1);
-                Store(Face, x, y, XMVectorScale(SampleEquirect(Src, D), Scale));
-            }
-        });
+        FillSourceFace(Src, F, SrcSize, Scale, std::span<uint8_t>(Face.pixels, Face.slicePitch), Face.rowPitch, Control.Cancel);
     }
+    if (Cancelled()) return Fail("cancelled");
     if (FAILED(GenerateMipMaps(SrcCube.GetImages(), SrcCube.GetImageCount(), SrcCube.GetMetadata(), TEX_FILTER_BOX, 0, SrcMips)))
         return Fail("cannot make the source cube's mips");
     MipCube Cube;
@@ -410,6 +559,8 @@ bool BakePreviewEnvironment(const std::string& HdrPath, const std::string& OutDi
     const float TexelAngle = 4 * Pi / (6.0f * SrcSize * SrcSize);
     for (int M = 0; M < Levels; M++)
     {
+        if (Cancelled()) return Fail("cancelled");
+        Progress(0.25f + 0.55f * M / Levels);
         const float Rough = (float)M / (Levels - 1), Alpha = std::max(Rough * Rough, 1e-4f);
         struct Tap { XMFLOAT3 H; float Lod; };
         std::vector<Tap> Taps;
@@ -430,6 +581,7 @@ bool BakePreviewEnvironment(const std::string& HdrPath, const std::string& OutDi
             const Image& Face = *Rad.GetImage(M, F, 0);
             const size_t S = Face.width;
             ForRows(S, [&](size_t y) {
+                if (Cancelled()) return;
                 for (size_t x = 0; x < S; x++)
                 {
                     const XMFLOAT3 N = CubeDir(F, 2.0f * (x + 0.5f) / S - 1, 2.0f * (y + 0.5f) / S - 1);
@@ -456,6 +608,9 @@ bool BakePreviewEnvironment(const std::string& HdrPath, const std::string& OutDi
             });
         }
     }
+
+    if (Cancelled()) return Fail("cancelled");
+    Progress(0.82f);
 
     // Irradiance over pi, from the source's spherical harmonics (Ramamoorthi and Hanrahan 2001),
     // read at its 32 x 32 mip
@@ -504,6 +659,9 @@ bool BakePreviewEnvironment(const std::string& HdrPath, const std::string& OutDi
             }
     }
 
+    if (Cancelled()) return Fail("cancelled");
+    Progress(0.88f);
+
     // BC6H, on the GPU when there is one
     std::error_code Ec;
     fs::create_directories(fs::path(Strings::ToUnicodeString(OutDir)), Ec);
@@ -515,11 +673,12 @@ bool BakePreviewEnvironment(const std::string& HdrPath, const std::string& OutDi
     const fs::path RadFile = Base / Strings::ToUnicodeString(Id + "_radiance.dds"), IrrFile = Base / Strings::ToUnicodeString(Id + "_irradiance.dds");
     if (!SaveBc6h(Rad, RadFile, Dev.Get(), How)) return Fail("cannot write " + RadFile.string());
     if (!SaveBc6h(Irr, IrrFile, Dev.Get(), How)) return Fail("cannot write " + IrrFile.string());
+    Progress(1.0f);
 
     Report += std::format("result=ok\nradiance={} ({} bytes, {} x {}, {} mips)\nirradiance={} ({} bytes)\n"
-                          "panorama={} x {}\nmean_luminance={:.4f}\nscale={:.5f}\ncompress={}\ntime_ms={}\n",
+                          "source={} x {} ({})\nmean_luminance={:.4f}\nscale={:.5f}\ncompress={}\ntime_ms={}\n",
                           RadFile.string(), fs::file_size(RadFile, Ec), Size, Size, Levels, IrrFile.string(), fs::file_size(IrrFile, Ec),
-                          Src.W, Src.H, Mean, Scale, How,
+                          Env.Width, Env.Height, Env.Kind == EnvironmentImage::Layout::LatLong ? "lat-long" : "cube faces", Mean, Scale, How,
                           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - T0).count());
     return true;
 }

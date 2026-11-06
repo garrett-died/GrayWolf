@@ -191,6 +191,8 @@
     <ClCompile Include="GameCommand.cpp" />
     <ClCompile Include="ExportWriters.cpp" />
     <ClCompile Include="ExrReader.cpp" />
+    <ClCompile Include="ModToolsSky.cpp" />
+    <ClCompile Include="SkyBakeSelfTest.cpp" />
     <ClCompile Include="ExrReaderSelfTest.cpp" />
     <ClCompile Include="FixRoundSelfTest.cpp" />
     <ClCompile Include="ExportWriters.Sound.cpp" />
@@ -480,6 +482,7 @@
     <ClInclude Include="IPAKSupport.h" />
     <ClInclude Include="IWDCache.h" />
     <ClInclude Include="ExrReader.h" />
+    <ClInclude Include="ModToolsSky.h" />
     <ClInclude Include="ZipInflate.h" />
     <ClInclude Include="IWDSupport.h" />
     <ClInclude Include="PAKCache.h" />

@@ -116,6 +116,7 @@ struct CliOptions
                                        // result is browsable with the existing --ui <dir>
     bool Lods = false;       // --lods: export every available model LOD
     bool Gpu = false;        // --gpu: use the offscreen D3D11 renderer for model previews
+    bool SkyBakeSelfTest = false;  // sky-bake-selftest: the BO3 sky chain, axes, cache and bake
     bool ExrSelfTest = false;      // exr-selftest: the EXR reader (NONE, ZIPS, ZIP, PIZ) on files built in memory
     bool UiSelfTest = false; // ui-selftest: the Settings page entries and their explanations
     bool CerberusSelfTest = false; // --cerberus-selftest: verify ported CRC32/Salsa20

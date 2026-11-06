@@ -192,6 +192,12 @@
     <ClCompile Include="ExrReader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="ModToolsSky.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SkyBakeSelfTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="ExrReaderSelfTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -381,6 +387,9 @@
       <Filter>Header Files\Packages</Filter>
     </ClInclude>
     <ClInclude Include="ExrReader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ModToolsSky.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ZipInflate.h">
