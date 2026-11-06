@@ -118,6 +118,8 @@ int WindingOf(const std::string& Game)
     return G == "bo3" || G == "bo4" ? -1 : 1;
 }
 
+bool VertexOrderIsPatchOrder(const std::string& Game) { return LowerOf(Game) == "bo3"; }
+
 std::map<std::string, Bo3Target::Techsets::MapUse> GeometryUse(const MapScene& Scene, const std::set<std::string>* Only, FacingStats* Stats)
 {
     using RadiantGeometry::V3;

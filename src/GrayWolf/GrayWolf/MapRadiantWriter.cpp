@@ -600,9 +600,27 @@ namespace
         return Maps::IsDecalMaterial(Scene, S.Material);
     }
 
-    void WritePatches(std::string& Out, const MapScene& Scene, const DrawnWorld& Drawn, uint32_t Owner, RadiantGdt* Gdt, RadiantStats& Stats,
-                      size_t& Number, PatchKind Kind = PatchKind::All)
+#ifdef GW_MESH_DUMP
+    std::string EnvText(const char* Name)
     {
+        const DWORD Size = GetEnvironmentVariableA(Name, nullptr, 0);
+        if (Size == 0) return std::string();
+        std::string Text(Size, ' ');
+        GetEnvironmentVariableA(Name, Text.data(), Size);
+        Text.resize(Size - 1);
+        return Text;
+    }
+#endif
+
+    // One pass of WritePatches: the kept triangles of one owner's surfaces (decals, or not) as a RenderSoup, through the mesher (MapRenderMeshes.h), written as meshes
+    // (nonColliding: the clip map's brushes collide). Each vertex keeps its position, colour ("c", left out when white), UV ("t": UV x 1024) and the lightmap
+    // coordinates of the mesh's plane (a texel per 16 units, as "16 8" in the size line says).
+    void WritePatchPass(std::string& Out, const MapScene& Scene, const DrawnWorld& Drawn, uint32_t Owner, RadiantGdt* Gdt, RadiantStats& Stats, size_t& Number, bool Decal)
+    {
+        const int Winding = WindingOf(Scene.Game);
+        RenderSoup Soup;
+        std::vector<std::string> Names;
+        std::map<std::string, int> Ids;
         for (size_t Oi = 0; Oi < Scene.Objects.size(); Oi++)
         {
             const Mesh& M = Scene.Objects[Oi];
@@ -610,45 +628,124 @@ namespace
             for (size_t Si = 0; Si < M.Surfaces.size(); Si++)
             {
                 const Surface& S = M.Surfaces[Si];
-                if (Kind != PatchKind::All && IsDecalSurface(Scene, S) != (Kind == PatchKind::Decal)) continue;
-                std::string Name;
+                if (IsDecalSurface(Scene, S) != Decal) continue;
+                int Label = -1;
+                size_t Base = 0;
                 for (size_t K = 0; K + 2 < S.Indices.size(); K += 3)
                 {
                     if (Drawn.Removed(Oi, Si, K / 3)) continue;
                     const Fate F = FateOf(S, K / 3);
                     if (F == Fate::None) Stats.TrianglesDegenerate++;
                     if (F != Fate::Patch) continue;
-                    if (Name.empty()) Name = MaterialName(S.Material, Gdt);
-                    const Vertex* V[3] = { &S.Vertices[S.Indices[K]], &S.Vertices[S.Indices[K + 1]], &S.Vertices[S.Indices[K + 2]] };
-                    V3 P[3];
-                    for (int J = 0; J < 3; J++) P[J] = { V[J]->Pos[0], V[J]->Pos[1], V[J]->Pos[2] };
-                    const V3 N = Cross(Sub(P[1], P[0]), Sub(P[2], P[0]));
-                    V3 Ls, Lt;
-                    RadiantBaseAxes(Mul(N, 1.0 / Length(N)), Ls, Lt);
-                    // the mesh shows on the side of (group direction) x (point direction): rows (P0, P1) and
-                    // (P2, P1) give (P2 - P0) x (P1 - P0), the opposite of cross(b - a, c - a), which is a
-                    // render triangle's front normal (HydraX: 6,337 of 6,346). Checked against the
-                    // vertices' own normals, counted.
+                    if (Label < 0)
                     {
-                        V3 Vn = { 0, 0, 0 };
-                        for (int J = 0; J < 3; J++)
-                            for (int A = 0; A < 3; A++) Vn[A] += V[J]->Normal[A];
-                        (Dot(Vn, N) < 0 ? Stats.PatchesFacingNormal : Stats.PatchesFacingAgainst)++;
+                        // the surface's vertices join the soup once; the triangles name them
+                        Label = Ids.emplace(S.Material, static_cast<int>(Names.size())).first->second;
+                        if (static_cast<size_t>(Label) == Names.size()) Names.push_back(S.Material);
+                        Base = Soup.Corners.size();
+                        for (const Vertex& V : S.Vertices)
+                        {
+                            Soup.Positions.insert(Soup.Positions.end(), { V.Pos[0], V.Pos[1], V.Pos[2] });
+                            RenderCorner C;
+                            C.U = V.Uv[0];
+                            C.V = V.Uv[1];
+                            std::memcpy(C.Color, V.Color, 4);
+                            Soup.Corners.push_back(C);
+                        }
                     }
-                    bool Coloured = false;
-                    const auto Text = [&](int J) {
-                        const std::string Colour = PatchColour(V[J]->Color);
-                        Coloured = Coloured || !Colour.empty();
-                        return "\tv " + Num(P[J][0]) + " " + Num(P[J][1]) + " " + Num(P[J][2]) + Colour + " " + PatchTexture(V[J]->Uv[0], V[J]->Uv[1]) + " " +
-                               Num(Dot(P[J], Ls) / 16.0) + " " + Num(Dot(P[J], Lt) / 16.0) + "\n";
-                    };
-                    Out += "// brush " + std::to_string(Number++) + "\n {\n  mesh\n  {\n  contents nonColliding;\n   " + Name +
-                           "\n   lightmap_gray\n   2 2 16 8\n   (\n" + Text(0) + Text(1) + "   )\n   (\n" + Text(2) + Text(1) + "   )\n  }\n }\n";
-                    Stats.Patches++;
-                    if (Coloured) Stats.PatchesColoured++;
+                    V3 P[3], Vn = { 0, 0, 0 };
+                    bool Normals = true;   // the vertex normals count only when all three corners have one that was read
+                    for (int J = 0; J < 3; J++)
+                    {
+                        const Vertex& V = S.Vertices[S.Indices[K + J]];
+                        P[J] = { V.Pos[0], V.Pos[1], V.Pos[2] };
+                        Normals = Normals && V.NormalRead;
+                        for (int A = 0; A < 3; A++) Vn[A] += V.Normal[A];
+                        Soup.Indices.push_back(static_cast<int32_t>(Base + S.Indices[K + J]));
+                    }
+                    // the front: the vertex normals' direction when the reader gave them, else the game's winding applied to the corners
+                    // (WindingOf: -1 when cross(b - a, c - a) points into the front)
+                    V3 Cr = Cross(Sub(P[1], P[0]), Sub(P[2], P[0]));
+                    const double CrLen = Length(Cr);
+                    V3 Front = Mul(Cr, Winding / (CrLen > 0 ? CrLen : 1.0));
+                    if (Normals && Length(Vn) > 0.5) Front = Mul(Vn, 1.0 / Length(Vn));
+                    Soup.Label.push_back(Label);
+                    Soup.Front.push_back(Front);
+                    Soup.Normal.push_back(Normals ? Vn : V3{ 0, 0, 0 });
                 }
             }
         }
+        if (Soup.Indices.empty()) return;
+
+        RenderMeshOptions Options;
+        Options.Decal = Decal;
+        Options.VertexOrderBorders = VertexOrderIsPatchOrder(Scene.Game);
+        const auto Started = std::chrono::steady_clock::now();
+        RenderMeshResult Meshes = BuildRenderMeshes(Soup, Names, Options);
+        Stats.MeshMilliseconds += static_cast<size_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - Started).count());
+        // triangles in = covered + removed with a proof, per owner and kind; a mismatch fails the export like a coverage failure
+        if (Meshes.Count.TrianglesIn != Meshes.Count.Covered + Meshes.Count.CopiesRemoved + Meshes.Count.CollapsedByWeld)
+        {
+            Meshes.Count.AccountingFailed++;
+            Meshes.CoverageLines.push_back(std::format("owner {} {}: {} triangles in are not {} covered + {} copies removed + {} collapsed by the weld\n", Owner, Decal ? "decals" : "surfaces", Meshes.Count.TrianglesIn,
+                                                       Meshes.Count.Covered, Meshes.Count.CopiesRemoved, Meshes.Count.CollapsedByWeld));
+        }
+        std::vector<std::string> Written(Names.size());
+        for (size_t L = 0; L < Names.size(); L++) Written[L] = MaterialName(Names[L], Gdt);
+        for (const RenderMesh& R : Meshes.Meshes)
+        {
+            MeshTextOptions Text;
+            Text.Prefix = "// brush " + std::to_string(Number++) + "\n {\n";
+            Out += MeshText(R.Mesh, Written[static_cast<size_t>(R.Label)], R.ReplaceUv, Text, &Stats.MeshTextMaxAbsT) + " }\n";
+        }
+        Stats.Patches += Meshes.Count.Meshes;
+        Stats.PatchesColoured += Meshes.Count.MeshesColoured;
+        Stats.PatchesFacingNormal += Meshes.Count.FacingNormal;
+        Stats.PatchesFacingAgainst += Meshes.Count.FacingAgainst;
+        if (!Decal) (Meshes.Count.WeldTolerance > 0 ? Stats.OwnersWelded : Stats.OwnersNotSeparated)++;
+        {
+            const RenderMeshCounters& M = Meshes.Count;
+            Stats.MeshLines.push_back(std::format("owner {} {}: {} triangles in, {} meshes ({} grids: {} fans, {} lone triangles, {} cells), covered {}, removed with proof {} copies + {} collapsed by the weld (kept as other data: {} by front, {} by texture coordinate, {} by colour), coverage MISSING {} LEFTOVER {}; "
+                                                  "borders cut {} by texture, {} by colour and {} by facing; facing turned {}, kept {}, unknown {}, against the vertex normals {}, undecided {}; split {}; degenerate texture {}; triangles shifted by whole repeats {}, texture conflicts {}; "
+                                                  "cells with both diagonals as input {} (not planar {}); most pairs sharing an edge in a material {}; weld tolerance {} ({}); weld {} vertices in {} clusters, largest span {}; {}; decal overlap {} partial, {} contained, {} pairs tested",
+                                                  Owner, Decal ? "decals" : "surfaces", M.TrianglesIn, M.Meshes, M.Grids, M.Fans, M.LoneTriangles, M.Cells, M.Covered, M.CopiesRemoved, M.CollapsedByWeld, M.CopiesKeptFront, M.CopiesKeptUv, M.CopiesKeptColour, M.CoverageMissing,
+                                                  M.CoverageLeftover, M.BordersCutTexture, M.BordersCutColour, M.BordersCutFacing, M.Flipped, M.FacingKept, M.FacingUnknown, M.FacingAgainst, M.FacingUndecided, M.GridsSplit, M.DegenerateUv,
+                                                  M.UvTrianglesShifted, M.UvConflictCorners, M.CellsBothDiagonals, M.CellsBothDiagonalsNonPlanar, M.MaxCandidatePotential, M.WeldTolerance, M.WeldReason, M.WeldedVertices, M.WeldClusters, M.WeldSpan, M.NearestText, M.OverlapPartial, M.OverlapContained, M.OverlapTested));
+        }
+        for (const std::string& Block : Meshes.BothDiagonalLines)
+            Stats.MeshLines.push_back(std::format("owner {} {} cells with both diagonals as input and not planar (Radiant's choice of diagonal for them is unknown):\n{}", Owner, Decal ? "decals" : "surfaces", Block));
+        Stats.Mesh.Add(Meshes.Count);
+#ifdef GW_MESH_DUMP   // Dev builds only
+        // GH_MESHDUMP=<folder>: the soup of an owner whose coverage failed or that has a mesh facing against its normals, to reproduce it outside the export (a developer aid, nothing else reads it)
+        if (!Meshes.CoverageLines.empty() || Meshes.Count.FacingAgainst > 0)
+            if (std::string Dump = EnvText("GH_MESHDUMP"); !Dump.empty())
+            {
+                std::ofstream F(fs::path(Dump) / ("soup_" + std::to_string(Owner) + (Decal ? "_decal.bin" : ".bin")), std::ios::binary);
+                const auto Put = [&](const auto& V) {
+                    const uint64_t N = V.size();
+                    F.write(reinterpret_cast<const char*>(&N), 8);
+                    if (N) F.write(reinterpret_cast<const char*>(V.data()), static_cast<std::streamsize>(N * sizeof(V[0])));
+                };
+                Put(Soup.Positions), Put(Soup.Corners), Put(Soup.Indices), Put(Soup.Label), Put(Soup.Front), Put(Soup.Normal);
+                uint64_t Names_ = Names.size();
+                F.write(reinterpret_cast<const char*>(&Names_), 8);
+                for (const std::string& N : Names)
+                {
+                    const uint64_t L = N.size();
+                    F.write(reinterpret_cast<const char*>(&L), 8);
+                    F.write(N.data(), static_cast<std::streamsize>(L));
+                }
+            }
+#endif
+        for (std::string& Lines : Meshes.CoverageLines) Stats.CoverageLines.push_back(std::move(Lines));
+    }
+
+    // The drawn triangles of Owner's meshes (DrawnWorld::Owner) no brush side draws, as meshes: one pass for the plain surfaces and one for the decals (Kind)
+    void WritePatches(std::string& Out, const MapScene& Scene, const DrawnWorld& Drawn, uint32_t Owner, RadiantGdt* Gdt, RadiantStats& Stats,
+                      size_t& Number, PatchKind Kind = PatchKind::All)
+    {
+        if (Kind != PatchKind::Decal) WritePatchPass(Out, Scene, Drawn, Owner, Gdt, Stats, Number, false);
+        if (Kind != PatchKind::NotDecal) WritePatchPass(Out, Scene, Drawn, Owner, Gdt, Stats, Number, true);
     }
 
     std::string Quote(const std::string& Key, const std::string& Value)
@@ -791,6 +888,46 @@ namespace
                                                             { "map_radiant_patches_coloured", Stats.PatchesColoured },
                                                             { "map_radiant_triangles_degenerate", Stats.TrianglesDegenerate },
                                                             { "map_radiant_triangles_in_models", Stats.TrianglesInModels } });
+            {
+                const RenderMeshCounters& M = Stats.Mesh;
+                Result.Counters.insert(Result.Counters.end(), { { "map_radiant_mesh_triangles_in", M.TrianglesIn },
+                                                                { "map_radiant_mesh_copies_removed", M.CopiesRemoved },
+                                                                { "map_radiant_mesh_copies_kept_front", M.CopiesKeptFront },
+                                                                { "map_radiant_mesh_copies_kept_uv", M.CopiesKeptUv },
+                                                                { "map_radiant_mesh_copies_kept_colour", M.CopiesKeptColour },
+                                                                { "map_radiant_mesh_cells_both_diagonals", M.CellsBothDiagonals },
+                                                                { "map_radiant_mesh_cells_both_diagonals_non_planar", M.CellsBothDiagonalsNonPlanar },
+                                                                { "map_radiant_mesh_accounting_failed", M.AccountingFailed },
+                                                                { "map_radiant_mesh_max_candidate_potential", static_cast<size_t>(M.MaxCandidatePotential) },
+                                                                { "map_radiant_mesh_collapsed_by_weld", M.CollapsedByWeld },
+                                                                { "map_radiant_mesh_triangles_covered", M.Covered },
+                                                                { "map_radiant_mesh_grids", M.Grids },
+                                                                { "map_radiant_mesh_fans", M.Fans },
+                                                                { "map_radiant_mesh_lone_triangles", M.LoneTriangles },
+                                                                { "map_radiant_mesh_cells", M.Cells },
+                                                                { "map_radiant_mesh_borders_cut_texture", M.BordersCutTexture },
+                                                                { "map_radiant_mesh_borders_cut_colour", M.BordersCutColour },
+                                                                { "map_radiant_mesh_borders_cut_facing", M.BordersCutFacing },
+                                                                { "map_radiant_mesh_facing_flipped", M.Flipped },
+                                                                { "map_radiant_mesh_facing_kept", M.FacingKept },
+                                                                { "map_radiant_mesh_facing_unknown", M.FacingUnknown },
+                                                                { "map_radiant_mesh_facing_undecided", M.FacingUndecided },
+                                                                { "map_radiant_mesh_grids_split", M.GridsSplit },
+                                                                { "map_radiant_mesh_degenerate_uv", M.DegenerateUv },
+                                                                { "map_radiant_mesh_coverage_materials", M.Labels },
+                                                                { "map_radiant_mesh_coverage_missing", M.CoverageMissing },
+                                                                { "map_radiant_mesh_coverage_leftover", M.CoverageLeftover },
+                                                                { "map_radiant_mesh_coverage_failed_materials", M.LabelsFailed },
+                                                                { "map_radiant_mesh_uv_triangles_shifted", M.UvTrianglesShifted },
+                                                                { "map_radiant_mesh_uv_conflict_corners", M.UvConflictCorners },
+                                                                { "map_radiant_mesh_candidates_capped", M.CandidatesCapped },
+                                                                { "map_radiant_mesh_decal_overlap_partial", M.OverlapPartial },
+                                                                { "map_radiant_mesh_decal_overlap_contained", M.OverlapContained },
+                                                                { "map_radiant_mesh_ms", Stats.MeshMilliseconds },
+                                                                { "map_radiant_mesh_owners_welded", Stats.OwnersWelded },
+                                                                { "map_radiant_mesh_owners_not_separated", Stats.OwnersNotSeparated },
+                                                                { "map_radiant_mesh_max_abs_t", ReportCounter(Stats.MeshTextMaxAbsT) } });
+            }
             for (const auto& [Prefix, T] : { std::make_pair("map_radiant_texture_", &Stats.Textures), std::make_pair("map_radiant_prism_texture_", &Stats.PrismTextures),
                                              std::make_pair("map_radiant_entity_texture_", &Stats.EntityTextures) })
             for (const auto& [Key, N] : std::initializer_list<std::pair<const char*, size_t>>{
@@ -798,7 +935,7 @@ namespace
                      { "sides_no_fit", T->SidesNoFit }, { "sides_mixed_maps", T->SidesMixedMaps }, { "sides_uv_missed", T->SidesUvMissed }, { "sides_undrawn", T->SidesUndrawn }, { "brushes_textured", T->BrushesTextured },
                      { "uv_error_below_1e4", T->UvExact }, { "uv_error_below_1e3", T->UvBelow1e3 },
                      { "uv_error_below_1e2", T->UvBelow1e2 }, { "uv_error_below_1e1", T->UvBelow1e1 }, { "uv_error_above_1e1", T->UvAbove },
-                     { "uv_error_mean_1e6", T->SidesTextured + T->SidesUvMissed ? (size_t)std::llround(1e6 * T->UvErrorSum / (double)(T->SidesTextured + T->SidesUvMissed)) : 0 },
+                     { "uv_error_mean_1e6", T->SidesTextured + T->SidesUvMissed ? ReportCounter(1e6 * T->UvErrorSum / (double)(T->SidesTextured + T->SidesUvMissed)) : 0 },
                      { "triangles_drawn", T->TrianglesDrawn }, { "triangles_removed", T->TrianglesRemoved },
                      { "triangles_coloured", T->TrianglesColoured },
                      { "plane_distance_0", T->Distance[0] }, { "plane_distance_below_1e3", T->Distance[1] },
@@ -1244,6 +1381,12 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
                   const std::vector<PrefabPart>& Prefabs, const RadiantFullMap* Full)
 {
     const fs::path Path(MapPath);
+    // A report from an earlier run must not outlive this one: a run that passes leaves neither file.
+    {
+        std::error_code Gone;
+        fs::remove(fs::path(Path).replace_extension(".coverage.txt"), Gone);
+        fs::remove(fs::path(Path).replace_extension(".meshes.txt"), Gone);
+    }
     const std::string Map = ExportNaming::SafeFileName(Path.stem().string());
     const fs::path Root = Path.parent_path() / (Map + "_radiant");
     const fs::path ModelDir = Root / "model_export" / Map;
@@ -1632,10 +1775,31 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         File << Out;
     else if (!WritePrefabs(Out, Blocks, Prefabs, Path, File, Stats, Error))
         return false;
+    // The mesh coverage check (PatchCoverage): every drawn triangle is in a mesh or removed with a proof. A material that fails is listed here, and the export fails
+    // (below, once its files are written): MISSING and LEFTOVER must be 0.
+    if (!Stats.MeshLines.empty())
+    {
+        std::ofstream Lines(fs::path(Path).replace_extension(".meshes.txt"), std::ios::binary);
+        for (const std::string& Line : Stats.MeshLines) Lines << Line << "\n";
+    }
+    const bool CoverageFailed = !Stats.CoverageLines.empty();
+    if (CoverageFailed)
+    {
+        std::ofstream Cov(fs::path(Path).replace_extension(".coverage.txt"), std::ios::binary);
+        Cov << "Mesh coverage failed for " << Stats.Mesh.LabelsFailed << " material(s): MISSING " << Stats.Mesh.CoverageMissing << ", LEFTOVER " << Stats.Mesh.CoverageLeftover << ", ACCOUNTING " << Stats.Mesh.AccountingFailed << "\n";
+        for (const std::string& Block : Stats.CoverageLines) Cov << Block;
+        Stats.Unresolved.push_back("mesh coverage failed for " + std::to_string(Stats.Mesh.LabelsFailed) + " material(s), see " + fs::path(Path).replace_extension(".coverage.txt").filename().string());
+    }
     if (!Stats.Unresolved.empty())
     {
         std::ofstream List(fs::path(Path).replace_extension(".unresolved.txt"), std::ios::binary);
         for (const std::string& Line : Stats.Unresolved) List << Line << "\n";
+    }
+    if (CoverageFailed)
+    {
+        Error = "mesh coverage failed for " + std::to_string(Stats.Mesh.LabelsFailed) + " material(s) (MISSING " + std::to_string(Stats.Mesh.CoverageMissing) + ", LEFTOVER " +
+                std::to_string(Stats.Mesh.CoverageLeftover) + ", ACCOUNTING " + std::to_string(Stats.Mesh.AccountingFailed) + "): " + fs::path(Path).replace_extension(".coverage.txt").string();
+        return false;
     }
     if (ForGdt)
     {
@@ -2042,6 +2206,46 @@ int RadiantWriterSelfTest(std::string& Failures)
                   Text.find("\"model\" \"full_world_0_0\"") != std::string::npos,
               "a piece of the world is an XMODEL_BIN in the models folder", Text);
         Check(Names.Materials.count("mtl_floor") == 1, "the materials are named for the publish step");
+    }
+    // a drawn 3 x 2 grid of quads (one surface, shared vertices) is one mesh, not twelve; the counters add up; a removed triangle stays removed; the files list the owner
+    {
+        MapScene Scene;
+        Scene.Game = "bo4";
+        Mesh World;
+        World.Name = "world";
+        Surface Grid;
+        Grid.Material = "mtl_floor";
+        for (int J = 0; J <= 2; J++)
+            for (int I = 0; I <= 3; I++)
+            {
+                Vertex V;
+                V.Pos[0] = I * 64.0f, V.Pos[1] = J * 64.0f, V.Pos[2] = 0;
+                V.Normal[2] = 1, V.NormalRead = true;
+                V.Uv[0] = static_cast<float>(I) / 3, V.Uv[1] = static_cast<float>(J) / 2;
+                Grid.Vertices.push_back(V);
+            }
+        for (uint32_t J = 0; J < 2; J++)
+            for (uint32_t I = 0; I < 3; I++)
+            {
+                const uint32_t A = J * 4 + I, B = A + 1, C = A + 5, D = A + 4;
+                // counter-clockwise from above: cross(b - a, c - a) points up, the vertex normal too (a game whose winding is +1)
+                for (const uint32_t K : { A, B, C, A, C, D }) Grid.Indices.push_back(K);
+            }
+        World.Surfaces.push_back(Grid);
+        Scene.Objects.push_back(World);
+        Scene.Game = "h1";   // winding +1 is not measured for it, but the vertex normals decide here
+        Scene.MapEnts = "{\n\"classname\" \"worldspawn\"\n}\n";
+        RadiantStats Stats;
+        std::string Error;
+        const fs::path Map = Dir / "grid.map";
+        const bool Ok = WriteRadiant(Scene, Map.string(), Stats, Error);
+        const std::string Text = Read(Map);
+        size_t Meshes = 0;
+        for (size_t At = Text.find("\n  mesh\n"); At != std::string::npos; At = Text.find("\n  mesh\n", At + 1)) Meshes++;
+        Check(Ok && Meshes == 1 && Stats.Patches == 1 && Stats.Mesh.TrianglesIn == 12 && Stats.Mesh.Covered == 12 && Stats.Mesh.CoverageMissing == 0 && Stats.Mesh.CoverageLeftover == 0 && Stats.PatchesFacingAgainst == 0,
+              "a drawn grid of quads is one mesh with every triangle covered and no facing against the normals", Error + " " + std::to_string(Meshes) + " " + std::to_string(Stats.Patches));
+        Check(Text.find("   lightmap_gray\n   3 4 16 8\n") != std::string::npos || Text.find("   lightmap_gray\n   4 3 16 8\n") != std::string::npos, "the size line is the grid's 4 x 3 points", Text.substr(0, 400));
+        Check(fs::exists(fs::path(Map).replace_extension(".meshes.txt")) && !fs::exists(fs::path(Map).replace_extension(".coverage.txt")), "the owner is listed in <map>.meshes.txt and no coverage failure file is made");
     }
     fs::remove_all(Dir, Ec);
     return Failed;

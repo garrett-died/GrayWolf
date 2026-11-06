@@ -213,6 +213,7 @@ namespace DiskGame
     // map_radiant: also the map as a Radiant source (MapRadiantWriter.h): <map>.map, its clip map's
     // brushes, entities and model placements, its world and models as XMODEL_EXPORT, for the mod tools
     extern const Setting MapRadiant;
+    extern const Setting MapGeometryOnly;
     // material_gdt: also Black Ops III Mod Tools GDT entries for the exported materials (MaterialGdt.h):
     // the models' as source_data/graywolf_<out folder>.gdt (their XMODEL_EXPORT files naming them),
     // a map's in its Radiant GDT (with map_radiant)
@@ -304,7 +305,12 @@ namespace DiskGame
         bool Wants(Kind K, const std::string& Name) const;
         // An asset this zone cannot give whole (a name-only reference, a texture whose pixels are
         // elsewhere): the run exports it from the zone that defines it.
-        void Needs(Kind K, const std::string& Name) const { if (OnNeeds) OnNeeds({ K, Name }); }
+        // (map_geometry_only asks for nothing: no dependency zone is opened)
+        void Needs(Kind K, const std::string& Name) const
+        {
+            if (const auto It = Settings.find("map_geometry_only"); It != Settings.end() && It->second == "on") return;
+            if (OnNeeds) OnNeeds({ K, Name });
+        }
         // Work that needs what the run writes later (a map's textures pulled from another
         // zone): run once the dependencies are written, in the order given.
         void After(std::function<void()> Work) const

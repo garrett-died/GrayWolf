@@ -7,9 +7,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <queue>
+#include <set>
 #include <stdexcept>
 
 // See MapMesh.h. The algorithms, constants and report texts are HydraX's. What differs is the storage: HydraX keeps
@@ -1120,6 +1122,7 @@ namespace QuadMesher
                 I = End;
             }
         }
+        Result.CandidatePotential = Potential;
         const bool Capped = Potential > std::clamp<int64_t>(Options.MaxCandidates, 0, int64_t{ 1 } << 30);
         if (Capped)
         {
@@ -1143,7 +1146,7 @@ namespace QuadMesher
                     for (int J = 0; J < 3 && Q < 0; J++)
                         if (IdAt(O, J) != X && IdAt(O, J) != Y) Q = IdAt(O, J);
                     if (Q < 0) continue;
-                    if (Flatness(Positions, Z, X, Q, Y) > MinimumFlatness)
+                    if ((!Options.CanPair || Options.CanPair(T, O)) && Flatness(Positions, Z, X, Q, Y) > MinimumFlatness)
                     {
                         const std::array<int32_t, 4> Ring = { Z, X, Q, Y };
                         const double Square = Squareness(Positions, Ring);
@@ -1328,6 +1331,9 @@ namespace QuadMesher
             };
 
             const auto Place = [&](int Cell, int X, int Y, const std::array<int32_t, 4>& Ring) {
+                // A cell made of the same four vertices as one already laid out (the other side of a two-sided surface) would land on its lattice cell: the cut would
+                // keep one of the two and lose the other's triangles, so it starts a region of its own. HydraX has no such guard and loses them.
+                if (CellAt.Contains(PackXY(X, Y))) return false;
                 for (int K = 0; K < 4; K++)
                 {
                     const std::pair<int, int> Want = { X + Corners[K].first, Y + Corners[K].second };
@@ -2067,63 +2073,287 @@ namespace PatchCoverage
                 Lone++;
             else
                 Meshes++;
+        }
+
+        // A cell is cut two ways. Cells are taken in two passes so that the answer does not depend on the order the grids are listed in:
+        //  - pass 0, the cells whose two cuts differ in how many halves are input triangles: they take the cut with more (the true cut always has both halves among the input,
+        //    so a cut with fewer cannot be the true one); nothing here reads which triangles are still free, so the order of these cells changes nothing;
+        //  - pass 1, the cells whose cuts tie (the surface was tessellated twice over these vertices): they take the cut whose halves are still free, after every cell of pass 0
+        //    has taken its own, and in an order set by their corners (sorted vertex ids), not by where they are listed. HydraX takes any cut whose halves exist, so one such
+        //    cell takes the same diagonal as another and both report a leftover and a missing triangle.
+        // What remains order dependent: cells of pass 1 that share a triangle with each other and have the same corners (identical cells are interchangeable).
+        struct CellRef
+        {
+            const QuadGrid* Grid;
+            int G, I;
+            std::array<int, 4> Key;   // the cell's welded corners, sorted
+        };
+        std::vector<CellRef> Ambiguous;
+        using Cut = std::array<Half, 2>;
+        // The two ways to cut a cell: the diagonal P00-P11 (First) and the diagonal P10-P01 (Second).
+        const auto CutsOf = [&](const QuadGrid& Grid, int G, int I) {
+            const int P00 = Grid.At(G, I), P10 = Grid.At(G + 1, I), P11 = Grid.At(G + 1, I + 1), P01 = Grid.At(G, I + 1);
+            return std::array<Cut, 2>{ Cut{ { { P00, P10, P11 }, { P00, P11, P01 } } }, Cut{ { { P00, P10, P01 }, { P10, P11, P01 } } } };
+        };
+        struct Decision
+        {
+            const QuadGrid* Grid;
+            int G, I;
+            bool Second;
+        };
+        std::vector<Decision> Decisions;
+        // Takes a cell's halves out of the input for the cut it is given.
+        const auto Apply = [&](const QuadGrid& Grid, int G, int I, bool UseSecond) {
+            Cells++;
+            const std::array<Cut, 2> Cuts = CutsOf(Grid, G, I);
+            const Cut& Chosen = Cuts[UseSecond ? 1 : 0];
+            const Cut& Other = Cuts[UseSecond ? 0 : 1];
+            int Matched = 0;
+            for (const Half& H : Chosen)
+            {
+                if (!Real(H)) continue;
+                OutputArea += HalfArea(H);
+                const auto Candidates = ByKey.Find(KeyOf(H));
+                if (Candidates.empty())
+                {
+                    Leftover++;
+                    Result.Lines.push_back({ "leftover", -1, "output cell half (" + Int(H[0]) + "," + Int(H[1]) + "," + Int(H[2]) + ") is no input triangle" });
+                    continue;
+                }
+                Matched++;
+                // A triangle taken out on purpose never stands in for a kept one that has the same (welded) corners.
+                int Free = -1;
+                for (const auto& C : Candidates)
+                    if (Used[static_cast<size_t>(C.Id)] == 0 && !RemovedHas(C.Id))
+                    {
+                        Free = C.Id;
+                        break;
+                    }
+                if (Free >= 0)
+                {
+                    Used[static_cast<size_t>(Free)]++;
+                }
+                else
+                {
+                    Leftover++;
+                    Result.Lines.push_back({ "leftover", Candidates.front().Id, "input triangle held by more output cells than it exists (" + Int(static_cast<int64_t>(Candidates.size())) + " input, used again)" });
+                }
+            }
+            for (const Half& H : Other)
+                if (Real(H)) OtherArea += HalfArea(H);
+
+            if (Matched == 0 && std::none_of(Chosen.begin(), Chosen.end(), [&](const Half& H) { return Real(H); }))
+            {
+                // A cell with no area at all.
+                Leftover++;
+                Result.Lines.push_back({ "leftover", -1, "output cell with no area (all corners the same vertex or collinear)" });
+            }
+        };
+
+        // The greedy choice: the cut whose halves are input triangles (and, for a tied cell, still free).
+        const auto Handle = [&](const QuadGrid& Grid, int G, int I, bool Tied) {
+            const std::array<Cut, 2> Cuts = CutsOf(Grid, G, I);
+            const auto Score = [&](const Cut& Cut_) {
+                int Free = 0, Exist = 0;
+                for (const Half& H : Cut_)
+                {
+                    if (!Real(H)) continue;
+                    const auto Found = ByKey.Find(KeyOf(H));
+                    if (Found.empty()) continue;
+                    Exist++;
+                    Free += std::any_of(Found.begin(), Found.end(), [&](const auto& C) { return Used[static_cast<size_t>(C.Id)] == 0 && !RemovedHas(C.Id); }) ? 1 : 0;
+                }
+                return std::make_pair(Tied ? Free : 0, Exist);
+            };
+            const bool UseSecond = Score(Cuts[1]) > Score(Cuts[0]);
+            Decisions.push_back({ &Grid, G, I, UseSecond });
+            Apply(Grid, G, I, UseSecond);
+        };
+
+        int BothDiagonals = 0, BothNonPlanar = 0;
+        for (const QuadGrid& Grid : Grids)
             for (int G = 0; G + 1 < Grid.GroupCount; G++)
                 for (int I = 0; I + 1 < Grid.GroupSize; I++)
                 {
-                    Cells++;
                     const int P00 = Grid.At(G, I), P10 = Grid.At(G + 1, I), P11 = Grid.At(G + 1, I + 1), P01 = Grid.At(G, I + 1);
-
-                    // Two ways to cut the cell; take the one whose halves are input triangles.
-                    const std::array<Half, 2> First = { { { P00, P10, P11 }, { P00, P11, P01 } } };
-                    const std::array<Half, 2> Second = { { { P00, P10, P01 }, { P10, P11, P01 } } };
-                    int FirstHits = 0, SecondHits = 0;
-                    for (const Half& H : First) FirstHits += (Real(H) && !ByKey.Find(KeyOf(H)).empty()) ? 1 : 0;
-                    for (const Half& H : Second) SecondHits += (Real(H) && !ByKey.Find(KeyOf(H)).empty()) ? 1 : 0;
-                    const bool UseSecond = SecondHits > FirstHits;
-                    const std::array<Half, 2>& Chosen = UseSecond ? Second : First;
-                    const std::array<Half, 2>& Other = UseSecond ? First : Second;
-                    int Matched = 0;
-                    for (const Half& H : Chosen)
+                    const auto Exists = [&](const Half& H) { return Real(H) && !ByKey.Find(KeyOf(H)).empty() ? 1 : 0; };
+                    const int E1 = Exists({ P00, P10, P11 }) + Exists({ P00, P11, P01 }), E2 = Exists({ P00, P10, P01 }) + Exists({ P10, P11, P01 });
+                    if (E1 == E2 && E1 > 0)
                     {
-                        if (!Real(H)) continue;
-                        OutputArea += HalfArea(H);
-                        const auto Candidates = ByKey.Find(KeyOf(H));
-                        if (Candidates.empty())
+                        std::array<int, 4> Key = { R(P00), R(P10), R(P11), R(P01) };
+                        std::sort(Key.begin(), Key.end());
+                        Ambiguous.push_back({ &Grid, G, I, Key });
+                        if (E1 == 2)
                         {
-                            Leftover++;
-                            Result.Lines.push_back({ "leftover", -1, "output cell half (" + Int(H[0]) + "," + Int(H[1]) + "," + Int(H[2]) + ") is no input triangle" });
-                            continue;
-                        }
-                        Matched++;
-                        // A triangle taken out on purpose never stands in for a kept one that has the same (welded) corners.
-                        int Free = -1;
-                        for (const auto& C : Candidates)
-                            if (Used[static_cast<size_t>(C.Id)] == 0 && !RemovedHas(C.Id))
+                            BothDiagonals++;
+                            // planar: the fourth point lies within 0.01 of the plane of the other three
+                            const V3 A = Point(Positions, P00), B = Point(Positions, P10), C = Point(Positions, P11), D = Point(Positions, P01);
+                            const V3 N = Cross(Sub(B, A), Sub(C, A));
+                            const double L = Length(N);
+                            const bool Planar = L > 1e-12 && std::fabs(Dot(N, Sub(D, A))) / L <= 0.01;
+                            if (!Planar)
                             {
-                                Free = C.Id;
-                                break;
+                                BothNonPlanar++;
+                                if (BothNonPlanar <= 20)
+                                    Result.Lines.push_back({ "both_diagonals", -1, "cell (" + Int(P00) + "," + Int(P10) + "," + Int(P11) + "," + Int(P01) + ") has both diagonals as input triangles and is not planar" });
                             }
-                        if (Free >= 0)
-                        {
-                            Used[static_cast<size_t>(Free)]++;
                         }
-                        else
-                        {
-                            Leftover++;
-                            Result.Lines.push_back({ "leftover", Candidates.front().Id, "input triangle held by more output cells than it exists (" + Int(static_cast<int64_t>(Candidates.size())) + " input, used again)" });
-                        }
+                        continue;
                     }
-                    for (const Half& H : Other)
-                        if (Real(H)) OtherArea += HalfArea(H);
-
-                    if (Matched == 0 && std::none_of(Chosen.begin(), Chosen.end(), [&](const Half& H) { return Real(H); }))
-                    {
-                        // A cell with no area at all.
-                        Leftover++;
-                        Result.Lines.push_back({ "leftover", -1, "output cell with no area (all corners the same vertex or collinear)" });
-                    }
+                    Handle(Grid, G, I, false);
                 }
+        std::stable_sort(Ambiguous.begin(), Ambiguous.end(), [](const CellRef& A, const CellRef& B) { return A.Key < B.Key; });
+        for (const CellRef& C : Ambiguous) Handle(*C.Grid, C.G, C.I, true);
+
+        // Repair, only when the greedy passes left something over or missing. Greedy takes cells one at a time, so a cell can take the cut a later cell needed; where several cells
+        // share input triangles (five cells around a convex pentagon that all have two possible cuts) the order can leave two triangles missing and two over on correct output.
+        // Each cell with two possible cuts (every real half of both cuts is an input triangle) is a choice; an input triangle that the chosen cuts use too often or too rarely is
+        // unbalanced. The search flips a cell that touches an unbalanced triangle and, when that does not lower the total imbalance, flips one that touches what it unbalanced in
+        // turn (a chain at most RepairDepth long, at most RepairBudget flips in all), and keeps the chain as soon as the imbalance is lower. Nothing is changed when no chain
+        // helps, so a surface with a real loss reports it as before. The cells are tried in the order of their sorted corner ids, not the order they are listed in.
+        const auto CountMissing = [&]() {
+            int N = 0;
+            for (int T = 0; T < TriangleCount; T++)
+                if (Used[static_cast<size_t>(T)] == 0 && !RemovedHas(T)) N++;
+            return N;
+        };
+        if (Leftover > 0 || CountMissing() > 0)
+        {
+            constexpr int RepairDepth = 12;
+            constexpr int64_t RepairBudget = 200000;
+            const size_t N = Decisions.size();
+            std::vector<char> Choice(N, 0);
+            std::vector<std::array<std::array<int, 2>, 2>> Keys(N);   // [decision][cut][half]: the input triangle the half is (its first copy's id), -1 for none
+            std::vector<char> Flexible(N, 0);
+            std::vector<int> Count(static_cast<size_t>(TriangleCount), 0), Use(static_cast<size_t>(TriangleCount), 0);
+            std::vector<char> Counted(static_cast<size_t>(TriangleCount), 0);
+            std::vector<std::vector<int>> Touching(static_cast<size_t>(TriangleCount));   // the flexible decisions with a half on that triangle
+            for (size_t D = 0; D < N; D++)
+            {
+                Choice[D] = Decisions[D].Second ? 1 : 0;
+                const std::array<Cut, 2> Cuts = CutsOf(*Decisions[D].Grid, Decisions[D].G, Decisions[D].I);
+                bool Both = true;
+                for (size_t C = 0; C < 2; C++)
+                {
+                    int RealHalves = 0, FoundHalves = 0;
+                    for (size_t H = 0; H < 2; H++)
+                    {
+                        Keys[D][C][H] = -1;
+                        const Half& Piece = Cuts[C][H];
+                        if (!Real(Piece)) continue;
+                        RealHalves++;
+                        const auto Found = ByKey.Find(KeyOf(Piece));
+                        if (Found.empty()) continue;
+                        FoundHalves++;
+                        const int Id = Found.front().Id;
+                        Keys[D][C][H] = Id;
+                        if (!Counted[static_cast<size_t>(Id)])
+                        {
+                            Counted[static_cast<size_t>(Id)] = 1;
+                            for (const auto& Copy : Found)
+                                if (!RemovedHas(Copy.Id)) Count[static_cast<size_t>(Id)]++;
+                        }
+                    }
+                    Both = Both && RealHalves > 0 && RealHalves == FoundHalves;
+                }
+                Flexible[D] = Both ? 1 : 0;
+                if (Both)
+                    for (size_t C = 0; C < 2; C++)
+                        for (size_t H = 0; H < 2; H++)
+                            if (Keys[D][C][H] >= 0) Touching[static_cast<size_t>(Keys[D][C][H])].push_back(static_cast<int>(D));
+            }
+            // the order the flexible cells are tried in: their sorted corner ids, then the order met (identical cells are interchangeable)
+            std::vector<std::pair<std::array<int, 4>, int>> Order;
+            for (size_t D = 0; D < N; D++)
+                if (Flexible[D])
+                {
+                    const std::array<Cut, 2> Cuts = CutsOf(*Decisions[D].Grid, Decisions[D].G, Decisions[D].I);
+                    std::array<int, 4> Corner = { R(Cuts[0][0][0]), R(Cuts[0][0][1]), R(Cuts[0][0][2]), R(Cuts[0][1][2]) };
+                    std::sort(Corner.begin(), Corner.end());
+                    Order.push_back({ Corner, static_cast<int>(D) });
+                }
+            std::sort(Order.begin(), Order.end());
+            std::vector<int> Rank(N, -1);
+            for (size_t K = 0; K < Order.size(); K++) Rank[static_cast<size_t>(Order[K].second)] = static_cast<int>(K);
+
+            int64_t Imbalance = 0;
+            std::set<int> Unbalanced;
+            // nothing is used yet: every triangle some cell can take is short by its count
+            for (int T = 0; T < TriangleCount; T++)
+                if (Counted[static_cast<size_t>(T)] && Count[static_cast<size_t>(T)] > 0)
+                {
+                    Imbalance += Count[static_cast<size_t>(T)];
+                    Unbalanced.insert(T);
+                }
+            const auto Bump = [&](int Key, int By) {
+                int& U = Use[static_cast<size_t>(Key)];
+                const int C = Count[static_cast<size_t>(Key)];
+                Imbalance += std::abs(U + By - C) - std::abs(U - C);
+                U += By;
+                if (U == C)
+                    Unbalanced.erase(Key);
+                else
+                    Unbalanced.insert(Key);
+            };
+            for (size_t D = 0; D < N; D++)
+                for (size_t H = 0; H < 2; H++)
+                {
+                    const int Key = Keys[D][static_cast<size_t>(Choice[D])][H];
+                    if (Key >= 0) Bump(Key, 1);
+                }
+            const int64_t Start = Imbalance;
+            const auto Flip = [&](size_t D) {
+                for (size_t H = 0; H < 2; H++)
+                {
+                    const int Old = Keys[D][static_cast<size_t>(Choice[D])][H], New = Keys[D][static_cast<size_t>(1 - Choice[D])][H];
+                    if (Old >= 0) Bump(Old, -1);
+                    if (New >= 0) Bump(New, 1);
+                }
+                Choice[D] = static_cast<char>(1 - Choice[D]);
+            };
+            std::vector<char> InChain(N, 0);
+            // one budget for the whole repair, charged for candidates looked at as well as flips: a soup with many separate failures stops early and reports them
+            int64_t Budget = RepairBudget;
+            std::function<bool(int, int64_t)> Try = [&](int Depth, int64_t Before) {
+                std::vector<int> Candidates;
+                for (const int Key : Unbalanced)
+                    for (const int D : Touching[static_cast<size_t>(Key)])
+                        if (!InChain[static_cast<size_t>(D)]) Candidates.push_back(D);
+                std::sort(Candidates.begin(), Candidates.end(), [&](int A, int B) { return Rank[static_cast<size_t>(A)] < Rank[static_cast<size_t>(B)]; });
+                Candidates.erase(std::unique(Candidates.begin(), Candidates.end()), Candidates.end());
+                Budget -= static_cast<int64_t>(Candidates.size());
+                if (Budget < 0) return false;
+                for (const int D : Candidates)
+                {
+                    if (--Budget < 0) return false;
+                    Flip(static_cast<size_t>(D));
+                    InChain[static_cast<size_t>(D)] = 1;
+                    if (Imbalance < Before) return true;
+                    if (Depth < RepairDepth && Try(Depth + 1, Before)) return true;
+                    InChain[static_cast<size_t>(D)] = 0;
+                    Flip(static_cast<size_t>(D));
+                }
+                return false;
+            };
+            while (Imbalance > 0)
+            {
+                std::fill(InChain.begin(), InChain.end(), 0);
+                if (!Try(1, Imbalance)) break;
+            }
+            if (Imbalance < Start)
+            {
+                // account again from nothing with the repaired cuts (the lines of the leftovers are written again, the other lines stay)
+                std::fill(Used.begin(), Used.end(), 0);
+                Leftover = 0;
+                Cells = 0;
+                OutputArea = 0;
+                OtherArea = 0;
+                Result.Lines.erase(std::remove_if(Result.Lines.begin(), Result.Lines.end(), [](const CoverageLine& L) { return L.Kind == "leftover"; }), Result.Lines.end());
+                for (size_t D = 0; D < N; D++) Apply(*Decisions[D].Grid, Decisions[D].G, Decisions[D].I, Choice[D] != 0);
+            }
         }
+        Result.CellsBothDiagonals = BothDiagonals;
+        Result.CellsBothDiagonalsNonPlanar = BothNonPlanar;
 
         int Missing = 0, Covered = 0, RemovedCount = 0;
         double RemovedArea = 0;

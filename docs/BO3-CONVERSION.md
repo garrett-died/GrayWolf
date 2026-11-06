@@ -214,8 +214,9 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
   stock Z against the Z its own X and Y imply); Black Ops III, 476 normals, Z 36.1 dB against 33.6 dB. `.dds`
   output keeps the game's two channels (BC5 has no third), counted `normals_left_dds`. 5 Cold War images with
   no material role stay unconverted.
-- Radiant geometry: no Black Ops 4 terrain yet; patches are 2x2; collision triangles are written as thin brushes. On `mp_crash` that is
-  865,926 one-triangle meshes and 143,184 thin brushes, so that map is not yet a practical Radiant map.
+- Radiant geometry: no Black Ops 4 terrain yet. Drawn surfaces are real meshes: 865,926 triangles of `mp_crash` make 267,943 meshes, and each
+  export checks that every triangle is in a mesh or removed with a proof, or fails. Collision triangles are still written as thin brushes (143,184
+  on `mp_crash`). Radiant has not opened these meshes, so how it loads them, and which diagonal it picks for a cell that is not flat, is unknown.
 - Constants exist for Black Ops 4 techsets with a proven layout only. Others keep stock defaults and
   are listed as `material.constants_defaulted`.
 - A colour specular map on a scalar slot is read as a mask, which loses colour. It is counted.

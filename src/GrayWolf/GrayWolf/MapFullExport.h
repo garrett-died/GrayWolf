@@ -66,6 +66,9 @@ namespace Maps
     // (6,337 of 6,346 triangles, HydraX map-export-bo4 section 21) and Black Ops III -1 ((p2 - p0) x (p1 - p0) is the vertex normal). Other
     // games: +1 is NOT measured (their readers either give normals, which are used, or this is a hypothesis).
     int WindingOf(const std::string& Game);
+    // Whether the game numbers a mesh's vertices in the patch compiler's order, so the mesher's pair and border models apply (M2e measures it per game). Black Ops III
+    // true, as HydraX has it; every other game false until measured.
+    bool VertexOrderIsPatchOrder(const std::string& Game);
 
     // The lower-case GDT asset names a map material goes by: its asset name and the name shortened to 63 characters
     std::vector<std::string> DrawnAssetKeys(const std::string& Name);

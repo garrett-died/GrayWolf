@@ -73,6 +73,7 @@ struct CliOptions
     std::string MapCast;     // --map-cast: on|off, the map also as a Cast scene (off)
     std::string MaterialGdt; // --material-gdt: on|off, BO3 Mod Tools material GDT entries for the exported materials (off)
     std::string MapRadiant;  // --map-radiant: on|off, the map also as a Radiant .map for the mod tools (off)
+    std::string MapGeometryOnly;  // --map-geometry-only: on|off, a map export without its textures and without opening other zones for them (off)
     std::string MapPrefabs;  // --map-prefabs: the parts of the Radiant map written as prefab maps of their own (none)
     std::string SoundAliases;  // --sound-aliases: on|off, the sound kind also writes the zone's aliases as a BO3 mod tools CSV (off)
     std::string MapContent;  // --map-content: all|terrain, the map's terrain alone (all)

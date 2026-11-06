@@ -18,13 +18,20 @@ using namespace RadiantGeometry;
 
 std::string RadiantNumber(double V)
 {
-    if (std::fabs(V - std::round(V)) < 1e-9) return std::to_string((long long)std::llround(V));
+    if (std::fabs(V) < 9e18 && std::fabs(V - std::round(V)) < 1e-9) return std::to_string((long long)std::llround(V));
     char Buf[64];
     std::snprintf(Buf, sizeof(Buf), "%.4f", V);
     std::string S = Buf;
     while (!S.empty() && S.back() == '0') S.pop_back();
     if (!S.empty() && S.back() == '.') S.pop_back();
     return S == "-0" ? "0" : S;
+}
+
+size_t ReportCounter(double V)
+{
+    if (!(V >= 0)) return 0;
+    constexpr double Limit = 9007199254740992.0;
+    return V >= Limit ? static_cast<size_t>(Limit) : static_cast<size_t>(std::llround(V));
 }
 
 // ---- BO4 static models

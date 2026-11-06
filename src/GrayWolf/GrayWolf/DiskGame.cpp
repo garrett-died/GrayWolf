@@ -115,6 +115,9 @@ const Setting MapCast{ "map_cast", "Map scene", { { "off", ".glb (Blender)" }, {
 const Setting MapRadiant{ "map_radiant", "Map source", { { "off", "None" }, { "on", "+ Radiant .map (mod tools)" } },
                           "off", { Kind::Map } };
 
+const Setting MapGeometryOnly{ "map_geometry_only", "Map geometry only", { { "off", "Everything" }, { "on", "No textures, no dependency zones" } },
+                                "off", { Kind::Map } };
+
 const Setting GdtMaterials{ "material_gdt", "Mod tools materials", { { "off", "None" }, { "on", "+ BO3 material GDT" } },
                             "off", { Kind::Model, Kind::Map } };
 const Setting SoundAliases{ "sound_aliases", "Sound aliases", { { "off", "None" }, { "on", "+ alias CSV (BO3 mod tools)" } },
@@ -130,7 +133,7 @@ const Setting ScriptDecompile{ "decompile", "Compiled scripts and Lua", { { "off
 
 const std::vector<Setting>& CommonSettings()
 {
-    static const std::vector<Setting> All = { MapPng, MapTextures, MapCast, MapRadiant, GdtMaterials, SoundAliases, MapCollision, MapContent, ScriptDecompile };
+    static const std::vector<Setting> All = { MapPng, MapTextures, MapCast, MapRadiant, MapGeometryOnly, GdtMaterials, SoundAliases, MapCollision, MapContent, ScriptDecompile };
     return All;
 }
 

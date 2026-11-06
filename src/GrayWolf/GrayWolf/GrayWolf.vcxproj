@@ -121,7 +121,7 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <AdditionalIncludeDirectories>..\OatInterop;..\..\Core\Core;$(VcpkgInstalled)\include;..\..\External\DirectXShaderCompiler\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_UNICODE;UNICODE;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;CASCLIB_NO_AUTO_LINK_LIBRARY;CASCLIB_UNICODE;CASCLIB_DETECT_UNICODE_MISMATCHES;FLAC__NO_DLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_UNICODE;UNICODE;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;CASCLIB_NO_AUTO_LINK_LIBRARY;CASCLIB_UNICODE;CASCLIB_DETECT_UNICODE_MISMATCHES;FLAC__NO_DLL;GW_MESH_DUMP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
@@ -250,6 +250,8 @@
     <ClCompile Include="MapRadiantRules.cpp" />
     <ClCompile Include="MapMesh.cpp" />
     <ClCompile Include="MapMeshSelfTest.cpp" />
+    <ClCompile Include="MapRenderMeshes.cpp" />
+    <ClCompile Include="MapRenderMeshesSelfTest.cpp" />
     <ClCompile Include="SoundAliasCsv.cpp" />
     <ClCompile Include="MapCollisionWriter.cpp" />
     <ClCompile Include="MapMaterials.cpp" />
@@ -426,6 +428,7 @@
     <ClInclude Include="MapFullExport.h" />
     <ClInclude Include="MapRadiantRules.h" />
     <ClInclude Include="MapMesh.h" />
+    <ClInclude Include="MapRenderMeshes.h" />
     <ClInclude Include="MapRadiantGeometry.h" />
     <ClInclude Include="SoundAliasCsv.h" />
     <ClInclude Include="MapCollisionWriter.h" />

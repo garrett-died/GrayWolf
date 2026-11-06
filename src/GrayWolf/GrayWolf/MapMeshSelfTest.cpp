@@ -1261,6 +1261,91 @@ int MeshSelfTest(std::string& Failures)
               "format: 0.### rounds the 15 digit text half away from zero like .NET", Area(2.0005) + " " + Area(0.0625) + " " + Area(0.0004999999));
     }
     {
+        // A square tessellated twice over the same four vertices (both diagonals are input): each cell must take the cut whose halves are still free, so both
+        // tessellations are covered. HydraX's rule (any cut whose halves exist) takes the same diagonal twice and reports two leftovers and two missing triangles.
+        const std::vector<float> P = { 0, 0, 0, 8, 0, 0, 8, 8, 0, 0, 8, 0 };
+        const std::vector<int32_t> I = { 0, 1, 2, 0, 2, 3, 0, 1, 3, 1, 2, 3 };
+        const QuadGrid Cell = QuadGrid::FromGroups({ { 0, 1 }, { 3, 2 } });
+        const CoverageResult C = PatchCoverage::Check(P, I, std::vector<QuadGrid>{ Cell, Cell });
+        Check(C.IsComplete() && C.Covered == 4, "PatchCoverage: a square tessellated both ways is complete (the cut with free halves wins)", C.Summary("both diagonals"));
+    }
+    {
+        // A two-sided surface: the same four vertices as two cells of opposite winding. Both cells land on one lattice cell; the second must start a grid of its own
+        // instead of being dropped (HydraX loses its two triangles).
+        const std::vector<float> P = { 0, 0, 0, 8, 0, 0, 8, 8, 0, 0, 8, 0 };
+        const std::vector<int32_t> I = { 0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2 };
+        const auto Built = QuadMesher::Build(P, I, Zeros(4));
+        std::vector<int> Use(4, 0);
+        for (const BuiltGrid& G : Built.Grids)
+            for (const int32_t T : G.Grid.Triangles) Use[static_cast<size_t>(T)]++;
+        const CoverageResult C = PatchCoverage::Check(P, I, Plain(Built.Grids));
+        Check(Use == std::vector<int>({ 1, 1, 1, 1 }) && C.IsComplete() && Built.Grids.size() == 2, "QuadMesher: the two sides of a surface on the same four vertices are two grids, no triangle lost", std::to_string(Built.Grids.size()) + " " + C.Summary("two-sided"));
+        // The second side must also land on a lattice cell its first side's neighbour reaches: a third cell next to the first one, which the second side's four vertices
+        // share an edge with, walks onto the first side's own lattice cell. 2 x 1 cells (triangles 0-3) and the other side of the first cell (4-5).
+        {
+            const std::vector<float> P2 = { 0, 0, 0, 8, 0, 0, 16, 0, 0, 0, 8, 0, 8, 8, 0, 16, 8, 0 };
+            const std::vector<int32_t> I2 = { 0, 1, 4, 0, 4, 3, 1, 2, 5, 1, 5, 4, 0, 4, 1, 0, 3, 4 };
+            const auto Built2 = QuadMesher::Build(P2, I2, Zeros(6));
+            std::vector<int> Use2(6, 0);
+            for (const BuiltGrid& G : Built2.Grids)
+                for (const int32_t T : G.Grid.Triangles) Use2[static_cast<size_t>(T)]++;
+            const CoverageResult C2 = PatchCoverage::Check(P2, I2, Plain(Built2.Grids));
+            Check(Use2 == std::vector<int>({ 1, 1, 1, 1, 1, 1 }) && C2.IsComplete(), "QuadMesher: the other side of a cell is not lost when a neighbour walks onto its lattice cell", C2.Summary("two-sided strip") + " " + std::to_string(Built2.Grids.size()));
+        }
+    }
+    {
+        // Pass 1 of the cell loop. Cell 1 (a, b, c, d) has both diagonals as input triangles and is listed first; cell 2 (a, b, c, e) has only the cut abc + ace, and abc exists once.
+        // A cell that takes the first cut whose halves exist (HydraX; also this module before the two passes) lets cell 1 take abc and leaves cell 2 a leftover and a
+        // missing triangle. Pass 0 gives abc to cell 2, whose cut is the only one, and cell 1 then takes abd + bcd; the lone triangle acd is the rest of the second tessellation.
+        const std::vector<float> P = { 0, 0, 0, 8, 0, 0, 8, 8, 0, 0, 8, 0, 0, 16, 0 };   // a b c d e
+        const std::vector<int32_t> I = { 0, 1, 2, 0, 2, 3, 0, 1, 3, 1, 2, 3, 0, 2, 4 };   // abc acd abd bcd ace
+        const QuadGrid Cell1 = QuadGrid::FromGroups({ { 0, 1 }, { 3, 2 } });
+        const QuadGrid Cell2 = QuadGrid::FromGroups({ { 0, 1 }, { 4, 2 } });
+        const QuadGrid LoneAcd = QuadGrid::FromGroups({ { 0, 2 }, { 3, 3 } }, true);
+        const CoverageResult C = PatchCoverage::Check(P, I, std::vector<QuadGrid>{ Cell1, Cell2, LoneAcd });
+        Check(C.IsComplete() && C.Covered == 5 && C.CellsBothDiagonals == 1, "PatchCoverage: a cell with both diagonals listed before a cell that needs one of them is complete (pass 0 before pass 1)", C.Summary("pass 1"));
+        // the order the grids are listed in changes nothing
+        const CoverageResult Reversed = PatchCoverage::Check(P, I, std::vector<QuadGrid>{ LoneAcd, Cell2, Cell1 });
+        Check(Reversed.IsComplete() && Reversed.Covered == 5 && Reversed.Summary("x") == C.Summary("x"), "PatchCoverage: the listing order of the grids does not change the result", Reversed.Summary("x"));
+        // both diagonals, a cell that is not planar is listed (the fourth point 3 units above the plane of the other three)
+        const std::vector<float> Bent = { 0, 0, 0, 8, 0, 0, 8, 8, 0, 0, 8, 3 };
+        const CoverageResult B = PatchCoverage::Check(Bent, std::vector<int32_t>{ 0, 1, 2, 0, 2, 3, 0, 1, 3, 1, 2, 3 }, std::vector<QuadGrid>{ Cell1, Cell1 });
+        bool Listed = false;
+        for (const CoverageLine& L : B.Lines) Listed = Listed || L.Kind == "both_diagonals";
+        Check(B.CellsBothDiagonals == 2 && B.CellsBothDiagonalsNonPlanar == 2 && Listed && B.IsComplete(), "PatchCoverage: cells with both diagonals are counted and the non-planar ones listed", B.Summary("bent"));
+    }
+    {
+        // Five cells around a convex pentagon (vertices 0 2 3 4 5, vertex 1 unused), every cell with both cuts among the input. Greedy, in any order it is given, can
+        // take a diagonal a later cell needed and report two missing and two leftover on correct output; the repair flips cells along a chain until nothing improves.
+        std::vector<float> P;
+        for (int V = 0; V < 6; V++)
+        {
+            const double Angle = (V == 1 ? 0.0 : 90.0 + (72.0 * (V == 0 ? 0 : V == 2 ? 1 : V == 3 ? 2 : V == 4 ? 3 : 4))) * 3.14159265358979 / 180.0;
+            P.insert(P.end(), { static_cast<float>(10 * std::cos(Angle)), static_cast<float>(10 * std::sin(Angle)), 0.0f });
+        }
+        const std::vector<int32_t> I = { 0, 2, 4, 2, 3, 4, 0, 2, 3, 0, 3, 5, 0, 2, 5, 2, 3, 5, 0, 3, 4, 0, 4, 5, 0, 3, 5, 3, 4, 5 };
+        const auto Cell = [](int A, int B, int C, int D) { return QuadGrid::FromGroups({ { A, B }, { D, C } }); };
+        const std::vector<QuadGrid> Plain5 = { Cell(0, 2, 3, 4), Cell(0, 2, 3, 5), Cell(0, 2, 3, 5), Cell(0, 3, 4, 5), Cell(0, 3, 4, 5) };
+        const CoverageResult C = PatchCoverage::Check(P, I, Plain5);
+        Check(C.IsComplete() && C.Covered == 10 && C.Cells == 5, "PatchCoverage: five cells around a pentagon that greedy cannot cover are repaired to complete", C.Summary("pentagon"));
+        // the same cells with the first one written from another corner (2 3 4 0)
+        std::vector<QuadGrid> Rotated = Plain5;
+        Rotated[0] = Cell(2, 3, 4, 0);
+        const CoverageResult Rot = PatchCoverage::Check(P, I, Rotated);
+        Check(Rot.IsComplete() && Rot.Covered == 10, "PatchCoverage: the rotated first cell is complete too", Rot.Summary("rotated"));
+        // the order of the grids changes nothing
+        std::vector<QuadGrid> Reversed(Plain5.rbegin(), Plain5.rend());
+        const CoverageResult Rev = PatchCoverage::Check(P, I, Reversed);
+        Check(Rev.IsComplete() && Rev.Summary("x") == C.Summary("x"), "PatchCoverage: the repair does not depend on the order the grids are listed in", Rev.Summary("x"));
+        // a true loss is still reported: triangle 3 4 5 is replaced by one no cell holds (1 2 3), so one input triangle is missing and one half is no input triangle
+        std::vector<int32_t> Lost = I;
+        Lost[27] = 1;
+        Lost[28] = 2;
+        Lost[29] = 3;
+        const CoverageResult L = PatchCoverage::Check(P, Lost, Plain5);
+        Check(!L.IsComplete() && L.Missing >= 1 && L.Leftover >= 1, "PatchCoverage: a real loss is still reported after the repair", L.Summary("lost"));
+    }
+    {
         // Bad input is refused, not read
         bool Threw = false;
         try

@@ -112,6 +112,9 @@ namespace Maps
             bool VertexOrderBorders = false;
             // Seeds the lookup tables only. No output may depend on it; MeshSelfTest builds with several seeds and compares.
             uint64_t HashSeed = 0;
+            // Optional: false when two triangles (by index) may not be the two halves of one cell, for a reason the positions do not show (they are drawn on opposite sides).
+            // Empty means any pair. HydraX has no such test.
+            std::function<bool(int, int)> CanPair;
             // The most pairs of triangles sharing an edge Build will rank (memory is about 100 bytes a pair). A soup above it (tens of thousands of triangles on one
             // edge) gets no pairing: every triangle stays lone, BuildResult says so, and coverage still passes. Clamped to 2^30.
             int64_t MaxCandidates = 16000000;
@@ -121,6 +124,7 @@ namespace Maps
         {
             std::vector<BuiltGrid> Grids;
             int64_t OrderScored = 0, OrderCut = 0;   // cell edges the border model scored and cut
+            int64_t CandidatePotential = 0;          // pairs of triangles sharing an edge (what MaxCandidates is compared with)
             bool CandidatesCapped = false;           // MaxCandidates was exceeded: no pairing was tried
             int64_t TrianglesLeftLone = 0;           // the triangles that stayed lone because of it (all of them when capped)
         };
@@ -258,6 +262,9 @@ namespace Maps
     {
         int InputTriangles = 0, ZeroAreaInput = 0, Meshes = 0, LoneTriangles = 0, Cells = 0, Covered = 0, Removed = 0, Missing = 0, Leftover = 0;
         double InputArea = 0, RemovedArea = 0, OutputArea = 0, OtherDiagonalArea = 0;
+        // cells whose two diagonals both have both halves among the input triangles (the surface was tessellated both ways): credited to two grids; and of them the cells whose four
+        // points are not planar (a mesh has no diagonal to choose, so the second tessellation is a different surface)
+        int CellsBothDiagonals = 0, CellsBothDiagonalsNonPlanar = 0;
         std::vector<CoverageLine> Lines;
 
         bool IsComplete() const { return Missing == 0 && Leftover == 0; }

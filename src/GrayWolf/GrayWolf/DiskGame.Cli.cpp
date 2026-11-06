@@ -48,6 +48,7 @@ namespace
         { "map_textures", "--map-textures", &CliOptions::MapTextures },
         { "map_cast", "--map-cast", &CliOptions::MapCast },
         { "map_radiant", "--map-radiant", &CliOptions::MapRadiant },
+        { "map_geometry_only", "--map-geometry-only", &CliOptions::MapGeometryOnly },
         { "material_gdt", "--material-gdt", &CliOptions::MaterialGdt },
         { "sound_aliases", "--sound-aliases", &CliOptions::SoundAliases },
         { "map_collision", "--map-collision", &CliOptions::MapCollision },

@@ -12,6 +12,7 @@
 #include "MapLive.h"
 #include "MapRadiantRules.h"
 #include "MapRadiantTextures.h"
+#include "MapRenderMeshes.h"
 #include "MapScene.h"
 
 #include <array>
@@ -71,6 +72,16 @@ namespace Maps
         // gave a noise yaw and roll; entity keys moved to graywolf_unresolved_<key>
         // patches whose front (as written) agrees with the vertex normals of the triangle, and does not
         size_t PatchesFacingNormal = 0, PatchesFacingAgainst = 0;
+        // the render meshes (MapRenderMeshes.h): what the mesher did with the drawn triangles, summed over every owner and kind; owners whose weld tolerance the
+        // measured distances gave, and owners where noise and spacing were not separated (tolerance 0)
+        RenderMeshCounters Mesh;
+        size_t OwnersWelded = 0, OwnersNotSeparated = 0;
+        double MeshTextMaxAbsT = 0;
+        size_t MeshMilliseconds = 0;   // wall time of the mesher (BuildRenderMeshes), all owners
+        // one block per material whose coverage failed (written to <map>.coverage.txt)
+        std::vector<std::string> CoverageLines;
+        // one line per owner and kind (<map>.meshes.txt): the triangles, the measured vertex distances and the weld tolerance they gave, and what the mesher made of them
+        std::vector<std::string> MeshLines;
         size_t Lights = 0, PlacementsPolar = 0, PlacementsPolarNoise = 0, KeysUnresolved = 0;
         // what was not written or not resolved, one line each (<map>.unresolved.txt)
         std::vector<std::string> Unresolved;

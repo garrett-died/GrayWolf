@@ -186,6 +186,12 @@
     <ClCompile Include="MapMesh.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MapRenderMeshes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MapRenderMeshesSelfTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="MapMeshSelfTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -378,6 +384,9 @@
       <Filter>Header Files\Packages</Filter>
     </ClInclude>
     <ClInclude Include="CoDIWIDecoder.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="MapRenderMeshes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="MapMesh.h">

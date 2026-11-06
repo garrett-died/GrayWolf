@@ -1499,7 +1499,8 @@ void ZonekitZone::ExportMap(const DiskGame::Context& C, DiskGame::Totals& T)
     std::set<std::string> Names;
     for (const auto& [From, To] : Renamed)
         if (!To.empty() && Scene.Images[From].Png.empty()) Names.insert(To);
-    if (ExporterOf(Kind::Image) != nullptr && !Names.empty()) ExportTextures(Names, C, T);
+    // (map_geometry_only: the textures are not written; their names stay in the scene)
+    if (ExporterOf(Kind::Image) != nullptr && !Names.empty() && DiskGame::MapGeometryOnly.Of(C.Settings) != "on") ExportTextures(Names, C, T);
 
     // the files the image kind wrote, then the scene in every enabled format (MapSceneExport.h)
     if (!Scene.Sky.Image.empty()) Scene.Sky.Image = Renamed[Scene.Sky.Image];

@@ -46,6 +46,11 @@ void AddSharedOptions(CLI::App& App, CliOptions& Options)
                    "on|off: also write the map as a Radiant source (<map>.map: the clip map's brushes, the entities, "
                    "misc_model placements; <map>_radiant/: the world and models as XMODEL_EXPORT, a GDT), for the mod tools")
         ->group("Shared options");
+    App.add_option("--map-geometry-only", Options.MapGeometryOnly,
+                   "on|off: a map export without its textures and without opening other zones for them (the .glb, the Radiant "
+                   "source and the other map files are written as usual, their texture names point at files that are not "
+                   "written); for measuring geometry (off)")
+        ->group("Shared options");
     App.add_option("--map-prefabs", Options.MapPrefabs,
                    "LIST: with --map-radiant on, each listed part of the map as a standalone map beside it "
                    "(<map>_prefab_<part>.map: a worldspawn and the part), the main map holding a misc_prefab for each "
