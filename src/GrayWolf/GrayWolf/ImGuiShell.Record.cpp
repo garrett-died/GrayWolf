@@ -116,6 +116,7 @@ namespace ShellUi
         nlohmann::json Camera;        // the camera step waiting for the selection to show
         bool Holding = false, Done = false, Failed = false;
         std::string Error, Timeline;
+        std::string PendingShot;      // ui-shot: the PNG's name the step asked for, written once the step has settled
         // per step, in real seconds: how long it took (its waits and holds) and how long Load Game
         // worked with no spinner or progress bar shown (steps.tsv, ux-check.py reads it)
         struct StepTime { std::string Label; double Start = 0, Seconds = 0, Silent = 0; };
@@ -168,7 +169,8 @@ namespace ShellUi
                 CloseStep();
                 Times.push_back({ St.value("label", "step " + std::to_string(Next)), Now() });
                 ViewportState& V = S.Viewport;
-                Settle = 3;
+                Settle = O.Shots ? 8 : 3;   // a shot waits for the panels to find their size
+                if (St.contains("demo")) AddDemoRows(S, St["demo"].get<int>());
                 if (St.contains("label"))
                     Timeline += std::to_string(Written) + "\t" + St["label"].get<std::string>() + "\n";
                 if (St.contains("type")) S.Assets.TypeFilter = TypeIndex(St["type"].get<std::string>());
@@ -180,6 +182,14 @@ namespace ShellUi
                     const int k = Find(S, Name, St.value("game", std::string()));
                     if (k < 0) Fail("not listed: " + Name);
                     else { S.MultiSel.clear(); LoadSelection(S, k); S.ScrollToSelected = true; }   // a plain click
+                }
+                if (St.contains("select_first"))   // the first row of a kind (the demo's names are made up)
+                {
+                    const int Kind = std::max(0, TypeIndex(St["select_first"].get<std::string>()) - 1);
+                    int k = 0;
+                    while (k < (int)S.Catalog.Models.size() && S.Catalog.Models[k].Kind != Kind) k++;
+                    if (k >= (int)S.Catalog.Models.size()) Fail("no row of kind " + St["select_first"].get<std::string>());
+                    else { S.MultiSel.clear(); LoadSelection(S, k); S.ScrollToSelected = true; }
                 }
                 if (St.contains("merge"))   // models shown as one, as Ctrl+clicks and Merge do
                 {
@@ -206,6 +216,11 @@ namespace ShellUi
                 if (St.contains("focus")) S.FocusWindow = St["focus"].get<std::string>();
                 if (St.contains("loadgame")) S.LoadGameScript = St["loadgame"].dump();
                 if (St.contains("wait")) WaitFrames = std::max(1, (int)std::lround(St["wait"].get<double>() * O.Fps));
+                if (O.Shots && St.contains("shot"))
+                {
+                    PendingShot = St["shot"].get<std::string>();
+                    WaitFrames = std::max(WaitFrames, 1);
+                }
             }
         }
     };
@@ -263,6 +278,9 @@ namespace ShellUi
         }
         // a held frame moves time on by next to nothing (ImGui wants a step above 0)
         ImGui::GetIO().DeltaTime = P->Holding || P->Next == 0 ? 1e-5f : 1.0f / (float)P->O.Fps;
+        // ui-shot: the owner's pointer is never seen (the hidden window is not the foreground one, and
+        // the backend does not read it then; this makes sure)
+        if (P->O.Shots) ImGui::GetIO().AddMousePosEvent(-FLT_MAX, -FLT_MAX);
         ViewportState& V = S.Viewport;
         if (!P->Holding && P->Camera.is_object())
         {
@@ -278,6 +296,29 @@ namespace ShellUi
     {
         if (P->Done) return true;
         if (P->Next == 0 || P->Holding) { P->Held++; return false; }
+
+        if (P->O.Shots)   // ui-shot: a PNG for a step that names one, none otherwise, no audio
+        {
+            if (!P->PendingShot.empty())
+            {
+                auto Shot = std::make_unique<DirectX::ScratchImage>();
+                ComPtr<ID3D11Texture2D> Pixels;
+                if (FAILED(Swap->GetBuffer(0, __uuidof(ID3D11Texture2D), &Pixels)) || FAILED(DirectX::CaptureTexture(P->Dev.Get(), P->Ctx.Get(), Pixels.Get(), *Shot)))
+                {
+                    P->Fail("capture of " + P->PendingShot + " failed");
+                    P->Done = true;
+                    return true;
+                }
+                P->Writer->Push(std::move(Shot), (std::filesystem::path(P->O.OutDir) / (P->PendingShot + ".png")).string());
+                P->Written++;
+                P->Timeline += std::to_string(P->Written) + "\t" + P->PendingShot + "\n";
+                P->PendingShot.clear();
+            }
+            P->WaitFrames--;
+            if (P->WaitFrames <= 0 && P->Next >= P->Steps.size()) P->Done = true;
+            else P->RunSteps(S);
+            return P->Done;
+        }
 
         auto Img = std::make_unique<DirectX::ScratchImage>();
         ComPtr<ID3D11Texture2D> Back;

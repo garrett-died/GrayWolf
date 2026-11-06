@@ -83,6 +83,9 @@ namespace ShellUi
         // Batch joins Models (a path already listed is skipped), its header reads queued. Returns
         // how many rows were sorted before (SortByName's SortedPrefix).
         size_t Merge(std::vector<Item>& Batch);
+        // Rows whose fields are complete as given: no file behind them, no header read queued (the demo
+        // list of ui-shot, ImGuiShell.Demo.cpp). Returns how many rows were sorted before, as Merge does.
+        size_t AddUnscanned(std::vector<Item>& Batch);
         // Sorted by name; the first SortedPrefix entries are sorted already: only the rest is, then merged in.
         void SortByName(size_t SortedPrefix);
         // The header readers and the folder walks stop (the app is closing).
@@ -259,6 +262,7 @@ namespace ShellUi
         int SelectWhenListedFrames = 0;   // given up after this many frames without it
         // ui-record: a window brought forward, a Load Game step (JSON), both applied in the next frame
         std::string FocusWindow, LoadGameScript;
+        bool DemoInstalls = false;      // ui-shot's demo: Load Game shows made-up installs (applied in the next frame)
         bool LoadGameWorking = false;   // Load Game's worker runs: ui-record holds its frames
         bool LoadGameIndicator = false; // and shows a spinner or progress bar for it (else a silent wait)
         size_t ShotSelected = 0; int ShotSelectWait = 0;   // ui-grid-shot --select: the names selected so far, frames left before the next
@@ -302,6 +306,13 @@ namespace ShellUi
     void LoadMerged(ShellState& S, const std::set<int>& Picks);
     // The Viewport window (dispatches on the selected asset kind).
     void DrawViewportPanel(ShellState& S);
+
+    // ImGuiShell.Demo.cpp: made-up rows for screenshots (ui-shot's "demo"), nothing on disk behind them
+    // Adds Count rows (models, images, sounds, anims, maps, effects) named from word lists.
+    void AddDemoRows(ShellState& S, int Count);
+    bool IsDemoRow(const Item& Row);
+    // Shows a demo row: a model or map as a sphere, an image as a gradient; other kinds show nothing.
+    void LoadDemoSelection(ShellState& S, int i);
 
     // ImGuiShell.Media.cpp
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> LoadImageSRV(ID3D11Device* Dev, const std::string& Path, const std::string& Ext, int& OutW, int& OutH);

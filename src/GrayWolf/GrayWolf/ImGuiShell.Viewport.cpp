@@ -477,6 +477,7 @@ namespace ShellUi
         V.AnimRigPaths.clear(); V.AnimRigLabel.clear(); V.AnimRigScore = 0; V.AnimRigManual = false;
         const Item& Sel = Models[i];
         if (Sel.Kind != 0 && Sel.Kind != 4) { V.Loader.Forget(); V.Mesh = GpuMesh{}; }
+        if (IsDemoRow(Sel)) { V.FxPanel.Unload(); LoadDemoSelection(S, i); return; }   // ui-shot's made-up rows
         if (Sel.Kind == 5) V.FxPanel.Load(Sel.Path); else V.FxPanel.Unload();
 
         if (Sel.Kind == 3) // anim: no mesh of its own - the model it plays on is picked for it (DrawAnimControls)

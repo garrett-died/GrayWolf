@@ -1,0 +1,6 @@
+{
+  "steps": [
+    { "demo": 240, "view": "list", "select_first": "model", "label": "library-model", "shot": "library-model" },
+    { "select_first": "image", "label": "library-image", "shot": "library-image" }
+  ]
+}

@@ -102,6 +102,8 @@ struct CliOptions
     std::string UiRecord;      // ui-record <dir>: the shell hidden, a script played, its frames + audio written (UiRecord.h)
     std::string UiRecordScript; // --script <json>: the steps
     int UiRecordFps = 30;      // --fps: frames a second
+    float UiShotDpi = 1.0f;    // ui-shot --dpi: the scale (1.0 = 100%, 1.5 = 150%)
+    std::string UiShot;      // ui-shot <script.json>: the shell hidden, one PNG per step that names a shot (--out, --size)
     std::string AnimRigs;      // anim-rigs <dir>: each anim's rig as the browser picks it (AnimRigs.h)
     bool AnimRigsNoFetch = false;   // --no-fetch: no reference model exported
     std::string AudioProbe;    // --audio-probe <file>: decode via AudioPlayer and print duration/rate/peaks

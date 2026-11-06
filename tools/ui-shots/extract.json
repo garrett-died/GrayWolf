@@ -1,0 +1,5 @@
+{
+  "steps": [
+    { "demo": 240, "view": "list", "select_first": "model", "label": "extract", "shot": "extract" }
+  ]
+}

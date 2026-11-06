@@ -73,10 +73,11 @@ namespace
     }
 
     // The fonts at the window's DPI and the shell's theme.
-    void SetUpFontsAndStyle(HWND Hwnd)
+    void SetUpFontsAndStyle(HWND Hwnd, float DpiOverride)
     {
         float Dpi = 1.0f;
-        if (HMODULE U = GetModuleHandleW(L"user32.dll"))
+        if (DpiOverride > 0.0f) Dpi = DpiOverride;   // ui-shot: the same pixels on every machine
+        else if (HMODULE U = GetModuleHandleW(L"user32.dll"))
         {
             using GetDpiFn = UINT(WINAPI*)(HWND);
             if (auto Fn = reinterpret_cast<GetDpiFn>(GetProcAddress(U, "GetDpiForWindow")))
@@ -164,7 +165,7 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.IniFilename = nullptr;
-    SetUpFontsAndStyle(Hwnd);
+    SetUpFontsAndStyle(Hwnd, Record ? Record->Dpi : 0.0f);
 
     ImGui_ImplWin32_Init(Hwnd);
     ImGui_ImplDX11_Init(Dev.Get(), Ctx.Get());
@@ -209,6 +210,7 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
             ImGui::SetWindowFocus(Id.c_str());
             S.FocusWindow.clear();
         }
+        if (S.DemoInstalls) { LoadGame.UseDemoInstalls(); S.DemoInstalls = false; }
         if (!S.LoadGameScript.empty()) { LoadGame.Script(S.LoadGameScript); S.LoadGameScript.clear(); }
         LoadGame.Draw(Dev.Get());
         S.LoadGameWorking = S.Recorder && LoadGame.Working();

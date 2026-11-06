@@ -46,6 +46,9 @@ public:
     // opened), dismiss (each true), languages (the languages exported: "auto", "all", "auto,en"),
     // languages_open (true: their list dropped down, in the options popup)
     void Script(const std::string& StepJson);
+    // ui-shot's demo: made-up installs on the tiles instead of a scan of this machine (nothing is
+    // looked up, no game is read), so a screenshot shows nothing of the machine it was taken on
+    void UseDemoInstalls();
     // A worker runs or is about to (the zone list not read yet): ui-record holds its frames meanwhile
     bool Working();
     // A spinner or a progress bar was drawn this frame: ui-record times the waits without one

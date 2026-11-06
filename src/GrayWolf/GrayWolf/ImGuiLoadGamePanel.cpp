@@ -88,6 +88,29 @@ void LoadGamePanel::DoScan()
         : (std::to_string(Installs.size()) + " game(s) detected");
 }
 
+void LoadGamePanel::UseDemoInstalls()
+{
+    std::vector<GameInstalls::Install> Fake;
+    const auto& Readers = DiskGame::Games();
+    const char* Names[] = { "Sample Game One", "Sample Game Two", "Sample Game Three" };
+    const char* Sources[] = { "Steam", "Battle.net", "Xbox" };
+    for (size_t i = 0; i < 3 && i < Readers.size(); i++)
+    {
+        GameInstalls::Install I;
+        I.Path = std::string("C:\\Demo\\") + Names[i];
+        I.Display = I.Label = Names[i];
+        I.DiskId = Readers[i]->Id();
+        I.Source = Sources[i];
+        Fake.push_back(std::move(I));
+    }
+    std::lock_guard<std::mutex> Lock(Mutex);
+    Installs = std::move(Fake);
+    InstallIndex = -1;
+    ScannedOnce = true;
+    AutoScanStarted = true;
+    Status = "3 game(s) detected";
+}
+
 void LoadGamePanel::ApplyInstall(const GameInstalls::Install& I)
 {
     SetBuf(GameBuf, sizeof(GameBuf), I.Path);
