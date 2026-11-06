@@ -259,6 +259,14 @@
     <ClCompile Include="XAnimBinReader.cpp" />
     <ClCompile Include="SkeletalPreview.cpp" />
     <ClCompile Include="ImGuiShell*.cpp" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(Configuration)'=='Dev'">
+    <!-- test hooks (environment variables the exit and window tests set) exist in Dev and DevAsan builds only -->
+    <ClCompile Update="ImGuiShell.GameBadges.cpp;ImGuiShell.Windows.cpp">
+      <PreprocessorDefinitions>GW_TEST_HOOKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
     <ClCompile Include="AudioPlayer.cpp" />
     <ClCompile Include="CerberusCrypto.cpp" />
     <ClCompile Include="LuaExport.cpp" />

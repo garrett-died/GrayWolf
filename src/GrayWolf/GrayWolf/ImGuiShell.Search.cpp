@@ -25,6 +25,8 @@ namespace ShellUi
                 return Kind >= 0 && Kind < 7 ? Names[Kind] : "";
             }
 
+            bool IsKey(const std::string& Key) { return Key == "name" || Key == "type" || Key == "game" || Key == "format"; }
+
             // the text of the column a term names (lowered by the caller)
             std::string Column(const std::string& Key, const Item& It)
             {
@@ -44,16 +46,19 @@ namespace ShellUi
                 while (i < Text.size() && std::isspace((unsigned char)Text[i])) i++;
                 if (i >= Text.size()) break;
                 Term T;
+                T.Begin = i;
                 if (Text[i] == '!') { T.Negated = true; i++; }
-                // key:  (only a known column's name, so "a:b" in a name still searches for the text)
-                const size_t Colon = Text.find(':', i);
-                if (Colon != std::string::npos && Colon > i)
+                // key:  (only a known column's name straight before a colon, so "a:b" in a name, or a colon in
+                // a later term, still searches for the text)
+                size_t Letters = i;
+                while (Letters < Text.size() && std::isalpha((unsigned char)Text[Letters])) Letters++;
+                if (Letters > i && Letters < Text.size() && Text[Letters] == ':')
                 {
-                    const std::string Key = Lowered(Text.substr(i, Colon - i));
-                    if (Key == "name" || Key == "type" || Key == "game" || Key == "format")
+                    const std::string Key = Lowered(Text.substr(i, Letters - i));
+                    if (IsKey(Key))
                     {
                         T.Key = Key;
-                        i = Colon + 1;
+                        i = Letters + 1;
                         if (i < Text.size() && Text[i] == '!') { T.Negated = !T.Negated; i++; }   // type:!weapon
                     }
                 }
@@ -72,7 +77,9 @@ namespace ShellUi
                     i = j;
                 }
                 if (T.Key.empty()) T.Key = "name";
-                if (!T.Value.empty()) Q.Terms.push_back(std::move(T));
+                T.End = i;
+                T.Empty = T.Value.empty();
+                if (!T.Empty || T.Key != "name" || T.Negated) Q.Terms.push_back(std::move(T));   // "type:" and "!" are kept; blanks are not
             }
             return Q;
         }
@@ -83,6 +90,7 @@ namespace ShellUi
             std::vector<std::string> ExactKeys;
             for (const Term& T : Q.Terms)
             {
+                if (T.Empty) continue;
                 const std::string Text = Lowered(Column(T.Key, It));
                 const bool Hit = T.Exact ? Text == T.Value : Text.find(T.Value) != std::string::npos;
                 if (T.Negated) { if (Hit) return false; continue; }
@@ -117,6 +125,13 @@ namespace ShellUi
             Item Odd; Odd.Name = "xa:by";
             Check(M("a:b", Odd), "an unknown key is searched as text");
             Check(Parse("   ").Terms.empty(), "blank has no terms");
+            Check(M("type:", Crate) && Parse("type:").Terms.size() == 1, "a key with nothing after it matches everything and is kept");
+            // the terms keep their place in the text, one cutting for the search and the Filters panel
+            const std::string Odd2 = "a\"b type:image";
+            const Query Cut = Parse(Odd2);
+            Check(Cut.Terms.size() == 2 && Odd2.substr(Cut.Terms[0].Begin, Cut.Terms[0].End - Cut.Terms[0].Begin) == "a\"b" && Cut.Terms[1].Key == "type", "a quote inside a word does not open a quoted term");
+            const Query Spaced = Parse("x \"two words\" type:\"image\"");
+            Check(Spaced.Terms.size() == 3 && Spaced.Terms[1].Value == "two words" && Spaced.Terms[2].Exact, "a quoted term keeps its spaces");
             (void)Gun;
             return Ok;
         }

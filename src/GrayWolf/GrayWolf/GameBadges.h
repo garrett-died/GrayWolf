@@ -15,8 +15,11 @@ namespace GameBadges
     // No look for installs on this machine: every game gets its initials (ui-shot's demo shows nothing of the
     // machine it runs on, and starts no thread that could outlive it)
     void NoInstallLookup();
-    // Waits for the install lookup if one runs (the shell calls it before it exits)
+    // Waits for the install lookup if one runs, up to 2 s (the shell calls it before it exits); a lookup still
+    // running then is left to finish alone, on state of its own
     void Shutdown();
+    // ui-selftest: the exit is bounded when the lookup is held up (Dev builds only; true, and nothing run, otherwise)
+    bool SelfTest(std::string& Report);
     // "Call of Duty: Black Ops Cold War"; the id itself when no reader has it
     std::string Title(const std::string& Id);
     // the title without "Call of Duty: " ("Black Ops Cold War"), for a narrow column or a list

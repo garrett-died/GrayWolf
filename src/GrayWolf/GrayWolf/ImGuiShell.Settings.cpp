@@ -8,6 +8,7 @@
 #include "ImGuiShell.Internal.h"
 #include "AppLog.h"
 #include "ExportNaming.h"
+#include "GameBadges.h"
 #include "FileSystems.h"
 #include "ImGuiDialogs.h"
 #include "ImGuiBlender.h"
@@ -292,6 +293,15 @@ namespace ShellUi
                 ImGui::Spacing();
             }
 
+            // The settings a list, an index or an export reads while it runs: the Export section (folder,
+            // languages, formats), the games' choices and the helper programs. The page locks them
+            // while a worker runs; the look, Blender, screenshots, updates and logs are not read.
+            bool ReadByRun(const Entry& E)
+            {
+                const std::string_view Section = E.Section, Group = E.Group;
+                return Section == "Export" || Section == "Games and maps" || (Section == "Tools" && Group == "Helper programs");
+            }
+
             std::string ValueOf(const Entry& E) { return SettingsManager::GetSetting(E.Key, E.Default); }
 
             void DrawChoice(const Entry& E)
@@ -453,6 +463,10 @@ namespace ShellUi
             ImGui::Separator();
 
             const std::string Query = S.SettingsQuery;
+            const bool Locked = LoadGame.WorkerRuns();
+            if (Locked)
+                ImGui::TextColored(Theme::AccentText, "An export or a load is running. The export settings, the games' choices and the helper "
+                                                "programs are locked until it ends, so they cannot change a run under way.");
             // a column of readable width, centred; its scrollbar at its own edge
             const float Width = std::min(ImGui::GetContentRegionAvail().x - Em, Em * 52.0f);
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - Width) * 0.5f));
@@ -490,6 +504,8 @@ namespace ShellUi
                 }
                 if (!GroupOpen) continue;
                 ImGui::PushID((int)i);
+                const bool Lock = Locked && ReadByRun(E);
+                if (Lock) ImGui::BeginDisabled();
                 switch (E.K)
                 {
                 case Kind::Toggle:
@@ -510,6 +526,7 @@ namespace ShellUi
                     DrawCustom(E, S, LoadGame, Width);
                     break;
                 }
+                if (Lock) ImGui::EndDisabled();
                 // the plain explanation, under the control (the games' own settings carry theirs as well)
                 HelpLine(E.Help, Width);
                 ImGui::PopID();
@@ -530,6 +547,7 @@ bool UiSelfTest(std::string& Report)
 {
     const bool Settings = ShellUi::SettingsPage::SelfTest(Report);
     const bool Search = ShellUi::Search::SelfTest(Report);
+    const bool Windows = ShellUi::WindowSelfTest(Report) && GameBadges::SelfTest(Report);
     // the Filters panel's types and the search box's type: terms are one state
     bool Types = true;
     {
@@ -540,9 +558,38 @@ bool UiSelfTest(std::string& Report)
         if (ShellUi::TypeMaskOf(A.Filter) != 0x03 || Wrote.find("crate") != 0 || Wrote.find("!type") != std::string::npos) { Types = false; Report += "FAIL type terms rewritten from the panel\n"; }
         std::snprintf(A.Filter, sizeof(A.Filter), "%s", "type:anim");
         if (ShellUi::TypeMaskOf(A.Filter) != 0x08) { Types = false; Report += "FAIL a typed search ticks its type\n"; }
+        // one cutting for the box and the panel: a quote inside a word is not a quoted term
+        std::snprintf(A.Filter, sizeof(A.Filter), "%s", "a\"b type:image");
+        if (ShellUi::TypeMaskOf(A.Filter) != 0x02) { Types = false; Report += "FAIL a quote inside a word hides the type term\n"; }
+        ShellUi::SetTypeMask(A, 0x01);
+        if (std::string(A.Filter) != "a\"b type:\"model\"") { Types = false; Report += std::string("FAIL the word with a quote is kept: ") + A.Filter + "\n"; }
+        // a type that does not exist is not "all types"
+        std::snprintf(A.Filter, sizeof(A.Filter), "%s", "type:foo");
+        {
+            const ShellUi::TypeSelection Sel = ShellUi::TypeSelectionOf(A.Filter);
+            if (!Sel.Named || !Sel.Impossible || Sel.Mask != 0 || Sel.Why.find("type:foo is not a type") != 0) { Types = false; Report += "FAIL an unknown type says why\n"; }
+        }
+        std::snprintf(A.Filter, sizeof(A.Filter), "%s", "type:image !type:image");
+        {
+            const ShellUi::TypeSelection Sel = ShellUi::TypeSelectionOf(A.Filter);
+            if (!Sel.Impossible || Sel.Why.find("exclude") == std::string::npos) { Types = false; Report += "FAIL excluded types say why\n"; }
+            ShellUi::SetTypeMask(A, 0);
+            if (A.Filter[0] != 0 || ShellUi::TypeSelectionOf(A.Filter).Named) { Types = false; Report += "FAIL the type terms can be cleared\n"; }
+        }
+        std::snprintf(A.Filter, sizeof(A.Filter), "%s", "!type:foo");
+        if (ShellUi::TypeSelectionOf(A.Filter).Impossible || ShellUi::TypeMaskOf(A.Filter) != 0) { Types = false; Report += "FAIL excluding a type that does not exist excludes nothing\n"; }
+        // the box is never cut: text that would not fit is left as it was
+        {
+            std::string Long(sizeof(A.Filter) - 20, 'w');
+            std::snprintf(A.Filter, sizeof(A.Filter), "%s", Long.c_str());
+            const bool Fit = ShellUi::SetTypeMask(A, 0x7F);
+            if (Fit || std::string(A.Filter) != Long) { Types = false; Report += "FAIL type terms that do not fit are cut into the box\n"; }
+            if (!ShellUi::SetTypeMask(A, 0) || std::string(A.Filter) != Long) { Types = false; Report += "FAIL clearing leaves the other terms\n"; }
+        }
+        std::snprintf(A.Filter, sizeof(A.Filter), "%s", "type:anim");
         ShellUi::SetTypeMask(A, 0);
         if (ShellUi::TypeMaskOf(A.Filter) != 0 || A.Filter[0] != 0) { Types = false; Report += "FAIL All types clears the terms\n"; }
     }
     const bool Text = ShellUi::TextViewer::SelfTest(Report);
-    return Settings && Search && Text && Types;
+    return Settings && Search && Windows && Text && Types;
 }

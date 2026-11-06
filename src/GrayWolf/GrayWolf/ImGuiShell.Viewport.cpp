@@ -510,9 +510,9 @@ namespace ShellUi
             AppLog::Timer Decode("audio decode");
             V.Audio.Load(Sel.Path, Sel.Format);
         }
-        else if (Sel.Kind == 6) // text: read at once (the first 4 MB)
+        else if (Sel.Kind == 6) // text: read on a worker (the first 4 MB), the last few kept
         {
-            V.Text.LoadFile(Sel.Path, Sel.Format);
+            V.Text.Request(Sel.Path, Sel.Format);
         }
         else if (Sel.Kind == 4) // map: one standalone .glb scene, no multi-part assembly
         {
@@ -612,7 +612,7 @@ namespace ShellUi
             DrawAudioPlayer(V.Audio, S.Catalog.Models[S.Selected].Format);
         }
         else if (SelKind == 5) V.FxPanel.Draw(); // an effect: FxPreviewPanel
-        else if (SelKind == 6) { if (V.Text.Loaded()) V.Text.Draw(); else ImGui::TextDisabled("Could not read this file"); }
+        else if (SelKind == 6) V.Text.Draw();   // reading, or the document, or why not
         else if (SelKind == 3) {} // anim with no model picked yet (or it failed to load) - the picker
                                    // UI above already covers this; nothing more to show here.
         else DrawEmptyView();

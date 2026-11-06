@@ -341,10 +341,13 @@ void LoadGamePanel::DoDiskExport()
 {
     WraithX::InitializeAPI();
     const DiskGame::IDiskGame& Game = *Disk;
-    const std::string Install = GameBuf;
-    const DiskGame::ExportOptions Options = DiskOptions(Game, Install);
+    // everything this run reads of the panel was copied by StartExport (Run*), so a control edited
+    // meanwhile cannot change a run under way; the Settings page also locks the settings the export
+    // reads from the settings file (SettingsPage::ReadByRun)
+    const std::string Install = RunInstall;
+    const DiskGame::ExportOptions Options = RunOptions;
     DiskGame::Context C;
-    C.OutRoot = (fs::path(AbsoluteFolder(DiskOutBuf)) / Game.Id()).string();
+    C.OutRoot = (fs::path(AbsoluteFolder(RunOut.c_str())) / Game.Id()).string();
     if (ExportOnly)
     {
         C.Only = ExportOnly;
@@ -352,10 +355,10 @@ void LoadGamePanel::DoDiskExport()
     }
     else
     {
-        if (Game.FiltersByName()) C.NameFilter = DiskNameFilterBuf;
+        if (Game.FiltersByName()) C.NameFilter = RunNameFilter;
         const std::set<DiskGame::Kind> Exported = Game.Kinds();
-        for (size_t i = 0; i < DiskKindFlags.size(); i++)
-            if (DiskKindFlags[i] && Exported.count(DiskGame::AllKinds()[i])) C.Kinds.insert(DiskGame::AllKinds()[i]);
+        for (size_t i = 0; i < RunKindFlags.size(); i++)
+            if (RunKindFlags[i] && Exported.count(DiskGame::AllKinds()[i])) C.Kinds.insert(DiskGame::AllKinds()[i]);
     }
     {
         std::lock_guard<std::mutex> Lk(Mutex);
@@ -952,6 +955,12 @@ void LoadGamePanel::StartExport()
     else
         for (size_t i = 0; i < DiskZoneNames.size(); i++)
             if (DiskZoneFlags[i]) DiskZonesToExport.push_back(DiskZoneNames[i]);
+    // the worker's copy of what the run reads (see DoDiskExport)
+    RunInstall = GameBuf;
+    RunOut = DiskOutBuf;
+    RunNameFilter = DiskNameFilterBuf;
+    RunKindFlags = DiskKindFlags;
+    RunOptions = DiskOptions(*Disk, RunInstall);
     DiskCancel.store(false);
     DiskStartedAt = ImGui::GetTime();
     StartWork(ExportLabel, &LoadGamePanel::DoDiskExport);

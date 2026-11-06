@@ -9,6 +9,7 @@
 #include "imgui.h"
 
 #include <atomic>
+#include <algorithm>
 #include <cctype>
 #include <map>
 #include <memory>
@@ -19,16 +20,24 @@ namespace GameBadges
 {
     namespace
     {
-        // the exe of an install of each reader id, filled once by a worker. The worker is joined (Shutdown, or
-        // the destructor): it reads the install tables' statics, which a detached thread would still be reading
-        // while they were destroyed at the program's end (an ASan finding)
+        // the exe of an install of each reader id, filled once by a worker. The state is shared with the
+        // worker (a shared_ptr it holds), so it stays alive for as long as the lookup runs, whatever the
+        // program does meanwhile. Shutdown waits for the worker a little, then lets it go (see there); the
+        // destructor joins it when the lookup is over by then (the install tables' statics it reads would
+        // otherwise be destroyed under a thread still reading them: an ASan finding)
         struct Exes
         {
             std::mutex Lock;
             std::map<std::string, std::string> ById, ByPath;
-            std::atomic<bool> Started{ false }, Done{ false };
+            std::atomic<bool> Started{ false }, Done{ false }, Stop{ false };
             std::thread Worker;
-            ~Exes() { if (Worker.joinable()) Worker.join(); }
+            ~Exes()
+            {
+                // the last holder may be the worker itself (it outlived the program's statics): it cannot join itself
+                if (!Worker.joinable()) return;
+                if (Worker.get_id() != std::this_thread::get_id() && Done.load()) Worker.join();
+                else Worker.detach();
+            }
         };
 
         std::atomic<bool>& NoLookup()
@@ -37,30 +46,37 @@ namespace GameBadges
             return Off;
         }
 
-        Exes& State()
+        // shared with the worker: the state lives for as long as either the program's statics or the worker hold it
+        const std::shared_ptr<Exes>& StatePtr()
         {
-            static Exes E;
+            static const std::shared_ptr<Exes> E = std::make_shared<Exes>();
             return E;
         }
+
+        Exes& State() { return *StatePtr(); }
 
         Exes& Found()
         {
             Exes& E = State();
             if (NoLookup().load() && !E.Started.exchange(true)) { E.Done = true; return E; }
             if (!E.Started.exchange(true))
-                E.Worker = std::thread([] {
-                    // the exit-time test (ASan): the lookup is held up so the program ends while it runs
+                E.Worker = std::thread([Self = StatePtr()] {
+#ifdef GW_TEST_HOOKS
+                    // the exit-time test (Dev builds only): the lookup is held up so the program ends while it runs
                     char Ms[16] = {};
-                    if (GetEnvironmentVariableA("GRAYWOLF_TEST_BADGE_DELAY_MS", Ms, sizeof(Ms)) > 0) Sleep((DWORD)std::atoi(Ms));
+                    if (GetEnvironmentVariableA("GRAYWOLF_TEST_BADGE_DELAY_MS", Ms, sizeof(Ms)) > 0)
+                        for (long Left = std::max(0, std::atoi(Ms)); Left > 0 && !Self->Stop.load(); Left -= 20) Sleep(20);
+#endif
                     for (const auto& I : GameInstalls::Detect())
                     {
+                        if (Self->Stop.load()) break;
                         const std::string Exe = GameInstalls::GameExe(I.Path);
                         if (Exe.empty()) continue;
-                        std::lock_guard<std::mutex> Guard(Found().Lock);
-                        Found().ByPath.emplace(I.Path, Exe);
-                        if (!I.DiskId.empty()) Found().ById.emplace(I.DiskId, Exe);   // the first install of a game stands for it
+                        std::lock_guard<std::mutex> Guard(Self->Lock);
+                        Self->ByPath.emplace(I.Path, Exe);
+                        if (!I.DiskId.empty()) Self->ById.emplace(I.DiskId, Exe);   // the first install of a game stands for it
                     }
-                    Found().Done = true;
+                    Self->Done = true;
                 });
             return E;
         }
@@ -89,7 +105,36 @@ namespace GameBadges
     void Shutdown()
     {
         Exes& E = State();   // not Found(): that would start the lookup
-        if (E.Worker.joinable()) E.Worker.join();
+        if (!E.Worker.joinable()) return;
+        // the lookup cannot be cancelled in the middle of a call (a sleeping or network drive can hold it
+        // for long): asked to stop, it is waited for 2 s, then left to finish alone. It only fills this
+        // state, which is never freed, so the exit does not hang and nothing is freed under it.
+        E.Stop = true;
+        for (int Waited = 0; Waited < 100 && !E.Done.load(); Waited++) Sleep(20);
+        if (E.Done.load()) E.Worker.join();
+        else E.Worker.detach();
+    }
+
+    bool SelfTest(std::string& Report)
+    {
+#ifdef GW_TEST_HOOKS
+        // the lookup held up for a minute: Shutdown must still return in a few seconds
+        _putenv_s("GRAYWOLF_TEST_BADGE_DELAY_MS", "60000");
+        (void)Icon(nullptr, "none");   // starts the lookup
+        const ULONGLONG Start = GetTickCount64();
+        Shutdown();
+        const ULONGLONG Took = GetTickCount64() - Start;
+        _putenv_s("GRAYWOLF_TEST_BADGE_DELAY_MS", "");
+        if (Took > 4000)
+        {
+            Report += "FAIL GameBadges::Shutdown waited " + std::to_string(Took) + " ms for a held-up lookup\n";
+            return false;
+        }
+        Report += "badges shutdown with the lookup held up: " + std::to_string(Took) + " ms\n";
+#else
+        (void)Report;
+#endif
+        return true;
     }
 
     std::string Title(const std::string& Id)

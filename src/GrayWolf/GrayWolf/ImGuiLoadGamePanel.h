@@ -59,6 +59,9 @@ public:
     bool ConsumeSettingsRequest() { return SettingsRequested.exchange(false); }
     // A worker runs or is about to (the zone list not read yet): ui-record holds its frames meanwhile
     bool Working();
+    // A worker (a list, an index, a size sample or an export) is running: the Settings page locks
+    // the settings it reads
+    bool WorkerRuns() const { return Busy.load(); }
     // A spinner or a progress bar was drawn this frame: ui-record times the waits without one
     bool ShowedProgress() const { return DrewIndicator; }
 
@@ -188,6 +191,10 @@ private:
     char DiskZoneFilterBuf[128]{};
     char DiskNameFilterBuf[256]{};               // Context::NameFilter, saved
     std::vector<std::string> DiskZonesToExport;  // snapshotted for the worker
+    // what the export worker reads of the panel, copied by StartExport on the UI thread
+    std::string RunInstall, RunOut, RunNameFilter;
+    std::vector<uint8_t> RunKindFlags;
+    DiskGame::ExportOptions RunOptions;
     std::string DiskExportedTo;                  // <out>/<game id> of the last export
     std::atomic<bool> DiskCancel{false};
     std::atomic<bool> DiskJustFinished{false};

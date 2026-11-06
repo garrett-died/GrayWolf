@@ -142,7 +142,7 @@ namespace ShellUi
     // The Assets tab's own state: the filters, the presets, the rows shown, the list or the grid.
     struct AssetsTab
     {
-        char Filter[128] = "";
+        char Filter[512] = "";
         int SortCol = 0; bool SortAsc = true;
         // Numeric filters (0 = unbounded on that side).
         int fMinBones=0, fMaxBones=0, fMinMeshes=0, fMaxMeshes=0, fMinMats=0, fMaxMats=0, fMinKB=0, fMaxKB=0;
@@ -308,7 +308,14 @@ namespace ShellUi
     // The types the search text names with type: terms (a bit per Item::Kind; 0: none, so every type), and the
     // text rewritten for a set of them (the Filters panel and the search box are the same state)
     unsigned TypeMaskOf(const std::string& Text);
-    void SetTypeMask(AssetsTab& A, unsigned Mask);
+    // What the type: terms of the search come to. Named: there are some. Impossible: they name no type
+    // that exists, or exclude each other, so nothing can match (the mask is 0 then, which must not be read as
+    // "every type"); Why says so in words.
+    struct TypeSelection { bool Named = false, Impossible = false; unsigned Mask = 0; std::string Why; };
+    TypeSelection TypeSelectionOf(const std::string& Text);
+    // Rewrites the search text's type: terms for Mask (0: none). False, and the text unchanged, when the
+    // result would not fit the box.
+    bool SetTypeMask(AssetsTab& A, unsigned Mask);
     void SetTypeFilter(AssetsTab& A, int Index);   // 0 all, else 1 + Item::Kind (ui-shot's type, ui-grid-shot --type)
     std::string FormatSize(long long Bytes);
     void RefreshPresets(AssetsTab& A);
@@ -346,7 +353,9 @@ namespace ShellUi
     // ImGuiShell.Search.cpp: the search box's grammar (term, key:term, "exact", !not)
     namespace Search
     {
-        struct Term { std::string Key, Value; bool Negated = false, Exact = false; };
+        // Begin..End: the term as typed (with its ! and key), so the Filters panel can rewrite the text with the same
+        // cutting; Empty: a key or ! with nothing after it ("type:"), kept for that and never matched
+        struct Term { std::string Key, Value; bool Negated = false, Exact = false, Empty = false; size_t Begin = 0, End = 0; };
         struct Query { std::vector<Term> Terms; };
         Query Parse(const std::string& Text);
         bool Matches(const Query& Q, const Item& It);
@@ -355,6 +364,11 @@ namespace ShellUi
 
     // ImGuiShell.Windows.cpp: floating windows kept inside the main window
     void KeepWindowsVisible();   // once a frame, after NewFrame
+    // Where a floating window goes: the pure part of KeepWindowsVisible (ui-selftest checks it)
+    struct WindowPlan { ImVec2 Pos, Size; };
+    ImVec2 FittedSize(const ImVec2& Wanted, const ImVec2& WorkMin, const ImVec2& WorkMax);
+    WindowPlan PlanWindow(const ImVec2& Pos, const ImVec2& Size, const ImVec2& Wanted, const ImVec2& WorkMin, const ImVec2& WorkMax, bool Dragging);
+    bool WindowSelfTest(std::string& Report);
     std::vector<std::string> HiddenWindows();   // the floating windows whose title bar is out of sight now
 
     // ImGuiShell.Demo.cpp: made-up rows for screenshots (ui-shot's "demo"), nothing on disk behind them

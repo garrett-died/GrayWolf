@@ -19,6 +19,7 @@
 #include <intrin.h>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -75,40 +76,27 @@ namespace ShellUi
         const char* const TypeKey[TypeCount] = { "model", "image", "audio", "anim", "map", "fx", "text" };
         const char* const TypeLabel[TypeCount] = { "Models", "Images", "Audio", "Anims", "Maps", "FX", "Text" };
 
-        // The search text cut into its terms (a quoted value keeps its spaces)
-        std::vector<std::string> TermsOf(const std::string& Text)
+        // The search text cut into its terms by the search's own parser (Search::Parse), so the box and the
+        // Filters panel never disagree on what a quote does. A type: term is one whose key is type.
+        struct SplitTerm { std::string Text; bool IsType; };
+        std::vector<SplitTerm> TermsOf(const std::string& Text)
         {
-            std::vector<std::string> Out;
-            std::string Cur;
-            bool Quoted = false;
-            for (const char C : Text)
-            {
-                if (C == '"') Quoted = !Quoted;
-                if (std::isspace((unsigned char)C) && !Quoted)
-                {
-                    if (!Cur.empty()) Out.push_back(std::move(Cur));
-                    Cur.clear();
-                }
-                else Cur += C;
-            }
-            if (!Cur.empty()) Out.push_back(std::move(Cur));
+            std::vector<SplitTerm> Out;
+            for (const Search::Term& T : Search::Parse(Text).Terms)
+                Out.push_back({ Text.substr(T.Begin, T.End - T.Begin), T.Key == "type" });
             return Out;
-        }
-
-        bool IsTypeTerm(const std::string& Term)
-        {
-            const std::string L = ExportNaming::Lower(Term);
-            return L.rfind("type:", 0) == 0 || L.rfind("!type:", 0) == 0;
         }
     }
 
-    unsigned TypeMaskOf(const std::string& Text)
+    TypeSelection TypeSelectionOf(const std::string& Text)
     {
-        std::string Only;
-        for (const std::string& T : TermsOf(Text))
-            if (IsTypeTerm(T)) Only += T + " ";
-        const Search::Query Q = Search::Parse(Only);
-        if (Q.Terms.empty()) return 0;
+        TypeSelection Sel;
+        const Search::Query All = Search::Parse(Text);
+        Search::Query Q;
+        for (const Search::Term& T : All.Terms)
+            if (T.Key == "type") Q.Terms.push_back(T);
+        if (Q.Terms.empty()) return Sel;
+        Sel.Named = true;
         unsigned Mask = 0;
         for (int k = 0; k < TypeCount; k++)
         {
@@ -116,17 +104,38 @@ namespace ShellUi
             It.Kind = k;
             if (Search::Matches(Q, It)) Mask |= 1u << k;
         }
-        return Mask == (1u << TypeCount) - 1 ? 0 : Mask;
+        if (Mask == 0)
+        {
+            Sel.Impossible = true;
+            std::string Known;
+            for (int k = 0; k < TypeCount; k++) Known += std::string(k ? ", " : "") + TypeKey[k];
+            // a value that is no type at all, else terms that exclude one another
+            for (const Search::Term& T : Q.Terms)
+            {
+                if (T.Negated || T.Empty) continue;
+                bool Any = false;
+                for (int k = 0; k < TypeCount; k++) Any = Any || ExportNaming::Lower(TypeKey[k]).find(T.Value) != std::string::npos;
+                if (!Any) { Sel.Why = "type:" + T.Value + " is not a type (the types are " + Known + ")"; break; }
+            }
+            if (Sel.Why.empty())
+                Sel.Why = "the type: terms in the search exclude every type (use type:\"a\" type:\"b\" in quotes to allow either)";
+        }
+        else Sel.Mask = Mask == (1u << TypeCount) - 1 ? 0 : Mask;
+        return Sel;
     }
 
-    void SetTypeMask(AssetsTab& A, unsigned Mask)
+    unsigned TypeMaskOf(const std::string& Text) { return TypeSelectionOf(Text).Mask; }
+
+    bool SetTypeMask(AssetsTab& A, unsigned Mask)
     {
         std::string Out;
-        for (const std::string& T : TermsOf(A.Filter))
-            if (!IsTypeTerm(T)) Out += (Out.empty() ? "" : " ") + T;
+        for (const SplitTerm& T : TermsOf(A.Filter))
+            if (!T.IsType) Out += (Out.empty() ? "" : " ") + T.Text;
         for (int k = 0; k < TypeCount; k++)
             if (Mask & (1u << k)) Out += std::string(Out.empty() ? "" : " ") + "type:\"" + TypeKey[k] + "\"";
-        std::snprintf(A.Filter, sizeof(A.Filter), "%s", Out.c_str());
+        if (Out.size() >= sizeof(A.Filter)) return false;   // would not fit: left as it is, never cut
+        std::memcpy(A.Filter, Out.c_str(), Out.size() + 1);
+        return true;
     }
 
     void SetTypeFilter(AssetsTab& A, int Index)
@@ -415,7 +424,8 @@ namespace ShellUi
             AssetsTab& A = S.Assets;
             DrawGameFilter(S);
             if (A.Games.size() >= 2 || !A.GameFilter.empty()) ImGui::SameLine();
-            const unsigned Types = TypeMaskOf(A.Filter);
+            const TypeSelection TypeSel = TypeSelectionOf(A.Filter);
+            const unsigned Types = TypeSel.Mask;
             const int TypesOn = (int)__popcnt(Types);
             const int Set = (A.HideModelTextures ? 1 : 0) + (A.fMinBones > 0) + (A.fMaxBones > 0) + (A.fMinMeshes > 0) + (A.fMaxMeshes > 0)
                           + (A.fMinMats > 0) + (A.fMaxMats > 0) + (A.fMinKB > 0) + (A.fMaxKB > 0);
@@ -424,9 +434,10 @@ namespace ShellUi
                 for (int k = 0; k < TypeCount; k++)
                     if (Types & (1u << k)) Label += std::string("  \xC2\xB7  ") + TypeLabel[k];
             if (TypesOn > 1) Label += "  \xC2\xB7  " + std::to_string(TypesOn) + " types";
+            if (TypeSel.Impossible) Label += "  \xC2\xB7  no such type";
             if (Set) Label += "  \xC2\xB7  " + std::to_string(Set) + " more";
             Label += "###filters";
-            const bool Clicked = Theme::Pill(Label.c_str(), Set > 0 || TypesOn > 0);
+            const bool Clicked = Theme::Pill(Label.c_str(), Set > 0 || TypesOn > 0 || TypeSel.Impossible);
             const ImVec2 Below(ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y);   // the panel opens under its button
             if (Clicked) ImGui::OpenPopup("filters_popup");
             if (std::exchange(S.FiltersOpenRequest, false)) ImGui::OpenPopup("filters_popup");   // ui-shot: shown open
@@ -445,11 +456,19 @@ namespace ShellUi
                     const std::string Item = std::string(TypeLabel[k]) + "  (" + std::to_string(Counts[(size_t)k]) + ")##type" + std::to_string(k);
                     if (ImGui::Checkbox(Item.c_str(), &On)) { if (On) Mask |= 1u << k; else Mask &= ~(1u << k); SetTypeMask(A, Mask); }
                 }
-                ImGui::BeginDisabled(Types == 0);
+                ImGui::BeginDisabled(Types == 0 && !TypeSel.Impossible);
                 if (ImGui::SmallButton("All types")) SetTypeMask(A, 0);
                 ImGui::EndDisabled();
                 ImGui::SameLine();
                 ImGui::TextDisabled("(none ticked: every type; this writes type: into the search box)");
+                if (TypeSel.Impossible)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, Theme::AccentText);
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
+                    ImGui::TextUnformatted(("Nothing can match: " + TypeSel.Why + ". \"All types\" removes the type: terms.").c_str());
+                    ImGui::PopTextWrapPos();
+                    ImGui::PopStyleColor();
+                }
                 ImGui::SeparatorText("More");
                 ImGui::Checkbox("Hide model textures (the models' _images folders)", &A.HideModelTextures);
                 DrawNumericFilters(A);
@@ -497,6 +516,16 @@ namespace ShellUi
             }
             ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("%d / %d assets", (int)A.View.size(), (int)S.Catalog.Models.size());
+            if (const TypeSelection Sel = TypeSelectionOf(A.Filter); Sel.Impossible)
+            {
+                // why the list is empty: the type: terms name no type, so this is not "all types"
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, Theme::AccentText);
+                ImGui::TextUnformatted(("\xC2\xB7  nothing can match: " + Sel.Why).c_str());
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove the type terms")) SetTypeMask(A, 0);
+            }
             if (!S.MultiSel.empty())
             {
                 ImGui::SameLine();
