@@ -88,7 +88,7 @@ namespace ShellUi
             const ImVec2 C((Min.x + Max.x) * 0.5f, (Min.y + Max.y) * 0.5f);
             const float R = ImGui::GetFontSize() * 1.1f, T = (float)ImGui::GetTime() * 6.0f;
             DL->PathArcTo(C, R, T, T + 4.2f, 32);
-            DL->PathStroke(IM_COL32(245, 165, 36, 230), 0, 3.0f);
+            DL->PathStroke(((Theme::AccentU32 & 0x00FFFFFFu) | (230u << 24)), 0, 3.0f);
             const char* Text = "Loading\xE2\x80\xA6";
             const ImVec2 Ts = ImGui::CalcTextSize(Text);
             DL->AddText(ImVec2(C.x - Ts.x * 0.5f, C.y + R + 8.0f), IM_COL32(220, 220, 225, 255), Text);

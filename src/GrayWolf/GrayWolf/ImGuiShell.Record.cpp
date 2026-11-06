@@ -170,6 +170,7 @@ namespace ShellUi
                 Times.push_back({ St.value("label", "step " + std::to_string(Next)), Now() });
                 ViewportState& V = S.Viewport;
                 Settle = O.Shots ? 8 : 3;   // a shot waits for the panels to find their size
+                if (St.contains("theme") && !Theme::ApplyByName(St["theme"].get<std::string>())) Fail("unknown theme: " + St["theme"].get<std::string>());
                 if (St.contains("demo")) AddDemoRows(S, St["demo"].get<int>());
                 if (St.contains("label"))
                     Timeline += std::to_string(Written) + "\t" + St["label"].get<std::string>() + "\n";

@@ -5,21 +5,45 @@
 // same way (the primary button, an icon button, a pill, an unframed section).
 #include "imgui.h"
 
+#include <string>
+
 namespace Theme
 {
+    // The colours of the theme in use (Apply changes them): read through the references below
+    struct Colours
+    {
+        ImVec4 Base{ 0.071f, 0.075f, 0.086f, 1.0f }, Panel{ 0.102f, 0.106f, 0.122f, 1.0f }, Raised{ 0.149f, 0.153f, 0.173f, 1.0f },
+               Overlay{ 0.180f, 0.184f, 0.208f, 1.0f }, Text{ 0.925f, 0.929f, 0.941f, 1.0f }, Muted{ 0.620f, 0.635f, 0.667f, 1.0f },
+               Accent{ 0.961f, 0.647f, 0.141f, 1.0f }, AccentHover{ 1.000f, 0.718f, 0.290f, 1.0f },
+               AccentSoft{ 0.961f, 0.647f, 0.141f, 0.16f }, OnAccent{ 0.082f, 0.090f, 0.110f, 1.0f };
+        ImU32 AccentU32 = IM_COL32(245, 165, 36, 255);
+    };
+    Colours& MutableColours();   // ImGuiShell.Theme.cpp: the one set, GrayWolf's by default
+
     // Surfaces, darkest to lightest: the higher a surface sits, the lighter it is (no borders, no shadows)
-    inline constexpr ImVec4 Base     { 0.071f, 0.075f, 0.086f, 1.0f };   // behind the panels, the viewport
-    inline constexpr ImVec4 Panel    { 0.102f, 0.106f, 0.122f, 1.0f };   // a docked panel
-    inline constexpr ImVec4 Raised   { 0.149f, 0.153f, 0.173f, 1.0f };   // fields, buttons, table headers
-    inline constexpr ImVec4 Overlay  { 0.180f, 0.184f, 0.208f, 1.0f };   // popups, menus, tooltips
-    inline constexpr ImVec4 Text     { 0.925f, 0.929f, 0.941f, 1.0f };
-    inline constexpr ImVec4 Muted    { 0.620f, 0.635f, 0.667f, 1.0f };   // 4.5:1 or more on every surface above
+    inline const ImVec4& Base     = MutableColours().Base;      // behind the panels, the viewport
+    inline const ImVec4& Panel    = MutableColours().Panel;     // a docked panel
+    inline const ImVec4& Raised   = MutableColours().Raised;    // fields, buttons, table headers
+    inline const ImVec4& Overlay  = MutableColours().Overlay;   // popups, menus, tooltips
+    inline const ImVec4& Text     = MutableColours().Text;
+    inline const ImVec4& Muted    = MutableColours().Muted;     // 4.5:1 or more on every surface above
     // The accent: the primary action and the selection only
-    inline constexpr ImVec4 Accent      { 0.961f, 0.647f, 0.141f, 1.0f };   // #f5a524
-    inline constexpr ImVec4 AccentHover { 1.000f, 0.718f, 0.290f, 1.0f };
-    inline constexpr ImVec4 AccentSoft  { 0.961f, 0.647f, 0.141f, 0.16f };  // a selected row, an active pill
-    inline constexpr ImVec4 OnAccent    { 0.082f, 0.090f, 0.110f, 1.0f };   // text on the accent
-    inline constexpr ImU32 AccentU32 = IM_COL32(245, 165, 36, 255);
+    inline const ImVec4& Accent      = MutableColours().Accent;        // GrayWolf: #f5a524
+    inline const ImVec4& AccentHover = MutableColours().AccentHover;
+    inline const ImVec4& AccentSoft  = MutableColours().AccentSoft;    // a selected row, an active pill
+    inline const ImVec4& OnAccent    = MutableColours().OnAccent;      // text on the accent
+    inline const ImU32& AccentU32    = MutableColours().AccentU32;
+
+    // The themes (the colours above are those of the one in use, set by Apply). "GrayWolf" is the default
+    // and is exactly the look before themes existed; "HydraX" is the colours of the HydraX app.
+    int Count();
+    const char* Name(int Index);
+    const char* About(int Index);
+    int CurrentIndex();   // the saved choice (setting ui_theme), read once
+    // Sets the colours of theme Index; Remember saves it as the choice
+    void Apply(int Index, bool Remember);
+    // By its key or name (ui-shot's "theme" step), not saved; false for an unknown one
+    bool ApplyByName(const std::string& Key);
 
     // The fonts: the body (Segoe UI), a semibold one for names and titles, and their sizes
     struct Fonts

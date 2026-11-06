@@ -21,6 +21,15 @@ namespace ShellUi
     static void DrawSoundSettingsMenu()
     {
         if (!ImGui::BeginMenu("Settings")) return;   // appended to the Settings menu ImGuiUpdates opens
+        if (ImGui::BeginMenu("Theme"))
+        {
+            for (int i = 0; i < Theme::Count(); i++)
+            {
+                if (ImGui::MenuItem(Theme::Name(i), nullptr, Theme::CurrentIndex() == i)) Theme::Apply(i, true);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Theme::About(i));
+            }
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("Sounds"))
         {
             // Opus by default (ExportWriters::SoundFormatSetting)

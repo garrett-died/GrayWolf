@@ -147,7 +147,7 @@ namespace ShellUi
         ImDrawList* DL = ImGui::GetWindowDrawList();
         const ImU32 ColBg   = ImGui::GetColorU32(ImGuiCol_FrameBg);
         const ImU32 ColWave = IM_COL32(150, 156, 168, 200);
-        const ImU32 ColPlayed = IM_COL32(245, 165, 36, 235);
+        const ImU32 ColPlayed = ((Theme::AccentU32 & 0x00FFFFFFu) | (235u << 24));
         const ImU32 ColHead = IM_COL32(235, 235, 235, 255);
         DL->AddRectFilled(P0, ImVec2(P0.x + WaveSz.x, P0.y + WaveSz.y), ColBg, 4.0f);
         const float MidY = P0.y + WaveSz.y * 0.5f;
