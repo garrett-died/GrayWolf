@@ -15,6 +15,7 @@
 #include <cstring>
 #include <fstream>
 
+#include "ExrReader.h"
 #include "FixRoundSelfTest.h"
 #include "CliOptions.h"
 #include "CliCommands.h"
@@ -1030,6 +1031,16 @@ static int SelfTest(std::string& Failures)
 }
 
 
+// The EXR reader's self-test (ExrReaderSelfTest.cpp): files built in memory, no game data.
+int RunExrSelfTest(const CliOptions& Options)
+{
+    std::string Failures;
+    const int Failed = Exr::SelfTest(Failures);
+    CliReport(Options, std::format("{}result={}\nself_test_failures={}\n", Failures, (Failed == 0) ? "ok" : "error", Failed));
+    return (Failed == 0) ? 0 : 4;
+}
+
+
 int RunSelfTest(const CliOptions& Options)
 {
     std::string Failures;
@@ -1338,6 +1349,10 @@ void AddMiscCommands(CliCommandBuilders& B)
     B["self-test"] = [](CLI::App& App, CliOptions& Options) {
         App.add_subcommand("self-test", "Run built-in assertions that need no game files or window")
             ->callback([&Options] { Options.SelfTest = true; });
+    };
+    B["exr-selftest"] = [](CLI::App& App, CliOptions& Options) {
+        App.add_subcommand("exr-selftest", "Check the OpenEXR reader (NONE, ZIPS, ZIP, PIZ) on files built in memory")
+            ->callback([&Options] { Options.ExrSelfTest = true; });
     };
     B["decompress-ff"] = [](CLI::App& App, CliOptions& Options) {
         auto* Sub = App.add_subcommand("decompress-ff", "Decompress a fast file and report its header/zone info");
