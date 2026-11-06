@@ -4,6 +4,7 @@
 // does: the rows are complete as given, no file is behind them, and nothing on the machine is read.
 // A model or map row shows a sphere, an image row a gradient, so the preview is not empty.
 #include "ImGuiShell.Internal.h"
+#include "GameBadges.h"
 
 #include <algorithm>
 #include <cmath>
@@ -57,6 +58,7 @@ namespace ShellUi
 
         Count = std::clamp(Count, 1, 5000);
         S.DemoInstalls = true;
+        GameBadges::NoInstallLookup();
         Lcg R;
         std::vector<Item> Rows;
         Rows.reserve((size_t)Count);

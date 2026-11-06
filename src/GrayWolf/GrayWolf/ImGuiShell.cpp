@@ -101,8 +101,8 @@ ShellUi::ShellState::ShellState(ID3D11Device* Device, ID3D11DeviceContext* Conte
     if (ShotMode)
     {
         Assets.GridView = !ShotMode->List;
-        Assets.TypeFilter = ShotMode->Type;
         std::snprintf(Assets.Filter, sizeof(Assets.Filter), "%s", ShotMode->Search.c_str());
+        SetTypeFilter(Assets, ShotMode->Type);
         if (!ShotMode->AnimRig.empty()) Assets.GridRig = ShotMode->AnimRig;
         Shot = std::make_unique<GridShot>(*ShotMode, Device, Context);
     }

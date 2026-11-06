@@ -191,8 +191,9 @@ namespace ShellUi
                 if (St.contains("demo")) AddDemoRows(S, St["demo"].get<int>());
                 if (St.contains("label"))
                     Timeline += std::to_string(Written) + "\t" + St["label"].get<std::string>() + "\n";
-                if (St.contains("type")) S.Assets.TypeFilter = TypeIndex(St["type"].get<std::string>());
+                if (St.contains("type")) SetTypeFilter(S.Assets, TypeIndex(St["type"].get<std::string>()));
                 if (St.contains("filter")) std::snprintf(S.Assets.Filter, sizeof(S.Assets.Filter), "%s", St["filter"].get<std::string>().c_str());
+                if (St.contains("filters_open")) S.FiltersOpenRequest = St["filters_open"].get<bool>();
                 if (St.contains("view")) S.Assets.GridView = St["view"].get<std::string>() == "grid";
                 if (St.contains("select"))
                 {

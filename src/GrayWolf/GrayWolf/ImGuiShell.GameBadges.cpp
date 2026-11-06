@@ -26,9 +26,16 @@ namespace GameBadges
             std::atomic<bool> Started{ false }, Done{ false };
         };
 
+        std::atomic<bool>& NoLookup()
+        {
+            static std::atomic<bool> Off{ false };
+            return Off;
+        }
+
         Exes& Found()
         {
             static Exes E;
+            if (NoLookup().load() && !E.Started.exchange(true)) { E.Done = true; return E; }
             if (!E.Started.exchange(true))
                 std::thread([] {
                     for (const auto& I : GameInstalls::Detect())
@@ -62,6 +69,8 @@ namespace GameBadges
             DL->AddText(F, Size, ImVec2(Min.x + (Side - T.x) * 0.5f, Min.y + (Side - T.y) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), Letters.c_str());
         }
     }
+
+    void NoInstallLookup() { NoLookup() = true; }
 
     std::string Title(const std::string& Id)
     {

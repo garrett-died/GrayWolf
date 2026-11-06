@@ -530,6 +530,19 @@ bool UiSelfTest(std::string& Report)
 {
     const bool Settings = ShellUi::SettingsPage::SelfTest(Report);
     const bool Search = ShellUi::Search::SelfTest(Report);
+    // the Filters panel's types and the search box's type: terms are one state
+    bool Types = true;
+    {
+        ShellUi::AssetsTab A;
+        std::snprintf(A.Filter, sizeof(A.Filter), "%s", "crate type:image !type:fx");
+        ShellUi::SetTypeMask(A, 0x03);   // models and images ticked in the panel
+        const std::string Wrote = A.Filter;
+        if (ShellUi::TypeMaskOf(A.Filter) != 0x03 || Wrote.find("crate") != 0 || Wrote.find("!type") != std::string::npos) { Types = false; Report += "FAIL type terms rewritten from the panel\n"; }
+        std::snprintf(A.Filter, sizeof(A.Filter), "%s", "type:anim");
+        if (ShellUi::TypeMaskOf(A.Filter) != 0x08) { Types = false; Report += "FAIL a typed search ticks its type\n"; }
+        ShellUi::SetTypeMask(A, 0);
+        if (ShellUi::TypeMaskOf(A.Filter) != 0 || A.Filter[0] != 0) { Types = false; Report += "FAIL All types clears the terms\n"; }
+    }
     const bool Text = ShellUi::TextViewer::SelfTest(Report);
-    return Settings && Search && Text;
+    return Settings && Search && Text && Types;
 }

@@ -270,6 +270,7 @@ namespace ShellUi
         bool SettingsOpen = false, SettingsJustOpened = false;
         char SettingsQuery[128] = "";
         std::string SettingsJump;
+        bool FiltersOpenRequest = false;   // ui-shot: the Filters panel opened
         int LeftPage = 0;               // the left panel: 0 Extract (a game, its assets, Export), 1 Library (the exports, preview)
         // ui-shot tests: a window to float at a position (off screen on purpose), a window size to take
         std::string FloatWindow; float FloatX = 0, FloatY = 0; int FloatFrames = 0; int RequestW = 0, RequestH = 0;
@@ -304,6 +305,11 @@ namespace ShellUi
 
     // ImGuiShell.Assets.cpp
     bool NameMatches(const std::string& Query, const std::string& Name);
+    // The types the search text names with type: terms (a bit per Item::Kind; 0: none, so every type), and the
+    // text rewritten for a set of them (the Filters panel and the search box are the same state)
+    unsigned TypeMaskOf(const std::string& Text);
+    void SetTypeMask(AssetsTab& A, unsigned Mask);
+    void SetTypeFilter(AssetsTab& A, int Index);   // 0 all, else 1 + Item::Kind (ui-shot's type, ui-grid-shot --type)
     std::string FormatSize(long long Bytes);
     void RefreshPresets(AssetsTab& A);
     // The Assets window; OpenHelp is set by its "?" button.
