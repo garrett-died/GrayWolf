@@ -19,7 +19,7 @@ struct ImVec2;
 // effects playing (FxPreviewCells.h, plugged in by the shell), anything else as an icon.
 
 // The asset kinds of the shell's list (ImGuiShell.cpp's Item::Kind).
-namespace AssetKind { enum : int { Model = 0, Image = 1, Audio = 2, Anim = 3, Map = 4, Fx = 5, Count }; }
+namespace AssetKind { enum : int { Model = 0, Image = 1, Audio = 2, Anim = 3, Map = 4, Fx = 5, Text = 6, Count }; }
 
 // One cell's asset, as the shell describes it. Written (the file's last write time) and SizeBytes key
 // the thumbnails cached on disk.

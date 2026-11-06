@@ -530,5 +530,6 @@ bool UiSelfTest(std::string& Report)
 {
     const bool Settings = ShellUi::SettingsPage::SelfTest(Report);
     const bool Search = ShellUi::Search::SelfTest(Report);
-    return Settings && Search;
+    const bool Text = ShellUi::TextViewer::SelfTest(Report);
+    return Settings && Search && Text;
 }

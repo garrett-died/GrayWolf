@@ -151,6 +151,7 @@ namespace ShellUi
                 if (A.TypeFilter == 4 && M.Kind != 3) continue;
                 if (A.TypeFilter == 5 && M.Kind != 4) continue;
                 if (A.TypeFilter == 6 && M.Kind != 5) continue;
+                if (A.TypeFilter == 7 && M.Kind != 6) continue;
                 if (A.HideModelTextures && M.Kind == 1 && M.ModelTexture) continue;
                 if (!A.GameFilter.empty() && M.Game != A.GameFilter) continue;
                 if (!Q.Terms.empty() && !Search::Matches(Q, M)) continue;
@@ -283,12 +284,14 @@ namespace ShellUi
             static const std::string Segs[] = { "All",
                 std::string(Theme::Icon::Model) + "  Models", std::string(Theme::Icon::Image) + "  Images",
                 std::string(Theme::Icon::Audio) + "  Audio", std::string(Theme::Icon::Anim) + "  Anims",
-                std::string(Theme::Icon::Map) + "  Maps", std::string(Theme::Icon::Fx) + "  FX" };
+                std::string(Theme::Icon::Map) + "  Maps", std::string(Theme::Icon::Fx) + "  FX", std::string(Theme::Icon::Copy) + "  Text" };
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, Em * 0.9f);
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, ImGui::GetStyle().ItemSpacing.y));
-            for (int i = 0; i < 7; i++)
+            const float RowRight = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+            for (int i = 0; i < 8; i++)
             {
-                if (i > 0) ImGui::SameLine();
+                // the next pill on the same line while it fits, else the line below
+                if (i > 0 && ImGui::GetItemRectMax().x + 2.0f + ImGui::CalcTextSize(Segs[i].c_str()).x + ImGui::GetStyle().FramePadding.x * 2 <= RowRight) ImGui::SameLine();
                 if (Theme::Pill(Segs[i].c_str(), A.TypeFilter == i)) A.TypeFilter = i;
             }
             ImGui::PopStyleVar(2);
@@ -569,7 +572,7 @@ namespace ShellUi
             {
                 const int idx = View[Row];
                 const Item& M = Models[idx];
-                const char* Ty = (M.Kind == 0) ? "model" : (M.Kind == 1) ? "image" : (M.Kind == 2) ? "audio" : (M.Kind == 3) ? "anim" : (M.Kind == 4) ? "map" : "fx";
+                const char* Ty = (M.Kind == 0) ? "model" : (M.Kind == 1) ? "image" : (M.Kind == 2) ? "audio" : (M.Kind == 3) ? "anim" : (M.Kind == 4) ? "map" : (M.Kind == 5) ? "fx" : "text";
                 ImGui::PushID(idx); // names can repeat (e.g. shared texture stems) - disambiguate the row
                 ImGui::TableNextRow();
                 if (S.ScrollToSelected && S.Selected == idx) { ImGui::SetScrollHereY(); S.ScrollToSelected = false; }

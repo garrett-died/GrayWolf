@@ -68,7 +68,13 @@ namespace ShellUi
             It.Written = 1700000000 + i * 60;
             const uint32_t Roll = R.Below(100);
             char Name[96];
-            if (Roll < 36)       // model
+            if (i % 11 == 5)   // text: a script or a table
+            {
+                It.Kind = 6; It.Format = i % 2 ? "gsc" : "csv";
+                snprintf(Name, sizeof(Name), "%s_%s", i % 2 ? "zm_sample_logic" : "weapon_table", i % 2 ? Pick(R, Thing) : Pick(R, Detail));
+                It.SizeBytes = 2000 + (long long)R.Below(40000);
+            }
+            else if (Roll < 36)       // model
             {
                 It.Kind = 0; It.Format = "cast";
                 snprintf(Name, sizeof(Name), "%s_%s_%s_%02d", Pick(R, Prefix), Pick(R, Thing), Pick(R, Detail), i % 40);
@@ -111,7 +117,7 @@ namespace ShellUi
                 It.SizeBytes = 4000 + (long long)R.Below(60000);
             }
             It.Name = Name;
-            static const char* Folder[] = { "models", "images", "sounds", "anims", "maps", "fx" };
+            static const char* Folder[] = { "models", "images", "sounds", "anims", "maps", "fx", "scripts" };
             It.Path = std::string(DemoScheme) + Folder[It.Kind] + "/" + It.Name + "." + It.Format;
             Rows.push_back(std::move(It));
         }
@@ -160,6 +166,26 @@ namespace ShellUi
         }
     }
 
+    namespace
+    {
+        // made-up text for the viewer's shot: a script in the shape of the games' own, and a table
+        std::string DemoScript()
+        {
+            return "#using scripts\\shared\\callbacks_shared;\n#using scripts\\shared\\util_shared;\n\n#namespace sample_logic;\n\n"
+                   "/* Opens the door when every lamp is lit.\n   Made up for a screenshot. */\n"
+                   "function main()\n{\n    level.lamps_needed = 4;\n    level.lamps_lit = 0;\n    foreach(lamp in GetEntArray(\"sample_lamp\", \"targetname\"))\n"
+                   "    {\n        lamp thread watch_lamp();   // one thread each\n    }\n    level waittill(\"all_lamps_lit\");\n    open_door(1.5);\n}\n\n"
+                   "function watch_lamp()\n{\n    self endon(\"death\");\n    while(true)\n    {\n        self waittill(\"trigger\", player);\n"
+                   "        if(isdefined(player) && player.score >= 750)\n        {\n            level.lamps_lit++;\n            break;\n        }\n        wait 0.05;\n    }\n}\n";
+        }
+
+        std::string DemoTable()
+        {
+            return "name,damage,rate,range,notes\nrifle_a,34,0.09,1200,\"steady, long\"\nrifle_b,28,0.07,900,fast\nsmg_c,22,0.05,500,\nsmg_d,19,0.045,450,light\n"
+                   "pistol_e,40,0.2,600,\"two hands, slow\"\nshotgun_f,120,0.9,200,spread\nlmg_g,31,0.08,1400,heavy\nsniper_h,150,1.2,3000,\"one shot, ranged\"\n";
+        }
+    }
+
     void LoadDemoSelection(ShellState& S, int i)
     {
         ViewportState& V = S.Viewport;
@@ -169,6 +195,10 @@ namespace ShellUi
             V.Loader.Forget();
             V.Mesh = UploadPreviewMesh(S.Dev.Get(), DemoSphere());
             ResetCamera(V);
+        }
+        else if (Sel.Kind == 6)
+        {
+            V.Text.LoadText(Sel.Format, Sel.Format == "gsc" ? DemoScript() : DemoTable());
         }
         else if (Sel.Kind == 1)
         {

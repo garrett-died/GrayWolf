@@ -14,7 +14,7 @@
 
 const char* AssetKindName(int Kind)
 {
-    static const char* Names[] = { "model", "image", "audio", "anim", "map", "fx" };
+    static const char* Names[] = { "model", "image", "audio", "anim", "map", "fx", "text" };
     return Kind >= 0 && Kind < AssetKind::Count ? Names[Kind] : "asset";
 }
 
@@ -76,6 +76,12 @@ void DrawAssetKindIcon(ImDrawList* DL, const ImVec2& Min, const ImVec2& Max, int
         Star(P(0.7f, -0.6f), R * 0.4f);
         break;
     }
+    case AssetKind::Text:    // a page of lines
+    {
+        DL->AddRect(P(-0.7f, -0.9f), P(0.7f, 0.9f), Col, R * 0.1f, 0, W);
+        for (int i = 0; i < 4; i++) DL->AddLine(P(-0.4f, -0.55f + 0.38f * (float)i), P(i == 3 ? 0.0f : 0.4f, -0.55f + 0.38f * (float)i), Dim, W);
+        break;
+    }
     default:
         DL->AddCircle(C, R, Col, 24, W);
         break;
@@ -91,6 +97,7 @@ AssetGrid::AssetGrid(ID3D11Device* Dev, ID3D11DeviceContext* Ctx)
     Renderers[AssetKind::Image] = MakeImageCells();
     Renderers[AssetKind::Audio] = MakeAudioCells();
     Renderers[AssetKind::Fx] = MakeIconCells();
+    Renderers[AssetKind::Text] = MakeIconCells();
     SetCellSize((float)std::atof(SettingsManager::GetSetting("assets_grid_cell", "136").c_str()));
 }
 

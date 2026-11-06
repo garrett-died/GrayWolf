@@ -21,8 +21,8 @@ namespace ShellUi
 
             const char* TypeName(int Kind)
             {
-                static const char* Names[] = { "model", "image", "audio", "anim", "map", "fx" };
-                return Kind >= 0 && Kind < 6 ? Names[Kind] : "";
+                static const char* Names[] = { "model", "image", "audio", "anim", "map", "fx", "text" };
+                return Kind >= 0 && Kind < 7 ? Names[Kind] : "";
             }
 
             // the text of the column a term names (lowered by the caller)

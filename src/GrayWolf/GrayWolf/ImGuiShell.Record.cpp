@@ -95,8 +95,8 @@ namespace ShellUi
 
         int TypeIndex(const std::string& Name)
         {
-            static const char* Types[] = { "all", "model", "image", "audio", "anim", "map", "fx" };
-            for (int i = 0; i < 7; i++) if (Name == Types[i] || Name == std::string(Types[i]) + "s") return i;
+            static const char* Types[] = { "all", "model", "image", "audio", "anim", "map", "fx", "text" };
+            for (int i = 0; i < 8; i++) if (Name == Types[i] || Name == std::string(Types[i]) + "s") return i;
             return 0;
         }
     }
@@ -203,9 +203,13 @@ namespace ShellUi
                 }
                 if (St.contains("select_first"))   // the first row of a kind (the demo's names are made up)
                 {
-                    const int Kind = std::max(0, TypeIndex(St["select_first"].get<std::string>()) - 1);
+                    // "model", or "text:gsc" for the first of a kind with that format
+                    const std::string Want = St["select_first"].get<std::string>();
+                    const size_t Colon = Want.find(':');
+                    const int Kind = std::max(0, TypeIndex(Want.substr(0, Colon)) - 1);
+                    const std::string Format = Colon == std::string::npos ? std::string() : Want.substr(Colon + 1);
                     int k = 0;
-                    while (k < (int)S.Catalog.Models.size() && S.Catalog.Models[k].Kind != Kind) k++;
+                    while (k < (int)S.Catalog.Models.size() && (S.Catalog.Models[k].Kind != Kind || (!Format.empty() && S.Catalog.Models[k].Format != Format))) k++;
                     if (k >= (int)S.Catalog.Models.size()) Fail("no row of kind " + St["select_first"].get<std::string>());
                     else { S.MultiSel.clear(); LoadSelection(S, k); S.ScrollToSelected = true; }
                 }

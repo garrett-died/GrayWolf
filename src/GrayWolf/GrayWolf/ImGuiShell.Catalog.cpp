@@ -2,6 +2,7 @@
 
 // The Assets tab's rows: the folders' walks, their merge into one row per asset, the header reads.
 #include "ImGuiShell.Internal.h"
+#include "ExportNaming.h"
 #include "AppLog.h"           // timed steps
 #include "ImGuiDialogs.h"      // ContainsNoCase
 #include "imgui.h"
@@ -18,6 +19,22 @@
 
 namespace ShellUi
 {
+    // A script, a config or a table the exporters write: by extension, and (JSON, which sidecars use
+    // by the thousand) only under the folders of the data kinds (DiskGame::Kinds' rawfiles, scripts, ...)
+    bool IsTextAsset(const std::string& Path, const std::string& LowerExtension)
+    {
+        if (LowerExtension == ".txt" && Path.size() > 11 && ExportNaming::Lower(Path).ends_with("_images.txt")) return false;   // a model's list of its images
+        static const char* Plain[] = { ".gsc", ".csc", ".gsh", ".lua", ".csv", ".tsv", ".ini", ".cfg", ".txt", ".xml", ".str", ".gdt", ".menu" };
+        for (const char* E : Plain)
+            if (LowerExtension == E) return true;
+        if (LowerExtension != ".json") return false;
+        std::string P = Path;
+        for (char& C : P) C = (char)(C == '/' ? '\\' : tolower((unsigned char)C));
+        for (const char* Folder : { "\\rawfiles\\", "\\scripts\\", "\\data\\", "\\bundles\\", "\\weapons\\", "\\weaponstats\\", "\\mapinfo\\", "\\aitypes\\", "\\scriptables\\" })
+            if (P.find(Folder) != std::string::npos) return true;
+        return false;
+    }
+
     namespace
     {
         // Reads just the pixel dimensions from an image header (per format), cheaply, during the scan.
@@ -252,7 +269,7 @@ namespace ShellUi
         UiAsync::Run("list folder " + Dir, [Lists = Lists, Dir, Gen] {
             struct Ended { std::atomic<int>& N; ~Ended() { N--; } } Ending{ Lists->Walks };
             AppLog::Timer Scan("scan folder " + Dir, spdlog::level::info, 1e9);
-            size_t Seen = 0, Other = 0, ByKind[6] = {};
+            size_t Seen = 0, Other = 0, ByKind[7] = {};
             std::vector<Item> Batch;
             auto LastFlush = std::chrono::steady_clock::now();
             const auto Flush = [&] {
@@ -303,6 +320,7 @@ namespace ShellUi
                     }
                     else if (E == ".glb")           { Md.Kind = 4; Md.Format = "glb"; }
                     else if (E == ".json" && FxPreviewPanel::IsEffectFile(PathText)) { Md.Kind = 5; Md.Format = "json"; }
+                    else if (IsTextAsset(PathText, E)) { Md.Kind = 6; }
                     else { Other++; continue; }
                     ByKind[Md.Kind]++;
                     Batch.push_back(std::move(Md));
@@ -311,7 +329,7 @@ namespace ShellUi
             Flush();
             Scan.Detail(": " + std::to_string(Seen) + " files seen, models " + std::to_string(ByKind[0]) + ", images " +
                         std::to_string(ByKind[1]) + ", audio " + std::to_string(ByKind[2]) + ", anims " + std::to_string(ByKind[3]) +
-                        ", maps " + std::to_string(ByKind[4]) + ", fx " + std::to_string(ByKind[5]) + ", other " + std::to_string(Other) + " (on a worker)");
+                        ", maps " + std::to_string(ByKind[4]) + ", fx " + std::to_string(ByKind[5]) + ", text " + std::to_string(ByKind[6]) + ", other " + std::to_string(Other) + " (on a worker)");
         });
     }
 
@@ -361,11 +379,11 @@ namespace ShellUi
                 if (Md.Written < Shown.Written || (Md.Written == Shown.Written && Md.Path >= Shown.Path)) continue;
                 Md.Id = Shown.Id; Md.ModelTexture = Shown.ModelTexture;
                 Shown = std::move(Md);
-                if (Shown.Kind != 2) NewJobs.push_back(ScanJob{ Shown.Id, Shown.Path, Shown.Kind, Shown.Format, Shown.SizeBytes });
+                if (Shown.Kind != 2 && Shown.Kind != 6) NewJobs.push_back(ScanJob{ Shown.Id, Shown.Path, Shown.Kind, Shown.Format, Shown.SizeBytes });
                 continue;
             }
             Md.Id = NextItemId++;
-            if (Md.Kind != 2) NewJobs.push_back(ScanJob{ Md.Id, Md.Path, Md.Kind, Md.Format, Md.SizeBytes });
+            if (Md.Kind != 2 && Md.Kind != 6) NewJobs.push_back(ScanJob{ Md.Id, Md.Path, Md.Kind, Md.Format, Md.SizeBytes });
             IdToIndex[Md.Id] = Models.size();
             Models.push_back(std::move(Md));
         }

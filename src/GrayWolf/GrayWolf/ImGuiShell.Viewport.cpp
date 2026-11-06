@@ -128,6 +128,7 @@ namespace ShellUi
             else if (Sel.Kind == 2)             ImGui::TextDisabled("sound  \xC2\xB7  %s", FormatSize(Sel.SizeBytes).c_str());
             else if (Sel.Kind == 3)             ImGui::TextDisabled("animation  \xC2\xB7  %s", FormatSize(Sel.SizeBytes).c_str());
             else if (Sel.Kind == 5)             ImGui::TextDisabled("%s", V.FxPanel.Summary().c_str());
+            else if (Sel.Kind == 6 && V.Text.Loaded()) ImGui::TextDisabled("%s  \xC2\xB7  %s", V.Text.Summary().c_str(), FormatSize(Sel.SizeBytes).c_str());
             Theme::PopFont();
             if (Sel.Kind == 4) DrawOpenInBlender(Sel.Path);   // a map export: its .blend, or its import
             ImGui::Spacing();
@@ -468,8 +469,8 @@ namespace ShellUi
     {
         const auto& Models = S.Catalog.Models;
         ViewportState& V = S.Viewport;
-        static const char* KindNames[] = { "model", "image", "audio", "anim", "map", "fx" };
-        AppLog::Timer Preview(std::string("preview ") + KindNames[Models[i].Kind % 6] + " " + Models[i].Path, spdlog::level::info, 300);
+        static const char* KindNames[] = { "model", "image", "audio", "anim", "map", "fx", "text" };
+        AppLog::Timer Preview(std::string("preview ") + KindNames[Models[i].Kind % 7] + " " + Models[i].Path, spdlog::level::info, 300);
         S.Selected = i;
         V.ImageSRV.Reset(); V.ImageW = V.ImageH = 0;
         V.Audio.Unload(); // stop / release any audio from the previous selection
@@ -477,6 +478,7 @@ namespace ShellUi
         V.AnimRigPaths.clear(); V.AnimRigLabel.clear(); V.AnimRigScore = 0; V.AnimRigManual = false;
         const Item& Sel = Models[i];
         if (Sel.Kind != 0 && Sel.Kind != 4) { V.Loader.Forget(); V.Mesh = GpuMesh{}; }
+        V.Text.Unload();
         if (IsDemoRow(Sel)) { V.FxPanel.Unload(); LoadDemoSelection(S, i); return; }   // ui-shot's made-up rows
         if (Sel.Kind == 5) V.FxPanel.Load(Sel.Path); else V.FxPanel.Unload();
 
@@ -507,6 +509,10 @@ namespace ShellUi
         {
             AppLog::Timer Decode("audio decode");
             V.Audio.Load(Sel.Path, Sel.Format);
+        }
+        else if (Sel.Kind == 6) // text: read at once (the first 4 MB)
+        {
+            V.Text.LoadFile(Sel.Path, Sel.Format);
         }
         else if (Sel.Kind == 4) // map: one standalone .glb scene, no multi-part assembly
         {
@@ -606,6 +612,7 @@ namespace ShellUi
             DrawAudioPlayer(V.Audio, S.Catalog.Models[S.Selected].Format);
         }
         else if (SelKind == 5) V.FxPanel.Draw(); // an effect: FxPreviewPanel
+        else if (SelKind == 6) { if (V.Text.Loaded()) V.Text.Draw(); else ImGui::TextDisabled("Could not read this file"); }
         else if (SelKind == 3) {} // anim with no model picked yet (or it failed to load) - the picker
                                    // UI above already covers this; nothing more to show here.
         else DrawEmptyView();

@@ -11,6 +11,7 @@
 #include "SeAnimReader.h"      // SeAnimClip
 #include "AudioPlayer.h"       // real audio playback (miniaudio) with cursor + waveform
 #include "FxPreviewPanel.h"    // an effect (fx JSON) playing in 3D
+#include "ImGuiShell.TextView.h" // a script, a config or a CSV
 #include "ImGuiTheme.h"         // the look, the tabs' names
 #include "AssetGrid/AssetGrid.h" // the Assets tab's grid view
 #include "AssetGrid/GridShot.h" // ui-grid-shot
@@ -42,7 +43,7 @@ namespace ShellUi
     // GPU resources for one loaded model; copies share them.
     using GpuMesh = PreviewGpuMesh;
 
-    // Kind: 0 model · 1 image · 2 audio · 3 anim · 4 map · 5 fx.
+    // Kind: 0 model · 1 image · 2 audio · 3 anim · 4 map · 5 fx · 6 text (a script, a config, a CSV).
     // Root: the listed folder the file was found under; Written: its last write time (the newer of two
     // copies of one asset is the one shown); Game: the export's game folder (<out>/<game>/models/..., GameOfPath),
     // empty when the path has none
@@ -145,7 +146,7 @@ namespace ShellUi
         int SortCol = 0; bool SortAsc = true;
         // Numeric filters (0 = unbounded on that side).
         int fMinBones=0, fMaxBones=0, fMinMeshes=0, fMaxMeshes=0, fMinMats=0, fMaxMats=0, fMinKB=0, fMaxKB=0;
-        int TypeFilter = 0; // 0 all · 1 models · 2 images · 3 audio · 4 anims · 5 maps · 6 fx (driven by the tabs)
+        int TypeFilter = 0; // 0 all · 1 models · 2 images · 3 audio · 4 anims · 5 maps · 6 fx · 7 text (driven by the pills)
         // The game shown (empty: every game) and the rows grouped by game (sorted by it first). Games:
         // the games listed, rebuilt when Models changes.
         std::string GameFilter;
@@ -191,6 +192,7 @@ namespace ShellUi
         PreviewRenderer Renderer;
         PreviewTarget Vrt;   // the 3D view, shown with ImGui::Image
         FxPreviewPanel FxPanel;   // the selected effect's view
+        TextViewer Text;          // the selected text asset (Kind 6)
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> ImageSRV; int ImageW = 0, ImageH = 0;
         // The shown image's zoom, reset to 100% when the shown SRV changes.
         float ImageZoom = 1.0f;
@@ -288,6 +290,7 @@ namespace ShellUi
     };
 
     // ImGuiShell.Catalog.cpp
+    bool IsTextAsset(const std::string& Path, const std::string& LowerExtension);
     // Sorted by name, the selection, the picks and the anim's model kept on the same files.
     void SortModels(ShellState& S, size_t SortedPrefix = 0);
     // Lists Dir's assets instead of the current ones (Replace) or with them.
