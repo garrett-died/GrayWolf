@@ -371,7 +371,7 @@ void LoadGamePanel::DrawGameCard(ID3D11Device* Dev)
     }
 }
 
-void LoadGamePanel::Draw(ID3D11Device* Dev)
+void LoadGamePanel::Draw(ID3D11Device* Dev, bool Visible)
 {
     JoinIfDone();
     std::string Picked;
@@ -387,6 +387,7 @@ void LoadGamePanel::Draw(ID3D11Device* Dev)
     }
 
     DrewIndicator = false;
+    if (!Visible) return;
     // its tab first in the dock, whichever window came in first: a game is where one starts
     ImGuiWindowClass First;
     First.TabItemFlagsOverrideSet = ImGuiTabItemFlags_Leading;

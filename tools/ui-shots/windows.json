@@ -1,0 +1,8 @@
+{
+  "steps": [
+    { "focus": "Assets", "demo": 240, "view": "list", "select_first": "model", "label": "docked", "shot": "windows-docked" },
+    { "float": { "window": "Viewport", "x": 6000, "y": -400 }, "label": "float-offscreen", "shot": "windows-float-offscreen" },
+    { "float": { "window": "Viewport", "x": 900, "y": 700 }, "label": "float-low-right", "shot": "windows-float-low-right" },
+    { "size": "700x480", "label": "after-shrink", "shot": "windows-after-shrink" }
+  ]
+}

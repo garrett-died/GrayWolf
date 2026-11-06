@@ -30,7 +30,8 @@ public:
 
     // Draws the whole window. Call once per frame between ImGui::NewFrame and Render. Dev draws the
     // launcher icons of the detected installs.
-    void Draw(ID3D11Device* Dev);
+    // Visible false: its workers and answers are kept up, nothing is drawn (the Library page is shown).
+    void Draw(ID3D11Device* Dev, bool Visible = true);
 
     // True exactly once, on the frame an export that wrote something finishes: the caller rescans
     // ExportOutputDir() (<output folder>/<game id>) into the Assets browser.

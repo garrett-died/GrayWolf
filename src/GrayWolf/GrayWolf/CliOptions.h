@@ -116,7 +116,7 @@ struct CliOptions
                                        // result is browsable with the existing --ui <dir>
     bool Lods = false;       // --lods: export every available model LOD
     bool Gpu = false;        // --gpu: use the offscreen D3D11 renderer for model previews
-    bool SettingsSelfTest = false; // settings-selftest: the Settings page entries and their explanations
+    bool UiSelfTest = false; // ui-selftest: the Settings page entries and their explanations
     bool CerberusSelfTest = false; // --cerberus-selftest: verify ported CRC32/Salsa20
     bool SeAnimSelfTest = false;   // --seanim-selftest: round-trip a synthetic .seanim + verify pose eval
     bool CastSelfTest = false;     // cast-selftest: a synthetic model/anim as .cast and SE, read back alike

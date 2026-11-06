@@ -206,6 +206,9 @@ void OpenInShell(const std::string& Path, bool Reveal)
             if (FAILED(Hr)) Notify("could not show " + Path + " in its folder (hr " + std::to_string((long)Hr) + ")", true);
             return;
         }
+        // the window Explorer or the program opens may take the front: this process owns the foreground, and a
+        // launch from a worker thread is not always allowed to show over it (it then opened behind the shell)
+        AllowSetForegroundWindow(ASFW_ANY);
         SHELLEXECUTEINFOW Sei{};
         Sei.cbSize = sizeof(Sei);
         // this thread ends with the call: the launch completes before it returns

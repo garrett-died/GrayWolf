@@ -268,6 +268,9 @@ namespace ShellUi
         bool SettingsOpen = false, SettingsJustOpened = false;
         char SettingsQuery[128] = "";
         std::string SettingsJump;
+        int LeftPage = 0;               // the left panel: 0 Extract (a game, its assets, Export), 1 Library (the exports, preview)
+        // ui-shot tests: a window to float at a position (off screen on purpose), a window size to take
+        std::string FloatWindow; float FloatX = 0, FloatY = 0; int FloatFrames = 0; int RequestW = 0, RequestH = 0;
         bool DemoInstalls = false;      // ui-shot's demo: Load Game shows made-up installs (applied in the next frame)
         bool LoadGameWorking = false;   // Load Game's worker runs: ui-record holds its frames
         bool LoadGameIndicator = false; // and shows a spinner or progress bar for it (else a silent wait)
@@ -331,6 +334,20 @@ namespace ShellUi
         void Draw(ShellState& S, LoadGamePanel& LoadGame);   // while S.SettingsOpen
     }
 
+    // ImGuiShell.Search.cpp: the search box's grammar (term, key:term, "exact", !not)
+    namespace Search
+    {
+        struct Term { std::string Key, Value; bool Negated = false, Exact = false; };
+        struct Query { std::vector<Term> Terms; };
+        Query Parse(const std::string& Text);
+        bool Matches(const Query& Q, const Item& It);
+        bool SelfTest(std::string& Report);
+    }
+
+    // ImGuiShell.Windows.cpp: floating windows kept inside the main window
+    void KeepWindowsVisible();   // once a frame, after NewFrame
+    std::vector<std::string> HiddenWindows();   // the floating windows whose title bar is out of sight now
+
     // ImGuiShell.Demo.cpp: made-up rows for screenshots (ui-shot's "demo"), nothing on disk behind them
     // Adds Count rows (models, images, sounds, anims, maps, effects) named from word lists.
     void AddDemoRows(ShellState& S, int Count);
@@ -356,6 +373,8 @@ namespace ShellUi
     // The main menu bar and the update banner; true when the app is to quit.
     bool DrawMainMenuBar(bool& OpenHelp, bool& OpenSettings);
     void DrawStatusBar(const ShellState& S);
+    // The row under the menu bar: Extract and Library, the two steps of the work
+    void DrawWorkflowBar(ShellState& S);
     void BuildDockLayout(unsigned int DockId);
     void DrawFilterHelp(bool OpenHelp);
 }

@@ -95,6 +95,7 @@ namespace
 ShellUi::ShellState::ShellState(ID3D11Device* Device, ID3D11DeviceContext* Context, const std::string& Dir, const GridShotOptions* Mode)
     : Dev(Device), Ctx(Context), ModelsDir(Dir), ShotMode(Mode), Viewport(Device, Context)
 {
+    LeftPage = ModelsDir.empty() ? 0 : 1;   // opened on a folder (ui <dir>): its Library first, not the game's Extract
     if (!ModelsDir.empty()) Catalog.ListFolder(ModelsDir);
     Assets.GridView = SettingsManager::GetSetting("assets_view", "grid") == "grid";
     if (ShotMode)
@@ -199,22 +200,42 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
         bool OpenHelp = false, OpenSettings = LoadGame.ConsumeSettingsRequest();
         if (DrawMainMenuBar(OpenHelp, OpenSettings)) State.Quit = true;
         if (OpenSettings && !S.SettingsOpen) { S.SettingsOpen = true; S.SettingsJustOpened = true; }
+        if (S.RequestW > 0)   // ui-shot's "size": the main window resized, as a user does
+        {
+            RECT Want{ 0, 0, S.RequestW, S.RequestH };
+            AdjustWindowRect(&Want, WS_OVERLAPPEDWINDOW, FALSE);
+            SetWindowPos(Hwnd, nullptr, 0, 0, Want.right - Want.left, Want.bottom - Want.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            S.RequestW = S.RequestH = 0;
+        }
+        if (S.FloatFrames > 0)   // ui-shot's "float": undocked first, then put where it was asked
+        {
+            if (ImGuiWindow* W = ImGui::FindWindowByName(S.FloatWindow.c_str()))
+            {
+                if (S.FloatFrames == 4) ImGui::DockContextQueueUndockWindow(ImGui::GetCurrentContext(), W);
+                else if (S.FloatFrames <= 2) ImGui::SetWindowPos(W, ImVec2(S.FloatX, S.FloatY), ImGuiCond_Always);
+            }
+            S.FloatFrames--;
+        }
+        DrawWorkflowBar(S);
         DrawStatusBar(S);
+        KeepWindowsVisible();   // a floating window left past the edge is brought back
         BuildDockLayout(ImGui::DockSpaceOverViewport());
         DrawAssetsPanel(S, OpenHelp);
         DrawViewportPanel(S);
         DrawFilterHelp(OpenHelp);
         if (S.SettingsOpen) SettingsPage::Draw(S, LoadGame);   // over the panels, the work area filled
 
-        // (kept until the window exists: the first frame has drawn none yet)
-        if (const std::string Id = "###" + S.FocusWindow; !S.FocusWindow.empty() && ImGui::FindWindowByName(Id.c_str()) != nullptr)
+        // a window brought forward by name: the left pages are ours, the rest ImGui's (kept until the window exists)
+        if (S.FocusWindow == "Assets") { S.LeftPage = 1; S.FocusWindow.clear(); }
+        else if (S.FocusWindow == "Load Game") { S.LeftPage = 0; S.FocusWindow.clear(); }
+        else if (const std::string Id = "###" + S.FocusWindow; !S.FocusWindow.empty() && ImGui::FindWindowByName(Id.c_str()) != nullptr)
         {
             ImGui::SetWindowFocus(Id.c_str());
             S.FocusWindow.clear();
         }
         if (S.DemoInstalls) { LoadGame.UseDemoInstalls(); S.DemoInstalls = false; }
         if (!S.LoadGameScript.empty()) { LoadGame.Script(S.LoadGameScript); S.LoadGameScript.clear(); }
-        LoadGame.Draw(Dev.Get());
+        LoadGame.Draw(Dev.Get(), S.LeftPage == 0);
         S.LoadGameWorking = S.Recorder && LoadGame.Working();
         S.LoadGameIndicator = LoadGame.ShowedProgress();
 
@@ -232,7 +253,7 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
             S.SelectWhenListedDir = Dir;
             S.SelectWhenListedFrames = 600;
         }
-        if (LoadGame.ConsumeShowAssets()) ImGui::SetWindowFocus(Theme::LibraryWindow);
+        if (LoadGame.ConsumeShowAssets()) S.LeftPage = 1;
 
         UiAsync::DrawOverlay();   // a dialog's dimmed layer, the notices
         ImGui::Render();

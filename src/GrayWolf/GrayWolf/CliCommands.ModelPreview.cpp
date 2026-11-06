@@ -83,10 +83,10 @@ int RunExportMapGlb(const CliOptions& Options)
 
 
 // Verifies the ported Cerberus script crypto (CRC32 + Salsa20) against known-answer vectors.
-int RunSettingsSelfTest(const CliOptions& Options)
+int RunUiSelfTest(const CliOptions& Options)
 {
     std::string Report;
-    const bool Ok = SettingsSelfTest(Report);
+    const bool Ok = UiSelfTest(Report);
     CliReport(Options, std::format("result={}\n{}", Ok ? "ok" : "error", Report));
     return Ok ? 0 : 5;
 }
@@ -957,9 +957,9 @@ void AddModelPreviewCommands(CliCommandBuilders& B)
         App.add_subcommand("cerberus-selftest", "Verify ported CRC32/Salsa20 (Cerberus crypto)")
             ->callback([&Options] { Options.CerberusSelfTest = true; });
     };
-    B["settings-selftest"] = [](CLI::App& App, CliOptions& Options) {
-        App.add_subcommand("settings-selftest", "Check the Settings page: unique keys, every setting explained")
-            ->callback([&Options] { Options.SettingsSelfTest = true; });
+    B["ui-selftest"] = [](CLI::App& App, CliOptions& Options) {
+        App.add_subcommand("ui-selftest", "Check the Settings page: unique keys, every setting explained")
+            ->callback([&Options] { Options.UiSelfTest = true; });
     };
     B["seanim-selftest"] = [](CLI::App& App, CliOptions& Options) {
         App.add_subcommand("seanim-selftest", "Round-trip a synthetic .seanim + verify pose evaluation")

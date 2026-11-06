@@ -169,7 +169,7 @@ static int RunCli(const CliOptions& Options)
 
     if (Options.CerberusSelfTest) return RunCerberusSelfTest(Options);
 
-    if (Options.SettingsSelfTest) return RunSettingsSelfTest(Options);
+    if (Options.UiSelfTest) return RunUiSelfTest(Options);
 
     if (Options.SeAnimSelfTest) return RunSeAnimSelfTest(Options);
     if (Options.CastSelfTest) return RunCastSelfTest(Options);
@@ -262,7 +262,7 @@ static const char* const kHelpOrder[] = {
     "index-assets", "query-assets", "audio-probe",
     "casc-list", "xpak-index", "xsub-index", "xsub-extract", "casc-extract", "zone-decompress",
     "bo4-export-localize-disk", "bo4-export-rawstrings-disk", "zone-walk", "<game commands>", "disk-export",
-    "decode-iwd", "gltf-selftest", "export-map-glb", "open-map", "cerberus-selftest", "settings-selftest", "seanim-selftest", "cast-selftest",
+    "decode-iwd", "gltf-selftest", "export-map-glb", "open-map", "cerberus-selftest", "ui-selftest", "seanim-selftest", "cast-selftest",
     "make-test-seanim", "render-anim", "coverage", "oat-extract",
     "xanimbin-dump", "xanimbin-selftest", "xanimbin-to-seanim", "xanimbin-export-dir",
     "oat-fx", "oat-fx-export", "oat-xmodel-materials", "oat-weapon", "oat-rawfiles", "gen-disc", "acts-extract",

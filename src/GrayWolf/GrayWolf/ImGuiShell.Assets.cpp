@@ -140,6 +140,7 @@ namespace ShellUi
             A.ViewVersion = S.Catalog.ModelsVersion;
             A.ViewHeaders = S.Catalog.HeaderVersion;
             A.ViewBuiltAt = ImGui::GetTime();
+            const Search::Query Q = Search::Parse(A.Filter);
             A.View.clear(); A.View.reserve(Models.size());
             for (int i = 0; i < (int)Models.size(); i++)
             {
@@ -152,7 +153,7 @@ namespace ShellUi
                 if (A.TypeFilter == 6 && M.Kind != 5) continue;
                 if (A.HideModelTextures && M.Kind == 1 && M.ModelTexture) continue;
                 if (!A.GameFilter.empty() && M.Game != A.GameFilter) continue;
-                if (A.Filter[0] && !NameMatches(A.Filter, M.Name)) continue;
+                if (!Q.Terms.empty() && !Search::Matches(Q, M)) continue;
                 if ((A.fMinBones  > 0 && (int)M.Bones  < A.fMinBones)  || (A.fMaxBones  > 0 && (int)M.Bones  > A.fMaxBones))  continue;
                 if ((A.fMinMeshes > 0 && (int)M.Meshes < A.fMinMeshes) || (A.fMaxMeshes > 0 && (int)M.Meshes > A.fMaxMeshes)) continue;
                 if ((A.fMinMats   > 0 && (int)M.Mats   < A.fMinMats)   || (A.fMaxMats   > 0 && (int)M.Mats   > A.fMaxMats))   continue;
@@ -262,7 +263,7 @@ namespace ShellUi
             if (HasText) Reserve += BtnW + Sp;              // "x" clear button
             if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_F)) ImGui::SetKeyboardFocusHere();
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - Reserve);
-            static const std::string Hint = std::string(Theme::Icon::Search) + "  Search assets by name\xE2\x80\xA6  (Ctrl+F, Esc clears)";
+            static const std::string Hint = std::string(Theme::Icon::Search) + "  Search assets: name, type:image, \"exact\", !not\xE2\x80\xA6  (Ctrl+F)";
             ImGui::InputTextWithHint("##filter", Hint.c_str(), A.Filter, sizeof(A.Filter), ImGuiInputTextFlags_EscapeClearsAll);
             if (HasText)
             {
@@ -452,6 +453,10 @@ namespace ShellUi
                 else if (A.GridView && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) { CurPos = (CurPos < 0) ? 0 : std::max(CurPos - 1, 0); Moved = true; }
                 if (Moved) { LoadSelection(S, View[CurPos]); S.ScrollToSelected = true; }
             }
+            // Ctrl+A picks every row shown (HydraX's: Ctrl+A selects all filtered), for View together and Copy
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive()
+                && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A))
+                S.MultiSel.insert(View.begin(), View.end());
             // Ctrl+C copies the selection's name(s) - same focus/active-item gate as the nav above, but
             // not gated on View: a multi-pick can still include rows the current type tab is hiding.
             if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive()
@@ -605,9 +610,7 @@ namespace ShellUi
     void DrawAssetsPanel(ShellState& S, bool& OpenHelp)
     {
         AssetsTab& A = S.Assets;
-        // opened on a folder (ui <dir>): its assets tab comes first, not Load Game's
-        static int FramesShown = 0;
-        if (FramesShown++ == 1 && !S.ModelsDir.empty()) ImGui::SetNextWindowFocus();
+        if (S.LeftPage != 1) return;   // the Extract page is shown (DrawWorkflowBar); a folder given on the command line starts on this one
         ImGui::Begin(Theme::LibraryWindow);
         DrawFolderBar(S);
         DrawSearchBox(A, OpenHelp);

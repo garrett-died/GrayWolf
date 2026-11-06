@@ -88,6 +88,10 @@ namespace ShellUi
                 E.push_back(Choice(Exp, "Images", "exportimg", "Image format", "PNG", { { "PNG", "PNG" }, { "TGA", "TGA" }, { "DDS", "DDS" } },
                     "The file type textures are saved as. PNG is the safe choice: nearly every program opens it. TGA suits older tools. DDS keeps "
                     "the game's own compressed texture (smaller and faster to write), but some programs cannot open it."));
+                E.push_back(Custom(Exp, "Images", "@imagesfolder", "Where the images go",
+                    "Every exported image is written to the \"images\" folder inside the game's export folder, whichever asset used it. "
+                    "There is no switch for this. (An old setting named global_images is still kept "
+                    "in your settings file; no part of GrayWolf reads it.)"));
                 E.push_back(Toggle(Exp, "Images", "patchnormals", "Mark normal maps for expansion", "true",
                     "Games store a normal map with only two channels. With this on, GrayWolf marks the file so tools expand it the way the game "
                     "does and the surface looks right. Leave it on unless you know your tool wants the raw data."));
@@ -102,6 +106,10 @@ namespace ShellUi
                 E.push_back(Toggle(Exp, "Sounds", "keepsndpath", "Keep each sound's folder", "true",
                     "On: sounds are saved in the folder structure the game gives them, under \"sounds\", so related sounds stay together. Off: "
                     "every sound goes into one folder, which is easier to browse but can mix up sounds that share a name."));
+                E.push_back(Toggle(Exp, "Sounds", "usesabindexbo4", "Name unnamed Black Ops 4 sounds by position", "false",
+                    "Black Ops 4 only. Some of its sounds have no known name; they are normally saved as xsound_ followed by a number. With this on "
+                    "they are saved under the sound bank's file name and their position in the bank instead. Sounds that have a name are not "
+                    "affected."));
                 E.push_back(Toggle(Exp, "Sounds", "skipblankaudio", "Skip empty sounds", "false",
                     "In the games that keep sounds in sound banks, some entries hold no audio. With this on they are left out instead of "
                     "written as empty files. Safe to turn on; off by default so nothing is hidden from you."));
@@ -137,7 +145,8 @@ namespace ShellUi
                     "more files. Leave off unless you need them."));
                 E.push_back(Toggle(Exp, "Model formats", "exportvtxcolor", "Write vertex colours", "false",
                     "Some games paint colour into the model's vertices (used to tint or blend materials). On writes it into the model; off leaves "
-                    "it out. Off by default."));
+                    "it out. A new settings file starts with it off. (If the key were missing altogether the readers would treat it as on, but "
+                    "GrayWolf adds it as off at every start, so that does not happen.)"));
 
                 E.push_back(Toggle(Exp, "Animation formats", "export_castanim", "Cast animation (.cast)", "true",
                     "The default animation format, read by the Cast plugins for Blender and Maya. Includes the notetracks (the markers a game "
@@ -391,6 +400,8 @@ namespace ShellUi
                 }
                 else if (K == "@output") LoadGame.DrawOutputFolder();
                 else if (K == "@languages") LoadGame.DrawLanguages();
+                else if (K == "@imagesfolder")
+                    ImGui::TextDisabled("%s", (AbsoluteFolder(SettingsManager::GetSetting("disk_out", "exported_files")) + "\<game>\images").c_str());
                 else if (K == "@gamesettings") DrawGameSettings(LoadGame, Width);
                 else if (K == "@blender") DrawBlenderSettings();
                 else if (K == "@screenshots") DrawScreenshotSettings();
@@ -515,4 +526,9 @@ namespace ShellUi
     }
 }
 
-bool SettingsSelfTest(std::string& Report) { return ShellUi::SettingsPage::SelfTest(Report); }
+bool UiSelfTest(std::string& Report)
+{
+    const bool Settings = ShellUi::SettingsPage::SelfTest(Report);
+    const bool Search = ShellUi::Search::SelfTest(Report);
+    return Settings && Search;
+}

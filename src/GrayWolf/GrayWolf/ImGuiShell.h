@@ -11,7 +11,7 @@ struct UiRecordOptions;
 // Requires WraithX::InitializeAPI first (WIC, for texture decode).
 // ShotMode (ui-grid-shot): hidden, timed, the last frame saved, then closed. Record (ui-record):
 // hidden, its script played and every frame written (UiRecord.h), then closed.
-// The Settings page self-test (no window): every entry unique and explained, every game setting too.
-bool SettingsSelfTest(std::string& Report);
+// The shell's logic self-test (no window): the Settings page entries unique and explained, every game setting too, the search grammar.
+bool UiSelfTest(std::string& Report);
 
 bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode = nullptr, const UiRecordOptions* Record = nullptr);

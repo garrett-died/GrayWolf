@@ -179,6 +179,15 @@ namespace ShellUi
                 }
                 if (St.contains("settings_search")) std::snprintf(S.SettingsQuery, sizeof(S.SettingsQuery), "%s", St["settings_search"].get<std::string>().c_str());
                 if (St.contains("settings_jump")) S.SettingsJump = St["settings_jump"].get<std::string>();
+                if (St.contains("float"))   // a window undocked and put at x, y (off screen on purpose): KeepWindowsVisible must bring it back
+                {
+                    const auto& F = St["float"];
+                    S.FloatWindow = F.value("window", std::string("Viewport"));
+                    S.FloatX = F.value("x", 0.0f); S.FloatY = F.value("y", 0.0f);
+                    S.FloatFrames = 4;
+                }
+                if (St.contains("size"))    // the main window made this size (WxH)
+                    if (int W = 0, H = 0; sscanf_s(St["size"].get<std::string>().c_str(), "%dx%d", &W, &H) == 2) { S.RequestW = W; S.RequestH = H; }
                 if (St.contains("demo")) AddDemoRows(S, St["demo"].get<int>());
                 if (St.contains("label"))
                     Timeline += std::to_string(Written) + "\t" + St["label"].get<std::string>() + "\n";
@@ -310,6 +319,8 @@ namespace ShellUi
         {
             if (!P->PendingShot.empty())
             {
+                // no floating window may be out of sight in a shot (ImGuiShell.Windows.cpp)
+                for (const std::string& Name : HiddenWindows()) P->Fail("window out of sight in " + P->PendingShot + ": " + Name);
                 auto Shot = std::make_unique<DirectX::ScratchImage>();
                 ComPtr<ID3D11Texture2D> Pixels;
                 if (FAILED(Swap->GetBuffer(0, __uuidof(ID3D11Texture2D), &Pixels)) || FAILED(DirectX::CaptureTexture(P->Dev.Get(), P->Ctx.Get(), Pixels.Get(), *Shot)))
