@@ -6,8 +6,8 @@
 
 #include <string>
 
-// Inside the main menu bar: appends Blender to the Settings menu.
-void DrawBlenderSettingsMenu();
+// The Settings page's Blender controls: blender.exe's path, Browse, find it again, what was found.
+void DrawBlenderSettings();
 
 // One map's buttons, MapFile being its .glb, its _import.py or its .blend: "Open in Blender" (the
 // first time it imports the map and saves <map>.blend beside it) and, once that .blend exists,

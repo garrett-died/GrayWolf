@@ -55,8 +55,8 @@ namespace ShellUi
         });
     }
 
-    // Settings > Screenshots: the folder, picked or typed, opened, or back to its default.
-    void DrawScreenshotSettingsMenu()
+    // The Settings page's screenshot folder: picked or typed, opened, or back to its default.
+    void DrawScreenshotSettings()
     {
         static char Buf[1024] = {};
         if (std::string Picked; UiAsync::Picked("screenshots.dir", Picked))
@@ -64,24 +64,17 @@ namespace ShellUi
             SettingsManager::SetSetting("screenshot_dir", Picked);
             SetBuf(Buf, sizeof(Buf), Picked);
         }
-        if (!ImGui::BeginMenu("Settings")) return;   // appended to the Settings menu ImGuiUpdates opens
-        if (ImGui::BeginMenu("Screenshots"))
-        {
-            if (!ImGui::IsAnyItemActive()) SetBuf(Buf, sizeof(Buf), ScreenshotDir());
-            ImGui::TextUnformatted("Screenshots folder (Viewport camera button, Ctrl+Shift+S)");
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 30.0f);
-            ImGui::InputText("##screenshotdir", Buf, sizeof(Buf));
-            if (ImGui::IsItemDeactivatedAfterEdit()) SettingsManager::SetSetting("screenshot_dir", Buf);
-            if (ImGui::Button("Browse\xE2\x80\xA6")) UiAsync::PickFolder("screenshots.dir", "Select the screenshots folder", ScreenshotDir());
-            ImGui::SameLine();
-            if (ImGui::Button("Open folder")) OpenScreenshotDir();
-            ImGui::SameLine();
-            ImGui::BeginDisabled(SettingsManager::GetSetting("screenshot_dir", "").empty());
-            if (ImGui::Button("Use default")) SettingsManager::SetSetting("screenshot_dir", "");
-            ImGui::EndDisabled();
-            ImGui::EndMenu();
-        }
-        ImGui::EndMenu();
+        if (!ImGui::IsAnyItemActive()) SetBuf(Buf, sizeof(Buf), ScreenshotDir());
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 30.0f);
+        ImGui::InputText("##screenshotdir", Buf, sizeof(Buf));
+        if (ImGui::IsItemDeactivatedAfterEdit()) SettingsManager::SetSetting("screenshot_dir", Buf);
+        if (ImGui::Button("Browse\xE2\x80\xA6##shots")) UiAsync::PickFolder("screenshots.dir", "Select the screenshots folder", ScreenshotDir());
+        ImGui::SameLine();
+        if (ImGui::Button("Open folder##shots")) OpenScreenshotDir();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(SettingsManager::GetSetting("screenshot_dir", "").empty());
+        if (ImGui::Button("Use the default##shots")) SettingsManager::SetSetting("screenshot_dir", "");
+        ImGui::EndDisabled();
     }
 
     void RenderMeshToRT(ViewportState& V, ID3D11Device* Dev, ID3D11DeviceContext* Ctx, int W, int H)

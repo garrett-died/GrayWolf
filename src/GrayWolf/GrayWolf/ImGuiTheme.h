@@ -15,7 +15,7 @@ namespace Theme
         ImVec4 Base{ 0.071f, 0.075f, 0.086f, 1.0f }, Panel{ 0.102f, 0.106f, 0.122f, 1.0f }, Raised{ 0.149f, 0.153f, 0.173f, 1.0f },
                Overlay{ 0.180f, 0.184f, 0.208f, 1.0f }, Text{ 0.925f, 0.929f, 0.941f, 1.0f }, Muted{ 0.620f, 0.635f, 0.667f, 1.0f },
                Accent{ 0.961f, 0.647f, 0.141f, 1.0f }, AccentHover{ 1.000f, 0.718f, 0.290f, 1.0f },
-               AccentSoft{ 0.961f, 0.647f, 0.141f, 0.16f }, OnAccent{ 0.082f, 0.090f, 0.110f, 1.0f };
+               AccentSoft{ 0.961f, 0.647f, 0.141f, 0.16f }, AccentText{ 0.961f, 0.647f, 0.141f, 1.0f }, OnAccent{ 0.082f, 0.090f, 0.110f, 1.0f };
         ImU32 AccentU32 = IM_COL32(245, 165, 36, 255);
     };
     Colours& MutableColours();   // ImGuiShell.Theme.cpp: the one set, GrayWolf's by default
@@ -31,6 +31,7 @@ namespace Theme
     inline const ImVec4& Accent      = MutableColours().Accent;        // GrayWolf: #f5a524
     inline const ImVec4& AccentHover = MutableColours().AccentHover;
     inline const ImVec4& AccentSoft  = MutableColours().AccentSoft;    // a selected row, an active pill
+    inline const ImVec4& AccentText  = MutableColours().AccentText;    // accent-coloured text on a soft accent fill (a pill, a toggle): 4.5:1
     inline const ImVec4& OnAccent    = MutableColours().OnAccent;      // text on the accent
     inline const ImU32& AccentU32    = MutableColours().AccentU32;
 

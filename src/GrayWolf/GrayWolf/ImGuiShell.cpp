@@ -196,13 +196,15 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
         if (S.Recorder) S.Recorder->FrameBegin(S);
         ImGui::NewFrame();
 
-        bool OpenHelp = false;
-        if (DrawMainMenuBar(OpenHelp)) State.Quit = true;
+        bool OpenHelp = false, OpenSettings = LoadGame.ConsumeSettingsRequest();
+        if (DrawMainMenuBar(OpenHelp, OpenSettings)) State.Quit = true;
+        if (OpenSettings && !S.SettingsOpen) { S.SettingsOpen = true; S.SettingsJustOpened = true; }
         DrawStatusBar(S);
         BuildDockLayout(ImGui::DockSpaceOverViewport());
         DrawAssetsPanel(S, OpenHelp);
         DrawViewportPanel(S);
         DrawFilterHelp(OpenHelp);
+        if (S.SettingsOpen) SettingsPage::Draw(S, LoadGame);   // over the panels, the work area filled
 
         // (kept until the window exists: the first frame has drawn none yet)
         if (const std::string Id = "###" + S.FocusWindow; !S.FocusWindow.empty() && ImGui::FindWindowByName(Id.c_str()) != nullptr)

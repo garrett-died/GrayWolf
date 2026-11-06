@@ -90,6 +90,7 @@ int RunGltfSelfTest(const CliOptions& Options);
 int RunExportMapGlb(const CliOptions& Options);
 int RunOpenMap(const CliOptions& Options);
 int RunCerberusSelfTest(const CliOptions& Options);
+int RunSettingsSelfTest(const CliOptions& Options);
 int RunSeAnimSelfTest(const CliOptions& Options);
 int RunCastSelfTest(const CliOptions& Options);
 int RunMakeTestSeAnim(const CliOptions& Options);

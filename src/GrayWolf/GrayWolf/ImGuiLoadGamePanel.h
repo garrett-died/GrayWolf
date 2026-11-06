@@ -49,6 +49,13 @@ public:
     // ui-shot's demo: made-up installs on the tiles instead of a scan of this machine (nothing is
     // looked up, no game is read), so a screenshot shows nothing of the machine it was taken on
     void UseDemoInstalls();
+    // The Settings page's parts that live here: the output folder (disk_out) and the languages
+    // exported, and the game read now (null before one is)
+    void DrawOutputFolder();
+    void DrawLanguages();
+    const DiskGame::IDiskGame* LoadedGame() const { return Disk; }
+    // "Open Settings" in the What to export popup: true once, the shell opens the page
+    bool ConsumeSettingsRequest() { return SettingsRequested.exchange(false); }
     // A worker runs or is about to (the zone list not read yet): ui-record holds its frames meanwhile
     bool Working();
     // A spinner or a progress bar was drawn this frame: ui-record times the waits without one
@@ -85,12 +92,10 @@ private:
     // The two ways to pick: by asset (the install index searched) and by zone or map
     void DrawAssetTab();
     void DrawZoneTab();
-    // The bar at the bottom: what is picked, where it goes, "Formats & options", Export (and why
+    // The bar at the bottom: what is picked, where it goes, "What to export", Export (and why
     // not); the last export's result above it
     void DrawExportBar();
     void DrawOptions();
-    // The languages exported (Languages::SettingKey), beside the install's as its launcher says
-    void DrawLanguages();
     void DrawLastRun();
     // The index and its rows for search: kept by ReadZoneCounts, under Mutex
     void KeepIndex(std::unique_ptr<DiskGame::ZoneIndex> Ix);
@@ -213,8 +218,9 @@ private:
     int ZoneGroup = 0;                           // 0 all, 1 maps, 2 shared, 3 languages
     float BarHeight = 120.0f;                    // the export bar's height, last frame's
     bool OpenOptions = false;
+    std::atomic<bool> SettingsRequested{ false };
     bool OpenLanguages = false;   // the Languages list dropped down at its next draw (ui-record)
-    bool DrewIndicator = false;                  // a spinner or progress bar this frame (ShowedProgress)                    // "Formats & options" opened on the next frame (ui-record)
+    bool DrewIndicator = false;                  // a spinner or progress bar this frame (ShowedProgress)                    // "What to export" opened on the next frame (ui-record)
     std::string AssetPicksFor;                   // the zone list (DiskZonesFor) AssetPicks were made in
     // what the asset tab's export runs with, snapshotted for the worker
     std::shared_ptr<const DiskGame::Selection> ExportOnly;

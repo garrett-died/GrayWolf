@@ -476,7 +476,7 @@ void LoadGamePanel::DrawZoneTab()
     }
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("A zone is one of the game's packages: a map, content the modes share, or one language's text and voices. "
-                        "Exporting a zone writes all it holds of the kinds ticked in Formats & options.");
+                        "Exporting a zone writes all it holds of the kinds ticked in What to export.");
     ImGui::PopTextWrapPos();
 
     // the filter, the groups with their counts, and the index when the counts are missing
@@ -633,18 +633,12 @@ void LoadGamePanel::DrawZoneTable(std::vector<uint32_t>& Visible)
     ImGui::EndTable();
 }
 
-// The output folder, the kinds a zone export writes, the game's settings, the name filter
-void LoadGamePanel::DrawOptions()
+// The output folder, its Open buttons and the logs: the Settings page's "Export folder" (the same
+// setting, disk_out, the Export bar shows where it goes)
+void LoadGamePanel::DrawOutputFolder()
 {
-    const std::string Target = (fs::path(AbsoluteFolder(DiskOutBuf)) / Disk->Id()).string();
-    // compact: small frames and checkboxes, the rows close together
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 2.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 3.0f));
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("Output");
-    ImGui::SameLine();
-    const float BrowseW = ImGui::CalcTextSize("Browse").x + ImGui::GetStyle().FramePadding.x * 2;
-    ImGui::SetNextItemWidth(-(BrowseW + ImGui::GetStyle().ItemSpacing.x));
+    const std::string Target = (fs::path(AbsoluteFolder(DiskOutBuf)) / (Disk ? Disk->Id() : "")).string();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 30.0f);
     ImGui::InputText("##diskoutdir", DiskOutBuf, sizeof(DiskOutBuf));
     if (ImGui::IsItemDeactivatedAfterEdit()) Persist();
     if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) ImGui::SetTooltip("Exports go to %s", Target.c_str());
@@ -667,18 +661,24 @@ void LoadGamePanel::DrawOptions()
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", Path.c_str());
     };
     ImGui::BeginDisabled(!HasTarget);
-    if (ImGui::SmallButton("Open folder##diskout")) UiAsync::OpenInShell(Target);
+    if (ImGui::Button("Open folder##diskout")) UiAsync::OpenInShell(Target);
     ImGui::EndDisabled();
     PathTip(Target);
     ImGui::SameLine();
     ImGui::BeginDisabled(!HasRunLog);
-    if (ImGui::SmallButton("Open export log##diskout")) UiAsync::OpenInShell(RunLog);
+    if (ImGui::Button("Open export log##diskout")) UiAsync::OpenInShell(RunLog);
     ImGui::EndDisabled();
     PathTip(RunLog);
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Session log##diskout")) UiAsync::OpenInShell(AppLog::SessionPath());
-    PathTip(AppLog::SessionPath());
-    ImGui::Separator();
+}
+
+// The kinds a zone export writes, the name filter, the maps already exported (the Export bar's
+// "What to export"); the folder, languages and the game's settings are on the Settings page
+void LoadGamePanel::DrawOptions()
+{
+    const std::string Target = (fs::path(AbsoluteFolder(DiskOutBuf)) / Disk->Id()).string();
+    // compact: small frames and checkboxes, the rows close together
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 2.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 3.0f));
 
     // the kinds the game's readers export, in even columns: the assets, then the data dumps folded
     // under one node; the others named in a tooltip
@@ -724,40 +724,6 @@ void LoadGamePanel::DrawOptions()
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Not supported for this game yet:\n%s", Missing.c_str());
     }
 
-    DrawLanguages();
-
-    // the game's settings, each while one of the kinds it concerns is ticked or picked
-    std::set<DiskGame::Kind> Picked;
-    for (const auto& A : AssetPicks) Picked.insert(A.K);
-    bool AnySetting = false;
-    for (const DiskGame::Setting* Each : Disk->AllSettings())
-    {
-        const DiskGame::Setting& S = *Each;
-        bool Shown = false;
-        for (DiskGame::Kind K : S.Concerns) Shown = Shown || (ExportByAsset ? Picked.count(K) != 0 : DiskKindFlags[(size_t)K] != 0);
-        if (!Shown) continue;
-        if (!AnySetting)
-        {
-            ImGui::Separator();
-            ImGui::TextUnformatted("Settings");
-        }
-        AnySetting = true;
-        const std::string Key = SettingKey(*Disk, S);
-        const std::string Value = SettingsManager::GetSetting(Key, S.Default);
-        std::string Preview = Value;
-        for (const auto& [V, L] : S.Values)
-            if (V == Value) Preview = L;
-        ImGui::TextUnformatted(S.Label);
-        ImGui::SameLine(ImGui::GetFontSize() * 12.0f);
-        ImGui::SetNextItemWidth(200);
-        if (ImGui::BeginCombo(("##disksetting_" + Key).c_str(), Preview.c_str()))
-        {
-            for (const auto& [V, L] : S.Values)
-                if (ImGui::Selectable(L.c_str(), V == Value)) SettingsManager::SetSetting(Key, V);
-            ImGui::EndCombo();
-        }
-    }
-
     // the name filter, for a zone export of a game whose readers can filter
     if (!ExportByAsset)
     {
@@ -773,6 +739,12 @@ void LoadGamePanel::DrawOptions()
             ImGui::SetTooltip(Disk->FiltersByName() ? "Only the assets whose name contains one of these (comma-separated)"
                                                     : "This game's reader writes each kind whole: every asset is exported");
     }
+
+    ImGui::Separator();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("The output folder, languages, file formats and each game's own choices are on the Settings page.");
+    ImGui::PopTextWrapPos();
+    if (ImGui::SmallButton("Open Settings")) SettingsRequested.store(true);
 
     // the maps exported to this folder, each opened in Blender
     DrawMapsInBlender(Target);
@@ -1020,17 +992,17 @@ void LoadGamePanel::DrawExportBar()
         Picked = Zones == 0 ? std::string("Nothing picked yet") : Thousands(Zones) + (Zones == 1 ? " zone picked" : " zones picked");
         Note = Kinds.empty() ? std::string("no kind ticked") : Kinds;
         if (Zones == 0) Why = "Pick a map or a zone above to export it";
-        else if (Kinds.empty()) Why = "Tick at least one kind of asset in Formats & options";
+        else if (Kinds.empty()) Why = "Tick at least one kind of asset in What to export";
         Ready = Zones > 0 && !Kinds.empty();
     }
     if (Ready && DiskOutBuf[0] == 0)
     {
-        Why = "Set an output folder in Formats & options";
+        Why = "Set an output folder in Settings";
         Ready = false;
     }
 
     const float ExportWidth = ImGui::GetFontSize() * 9.0f;
-    const float OptionsWidth = ImGui::CalcTextSize("Formats & options").x + ImGui::GetStyle().FramePadding.x * 2;
+    const float OptionsWidth = ImGui::CalcTextSize("What to export").x + ImGui::GetStyle().FramePadding.x * 2;
     const float Buttons = ExportWidth + OptionsWidth + ImGui::GetStyle().ItemSpacing.x * 2;
     // the text beside the buttons when the panel is wide, above them when it is narrow; the note
     // (the dependencies, the kinds ticked) in the first line's tooltip
@@ -1054,7 +1026,7 @@ void LoadGamePanel::DrawExportBar()
     else ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - Buttons));
     ImGui::BeginDisabled(Busyish);
     const float Tall = ImGui::GetFrameHeight() * 1.5f;
-    if (ImGui::Button("Formats & options", ImVec2(OptionsWidth, Tall)) || OpenOptions) ImGui::OpenPopup("##diskoptions");
+    if (ImGui::Button("What to export", ImVec2(OptionsWidth, Tall)) || OpenOptions) ImGui::OpenPopup("##diskoptions");
     OpenOptions = false;
     ImGui::SameLine();
     ImGui::BeginDisabled(!Ready);
@@ -1186,7 +1158,7 @@ void LoadGamePanel::DrawEstimate(const std::string& Target)
         ImGui::SetTooltip("%s", Tip.c_str());
     }
     // what would make the estimate whole, each on demand and on its own line (beside the wrapped
-    // text above, a button would sit under "Formats & options" and take its clicks)
+    // text above, a button would sit under "What to export" and take its clicks)
     bool Unweighed = false;
     {
         std::lock_guard<std::mutex> Lock(Mutex);

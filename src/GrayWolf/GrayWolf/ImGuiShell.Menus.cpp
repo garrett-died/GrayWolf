@@ -6,8 +6,7 @@
 #include "UiAsync.h"           // shell opens off the frame
 #include "Strings.h"
 #include "SettingsManager.h"   // exportsnd
-#include "ImGuiUpdates.h"      // Settings > Updates, the new-version banner
-#include "ImGuiBlender.h"      // Settings > Blender
+#include "ImGuiUpdates.h"      // the new-version banner
 
 #include "imgui.h"
 #include "imgui_internal.h"   // DockBuilder* for the initial layout
@@ -16,51 +15,14 @@
 
 namespace ShellUi
 {
-    // Settings > Sounds: the format every export writes sounds in (setting exportsnd, what
-    // --audio-format sets for one run; ExportWriters::WriteSound)
-    static void DrawSoundSettingsMenu()
-    {
-        if (!ImGui::BeginMenu("Settings")) return;   // appended to the Settings menu ImGuiUpdates opens
-        if (ImGui::BeginMenu("Theme"))
-        {
-            for (int i = 0; i < Theme::Count(); i++)
-            {
-                if (ImGui::MenuItem(Theme::Name(i), nullptr, Theme::CurrentIndex() == i)) Theme::Apply(i, true);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Theme::About(i));
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Sounds"))
-        {
-            // Opus by default (ExportWriters::SoundFormatSetting)
-            const std::string Current = Strings::ToUpper(SettingsManager::GetSetting("exportsnd", "OPUS"));
-            const struct { const char* Value; const char* Label; const char* Tip; } Formats[] = {
-                { "OPUS", "Opus (default: small, lossy)",
-                  "The game's own Opus packets kept as they are when it stores Opus; any other sound decoded and encoded "
-                  "(64 kb/s a channel, 48 kHz). About a tenth of WAV's size." },
-                { "WAV", "WAV (lossless)", "As the game keeps them (PCM, ADPCM, MP3), or decoded to 16-bit PCM. The largest files." },
-                { "FLAC", "FLAC (lossless, compressed)", "Lossless, about half of WAV's size." },
-            };
-            for (const auto& F : Formats)
-            {
-                if (ImGui::MenuItem(F.Label, nullptr, Current == F.Value)) SettingsManager::SetSetting("exportsnd", F.Value);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", F.Tip);
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::EndMenu();
-    }
-
-    bool DrawMainMenuBar(bool& OpenHelp)
+    bool DrawMainMenuBar(bool& OpenHelp, bool& OpenSettings)
     {
         bool Quit = false;
         if (ImGui::BeginMainMenuBar())
         {
             if (ImGui::BeginMenu("File")) { if (ImGui::MenuItem("Exit")) Quit = true; ImGui::EndMenu(); }
-            DrawUpdatesMenu();
-            DrawBlenderSettingsMenu();
-            DrawScreenshotSettingsMenu();
-            DrawSoundSettingsMenu();
+            // one place for every setting: a page, not a menu (the former Settings menus, the Options popup)
+            if (ImGui::MenuItem("Settings")) OpenSettings = true;
             if (ImGui::BeginMenu("Help"))
             {
                 if (ImGui::MenuItem("Search syntax")) OpenHelp = true;

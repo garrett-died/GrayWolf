@@ -108,45 +108,38 @@ namespace
     }
 }
 
-void DrawBlenderSettingsMenu()
+void DrawBlenderSettings()
 {
-    // collected outside the menu: the dialog takes the focus, which closes it
+    // collected here: the dialog takes the focus
     if (std::string Picked; UiAsync::Picked("blender.exe", Picked))
     {
         SettingsManager::SetSetting("blender_path", Picked);
         SetBuf(PathBuf, sizeof(PathBuf), Picked);
     }
-    if (!ImGui::BeginMenu("Settings")) return;   // appended to the Settings menu ImGuiUpdates opens
-    if (ImGui::BeginMenu("Blender"))
+    if (!PathLoaded || !ImGui::IsAnyItemActive()) SetBuf(PathBuf, sizeof(PathBuf), SettingsManager::GetSetting("blender_path", ""));
+    PathLoaded = true;
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 30.0f);
+    ImGui::InputTextWithHint("##blenderpath", "Found by itself: BLENDER, Program Files, Steam, registry, PATH", PathBuf, sizeof(PathBuf));
+    if (ImGui::IsItemDeactivatedAfterEdit()) SettingsManager::SetSetting("blender_path", PathBuf);
+    bool Pending = false;
+    const Blender::Exe B = BlenderExe(&Pending);
+    if (ImGui::Button("Browse\xE2\x80\xA6##blender"))
     {
-        if (!PathLoaded || !ImGui::IsAnyItemActive()) SetBuf(PathBuf, sizeof(PathBuf), SettingsManager::GetSetting("blender_path", ""));
-        PathLoaded = true;
-        ImGui::TextUnformatted("blender.exe (leave empty to detect it)");
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 30.0f);
-        ImGui::InputTextWithHint("##blenderpath", "Detected from BLENDER, Program Files, Steam, registry, PATH", PathBuf, sizeof(PathBuf));
-        if (ImGui::IsItemDeactivatedAfterEdit()) SettingsManager::SetSetting("blender_path", PathBuf);
-        bool Pending = false;
-        const Blender::Exe B = BlenderExe(&Pending);
-        if (ImGui::Button("Browse\xE2\x80\xA6"))
-        {
-            const std::string Start = B.Path.substr(0, std::min(B.Path.size(), B.Path.find_last_of("\\/")));
-            UiAsync::PickOpenFile("blender.exe", "Select blender.exe", { { L"Blender", L"blender.exe;blender-launcher.exe" } }, Start);
-        }
-        ImGui::SameLine();
-        ImGui::BeginDisabled(PathBuf[0] == 0);
-        if (ImGui::Button("Detect"))
-        {
-            SettingsManager::SetSetting("blender_path", "");
-            PathBuf[0] = 0;
-        }
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Clear the path above and find Blender automatically");
-        if (Pending) ImGui::TextDisabled("Looking for Blender\xE2\x80\xA6");
-        else if (B.Path.empty()) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Blender not found");
-        else ImGui::TextDisabled("Using %s (%s)", B.Path.c_str(), B.From.c_str());
-        ImGui::EndMenu();
+        const std::string Start = B.Path.substr(0, std::min(B.Path.size(), B.Path.find_last_of("\\/")));
+        UiAsync::PickOpenFile("blender.exe", "Select blender.exe", { { L"Blender", L"blender.exe;blender-launcher.exe" } }, Start);
     }
-    ImGui::EndMenu();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(PathBuf[0] == 0);
+    if (ImGui::Button("Find it again##blender"))
+    {
+        SettingsManager::SetSetting("blender_path", "");
+        PathBuf[0] = 0;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Clear the path above and find Blender automatically");
+    if (Pending) ImGui::TextDisabled("Looking for Blender\xE2\x80\xA6");
+    else if (B.Path.empty()) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "Blender not found");
+    else ImGui::TextDisabled("Using %s (%s)", B.Path.c_str(), B.From.c_str());
 }
 
 void DrawOpenInBlender(const std::string& MapFile)

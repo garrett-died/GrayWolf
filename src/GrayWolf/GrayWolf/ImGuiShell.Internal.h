@@ -35,6 +35,8 @@
 #include <unordered_map>
 #include <vector>
 
+class LoadGamePanel;   // ImGuiLoadGamePanel.h
+
 namespace ShellUi
 {
     // GPU resources for one loaded model; copies share them.
@@ -262,6 +264,10 @@ namespace ShellUi
         int SelectWhenListedFrames = 0;   // given up after this many frames without it
         // ui-record: a window brought forward, a Load Game step (JSON), both applied in the next frame
         std::string FocusWindow, LoadGameScript;
+        // the Settings page: open, just opened (it takes the focus), the search, a group to scroll to
+        bool SettingsOpen = false, SettingsJustOpened = false;
+        char SettingsQuery[128] = "";
+        std::string SettingsJump;
         bool DemoInstalls = false;      // ui-shot's demo: Load Game shows made-up installs (applied in the next frame)
         bool LoadGameWorking = false;   // Load Game's worker runs: ui-record holds its frames
         bool LoadGameIndicator = false; // and shows a spinner or progress bar for it (else a silent wait)
@@ -307,6 +313,24 @@ namespace ShellUi
     // The Viewport window (dispatches on the selected asset kind).
     void DrawViewportPanel(ShellState& S);
 
+    // ImGuiShell.Settings.cpp: the Settings page. Every setting is an Entry with its explanation.
+    namespace SettingsPage
+    {
+        enum class Kind { Toggle, Choice, Path, Custom };
+        struct Option { const char* Value; const char* Label; };
+        struct Entry
+        {
+            const char* Section; const char* Group; Kind K; const char* Key; const char* Label; const char* Help; const char* Default;
+            std::vector<Option> Options;
+        };
+        const std::vector<Entry>& Entries();
+        bool Matches(const Entry& E, const std::string& Query);   // case-insensitive, in its words
+        // The plain words for a game's own setting (DiskGame::Setting::Key); null when there are none
+        const char* DiskSettingHelp(const std::string& Key);
+        bool SelfTest(std::string& Report);   // settings-selftest: unique keys, every entry explained
+        void Draw(ShellState& S, LoadGamePanel& LoadGame);   // while S.SettingsOpen
+    }
+
     // ImGuiShell.Demo.cpp: made-up rows for screenshots (ui-shot's "demo"), nothing on disk behind them
     // Adds Count rows (models, images, sounds, anims, maps, effects) named from word lists.
     void AddDemoRows(ShellState& S, int Count);
@@ -322,7 +346,7 @@ namespace ShellUi
     // ImGuiShell.Screenshots.cpp
     std::string ScreenshotDir();
     void OpenScreenshotDir();
-    void DrawScreenshotSettingsMenu();
+    void DrawScreenshotSettings();   // the Settings page's screenshot folder
     void RenderMeshToRT(ViewportState& V, ID3D11Device* Dev, ID3D11DeviceContext* Ctx, int W, int H);
     void DrawScreenshotBar(ViewportState& V, std::string ModelName);
     // GH_UI_SHOT's triggers, after the frame is drawn and before Present.
@@ -330,7 +354,7 @@ namespace ShellUi
 
     // ImGuiShell.Menus.cpp
     // The main menu bar and the update banner; true when the app is to quit.
-    bool DrawMainMenuBar(bool& OpenHelp);
+    bool DrawMainMenuBar(bool& OpenHelp, bool& OpenSettings);
     void DrawStatusBar(const ShellState& S);
     void BuildDockLayout(unsigned int DockId);
     void DrawFilterHelp(bool OpenHelp);

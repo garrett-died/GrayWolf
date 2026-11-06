@@ -68,7 +68,7 @@ namespace Theme
             C.Raised = ImVec4(0.149f, 0.153f, 0.173f, 1.0f); C.Overlay = ImVec4(0.180f, 0.184f, 0.208f, 1.0f);
             C.Text = ImVec4(0.925f, 0.929f, 0.941f, 1.0f); C.Muted = ImVec4(0.620f, 0.635f, 0.667f, 1.0f);
             C.Accent = ImVec4(0.961f, 0.647f, 0.141f, 1.0f); C.AccentHover = ImVec4(1.000f, 0.718f, 0.290f, 1.0f);
-            C.AccentSoft = ImVec4(0.961f, 0.647f, 0.141f, 0.16f); C.OnAccent = ImVec4(0.082f, 0.090f, 0.110f, 1.0f);
+            C.AccentSoft = ImVec4(0.961f, 0.647f, 0.141f, 0.16f); C.AccentText = C.Accent; C.OnAccent = ImVec4(0.082f, 0.090f, 0.110f, 1.0f);
             C.AccentU32 = IM_COL32(245, 165, 36, 255);
             St.Colors[ImGuiCol_Text]                 = ImVec4(0.925f, 0.929f, 0.941f, 1.0f);
             St.Colors[ImGuiCol_TextDisabled]         = ImVec4(0.62f, 0.635f, 0.667f, 1.0f);
@@ -133,7 +133,7 @@ namespace Theme
             Colours& C = MutableColours();
             C.Base = Ground; C.Panel = PanelC; C.Raised = ButtonC; C.Overlay = HeaderRow;
             C.Text = TextC; C.Muted = MutedC;
-            C.Accent = Blue; C.AccentHover = Rgb(0x5B, 0x9B, 0xF8); C.AccentSoft = Rgb(0x3B, 0x82, 0xF6, 0.28f); C.OnAccent = Rgb(0xFF, 0xFF, 0xFF);
+            C.Accent = Blue; C.AccentHover = Rgb(0x5B, 0x9B, 0xF8); C.AccentSoft = Rgb(0x3B, 0x82, 0xF6, 0.28f); C.AccentText = Rgb(0xBF, 0xDB, 0xFE); C.OnAccent = Rgb(0x0F, 0x17, 0x2A);   // light blue on the soft blue fill 5.4:1; dark text on the solid blue 4.7:1
             C.AccentU32 = IM_COL32(0x3B, 0x82, 0xF6, 255);
             const ImVec4 Hover = Rgb(0xFF, 0xFF, 0xFF, 0.10f);
             St.Colors[ImGuiCol_Text]                 = TextC;
@@ -296,7 +296,7 @@ namespace Theme
         ImGui::PushStyleColor(ImGuiCol_Button, On ? AccentSoft : ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, On ? ImVec4(Accent.x, Accent.y, Accent.z, 0.24f) : ImVec4(1, 1, 1, 0.08f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.14f));
-        if (On) ImGui::PushStyleColor(ImGuiCol_Text, Accent);
+        if (On) ImGui::PushStyleColor(ImGuiCol_Text, AccentText);
         const bool Hit = ImGui::Button(Glyph, ImVec2(H, H));
         ImGui::PopStyleColor(On ? 4 : 3);
         if (Tooltip && *Tooltip && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", Tooltip);
@@ -316,7 +316,7 @@ namespace Theme
         ImGui::PushStyleColor(ImGuiCol_Button, On ? AccentSoft : ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, On ? ImVec4(Accent.x, Accent.y, Accent.z, 0.24f) : ImVec4(1, 1, 1, 0.07f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(Accent.x, Accent.y, Accent.z, 0.30f));
-        ImGui::PushStyleColor(ImGuiCol_Text, On ? Accent : Muted);
+        ImGui::PushStyleColor(ImGuiCol_Text, On ? AccentText : Muted);
         const bool Hit = ImGui::Button(Label, Size);
         ImGui::PopStyleColor(4);
         return Hit;

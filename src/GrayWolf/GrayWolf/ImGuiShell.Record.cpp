@@ -171,6 +171,14 @@ namespace ShellUi
                 ViewportState& V = S.Viewport;
                 Settle = O.Shots ? 8 : 3;   // a shot waits for the panels to find their size
                 if (St.contains("theme") && !Theme::ApplyByName(St["theme"].get<std::string>())) Fail("unknown theme: " + St["theme"].get<std::string>());
+                if (St.contains("page"))   // "settings" opens the Settings page, "main" closes it
+                {
+                    const bool Open = St["page"].get<std::string>() == "settings";
+                    if (Open && !S.SettingsOpen) S.SettingsJustOpened = true;
+                    S.SettingsOpen = Open;
+                }
+                if (St.contains("settings_search")) std::snprintf(S.SettingsQuery, sizeof(S.SettingsQuery), "%s", St["settings_search"].get<std::string>().c_str());
+                if (St.contains("settings_jump")) S.SettingsJump = St["settings_jump"].get<std::string>();
                 if (St.contains("demo")) AddDemoRows(S, St["demo"].get<int>());
                 if (St.contains("label"))
                     Timeline += std::to_string(Written) + "\t" + St["label"].get<std::string>() + "\n";

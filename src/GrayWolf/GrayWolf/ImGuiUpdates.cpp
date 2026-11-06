@@ -17,36 +17,26 @@ namespace
     bool SettingOn(const char* Key, const char* Default) { return SettingsManager::GetSetting(Key, Default) == "true"; }
 }
 
-void DrawUpdatesMenu()
+void DrawUpdatesSettings()
 {
-    if (!ImGui::BeginMenu("Settings")) return;
-    if (ImGui::BeginMenu("Updates"))
+    bool Auto = SettingOn("auto_update", "true");
+    if (ImGui::Checkbox("Check for updates when GrayWolf starts", &Auto))
+        SettingsManager::SetSetting("auto_update", Auto ? "true" : "false");
+    bool Gh = SettingOn("update_use_gh_token", "false");
+    if (ImGui::Checkbox("Use the GitHub CLI's token for the check", &Gh))
+        SettingsManager::SetSetting("update_use_gh_token", Gh ? "true" : "false");
+    ImGui::Spacing();
+    const Updater::Background::View V = Updater::Background::Get();
+    ImGui::BeginDisabled(V.Busy);
+    if (ImGui::Button(V.Busy ? "Checking\xE2\x80\xA6" : "Check for updates now"))
     {
-        bool Auto = SettingOn("auto_update", "true");
-        if (ImGui::MenuItem("Check for updates at startup", nullptr, &Auto))
-            SettingsManager::SetSetting("auto_update", Auto ? "true" : "false");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("At startup: newer hash name packages (package_index) are installed,\n"
-                              "a newer GrayWolf is only announced (Download / Later).");
-        bool Gh = SettingOn("update_use_gh_token", "false");
-        if (ImGui::MenuItem("Use the GitHub CLI's token (gh auth token)", nullptr, &Gh))
-            SettingsManager::SetSetting("update_use_gh_token", Gh ? "true" : "false");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("For a private repository: the token is read from gh at each check,\n"
-                              "sent to the GitHub API only, never saved. GRAYWOLF_GITHUB_TOKEN is used first.");
-        ImGui::Separator();
-        const Updater::Background::View V = Updater::Background::Get();
-        if (ImGui::MenuItem(V.Busy ? "Checking\xE2\x80\xA6" : "Check for updates now", nullptr, false, !V.Busy))
-        {
-            BannerDismissed = false;
-            Updater::Background::Start(false);
-        }
-        ImGui::TextDisabled("Installed version: %s", Updater::AppVersion().c_str());
-        ImGui::TextDisabled("Repository: %s", SettingsManager::GetSetting("update_repo", "Kenshin9977/GrayWolf").c_str());
-        if (!V.Line.empty()) ImGui::TextDisabled("%s", V.Line.c_str());
-        ImGui::EndMenu();
+        BannerDismissed = false;
+        Updater::Background::Start(false);
     }
-    ImGui::EndMenu();
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Installed version: %s", Updater::AppVersion().c_str());
+    ImGui::TextDisabled("Repository: %s", SettingsManager::GetSetting("update_repo", "Kenshin9977/GrayWolf").c_str());
+    if (!V.Line.empty()) ImGui::TextDisabled("%s", V.Line.c_str());
 }
 
 bool DrawUpdateBanner()
