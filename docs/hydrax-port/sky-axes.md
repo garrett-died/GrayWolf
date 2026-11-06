@@ -139,3 +139,10 @@ azimuth -97.9, elevation 7.1; the preset (`default_morning` pitch 165, yaw 263) 
 and the sky image), not a bake error.
 
 **Turn:** the environment's Turn now turns the backdrop and the preset sun together (the gradient is the same all round) (`TurnedSunDirection`), proven by `ui-selftest`.
+
+**Night's grain is in the source (tested):** `zm_skybox_factory_05` (1024 per face, six EXRs) decoded directly against the baked backdrop cube, same
+faces, regions of 254 x 254 texels (luminance; roughness is the mean of |texel - mean of its 3 x 3| over the mean). The baked cube equals the source times the
+gain times 1 / 0.45 (the preview's IBL scale) to within the compression (ratio 2.22 everywhere), and the roughness is the same to the third digit:
++X 0.029 / 0.034 source, 0.030 / 0.034 baked; +Z 0.020 / 0.070 and 0.021 / 0.071; -Z (ground) 0.094 / 0.083 and 0.094 / 0.084. So the speckle in Night's
+clouds and ground is noise in the EXR (3 to 9 percent texel to texel), shown as it is because the sky is exposed 78 times up (`TargetMid 0.06 / estimate`),
+as HydraX does it; BC6H at these values (about 0.1 to 0.2 in the cube) adds nothing measurable. Nothing was changed.
