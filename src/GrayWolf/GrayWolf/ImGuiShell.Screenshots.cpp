@@ -3,6 +3,7 @@
 // The Viewport's screenshots: the folder (Settings > Screenshots), the Screenshot bar, the render and
 // its save, and GH_UI_SHOT's triggers (a headless caller's grab of the window or of the 3D view).
 #include "ImGuiShell.Internal.h"
+#include "PreviewToolbar.h"
 #include "AppLog.h"           // spdlog
 #include "ImGuiDialogs.h"      // SetBuf, AbsoluteFolder
 #include "UiAsync.h"           // dialogs, shell opens and disk lookups off the frame
@@ -141,7 +142,9 @@ namespace ShellUi
             if (ImGui::MenuItem("Open the screenshots folder")) OpenScreenshotDir();
             ImGui::EndPopup();
         }
-        ImGui::SameLine();
+        PreviewToolbar::Begin(V.ToolbarWidth);   // the row breaks where the 3D view ends: nothing is out of reach in a narrow window
+        const float Em = ImGui::GetFontSize();
+        PreviewToolbar::SameLine(-1.0f, Em * 3.2f);
         static const char* Scales[] = { "1x", "2x", "4x" };
         int ScaleIdx = V.ShotScale == 4 ? 2 : V.ShotScale - 1;
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 3.2f);
@@ -158,21 +161,22 @@ namespace ShellUi
             SettingsManager::SetSetting("preview_lights", std::to_string(Lighting.Lights));
             SettingsManager::SetSetting("preview_specular", Lighting.Specular ? "true" : "false");
         };
-        const auto Glyph = [](const char* G) { ImGui::SameLine(); ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("%s", G); ImGui::SameLine(); };
-        ImGui::SameLine(0, ImGui::GetFontSize() * 0.6f);
+        const auto Glyph = [](const char* G) { ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("%s", G); ImGui::SameLine(); };
+        PreviewToolbar::SameLine(Em * 0.6f, Em * 6.2f);
         Glyph(Theme::Icon::Exposure);
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.5f);
         ImGui::SliderFloat("##exposure", &Lighting.Exposure, -4.0f, 4.0f, "%+.1f");
         if (ImGui::IsItemDeactivatedAfterEdit()) SaveLighting();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exposure in stops (double-click to type, right-click resets)");
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { Lighting.Exposure = 0.0f; SaveLighting(); }
+        PreviewToolbar::SameLine(-1.0f, Em * 6.2f);
         Glyph(Theme::Icon::Lights);
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.5f);
         ImGui::SliderFloat("##lights", &Lighting.Lights, 0.0f, 3.0f, "%.2fx");
         if (ImGui::IsItemDeactivatedAfterEdit()) SaveLighting();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Strength of the three lights; the environment light stays (right-click resets)");
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { Lighting.Lights = PreviewLighting{}.Lights; SaveLighting(); }
-        ImGui::SameLine(0, ImGui::GetFontSize() * 0.4f);
+        PreviewToolbar::SameLine(Em * 0.4f, Em * 5.0f);
         // no icon says "specular" plainly: the word, as a toggle
         if (Theme::Pill("Specular", Lighting.Specular))
         {
@@ -180,11 +184,11 @@ namespace ShellUi
             SaveLighting();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Specular highlights (off: plain matte surfaces, to judge a material's colour)");
-        ImGui::SameLine(0, ImGui::GetFontSize() * 0.4f);
+        PreviewToolbar::SameLine(Em * 0.4f, Em * 6.0f);
         DrawPreviewEnvironmentControls(Lighting, V.Sky, V.Background);   // the Lighting menu, the sky chip, the environment's turn and strength, bloom
         if (DrawPreviewShadowControls(Lighting.Shadow)) SavePreviewShadowSettings(Lighting.Shadow);
         // ambient occlusion, anti-aliasing, still frames (PreviewPost.h), in a popup
-        ImGui::SameLine(0, ImGui::GetFontSize() * 0.4f);
+        PreviewToolbar::SameLine(Em * 0.4f, Em * 2.2f);
         if (Theme::IconButton("quality", Theme::Icon::Sliders, "Quality: ambient occlusion, anti-aliasing, still frames")) ImGui::OpenPopup("##quality");
         if (ImGui::BeginPopup("##quality"))
         {
@@ -198,11 +202,11 @@ namespace ShellUi
         }
         if (!Status.empty())
         {
-            ImGui::SameLine();
+            PreviewToolbar::SameLine(-1.0f, ImGui::CalcTextSize(Status.c_str()).x);
             ImGui::TextDisabled("%s", Status.c_str());
             if (!File.empty())
             {
-                ImGui::SameLine();
+                PreviewToolbar::SameLine(-1.0f, Em * 8.0f);
                 if (ImGui::SmallButton("Show in folder")) UiAsync::OpenInShell(File, true);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open its folder with the file selected");
             }

@@ -225,6 +225,7 @@ namespace ShellUi
         PreviewLighting Lighting;
         // the Lighting menu: the BO3 skies of the Mod Tools, Fullbright; the background colour seen where the sky is off (kept in the settings)
         SkyLighting::Service Sky;
+        float ToolbarWidth = 1.0e9f;   // the width the toolbar over the 3D view may use (set by the view each frame; it breaks into rows)
         float Background[3] = { kPreviewBackground[0], kPreviewBackground[1], kPreviewBackground[2] };
         PreviewQuality Quality = LoadPreviewQuality();   // ambient occlusion, anti-aliasing, still frames (PreviewPost.h)
     };

@@ -72,15 +72,19 @@ struct EnvironmentImage
     std::vector<float> Rgba;   // LatLong: Width * Height * 4. CubeFaces: 6 * Width * Height * 4
 };
 
+// The image based light's scale on an environment's cubes (and the backdrop's): what the cube's values are multiplied by on screen
+inline constexpr float kPreviewIblScale = 0.45f;
+
 // What a long bake is told: stop at the next row (Cancel), report 0..1 from the bake's thread (Progress), cut each source
-// texel to ClampTexel before anything else (0: not; a sky's sun disc would otherwise light the model twice, with the
-// sun), and scale the light by ScaleMultiplier beyond the studio sky's mean.
+// texel to ClampTexel before anything else (0: not), and scale the light by ScaleMultiplier beyond the studio sky's mean
+// (AbsoluteScale: by ScaleMultiplier alone, the source's own scale kept: the Mod Tools skies, whose exposure is the preset's).
 struct EnvironmentBakeControl
 {
     const std::atomic<bool>* Cancel = nullptr;
     std::function<void(float)> Progress;
     float ClampTexel = 0.0f;
     float ScaleMultiplier = 1.0f;
+    bool AbsoluteScale = false;
 };
 
 // The source seen as a cube of Size per face in D3D's face order (+X -X +Y -Y +Z -Z), RGBA floats, 6 * Size * Size * 4,

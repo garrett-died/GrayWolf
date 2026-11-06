@@ -399,6 +399,7 @@ namespace ShellUi
                 {
                     const ImVec2 Back = ImGui::GetCursorScreenPos();
                     const float Pad = ImGui::GetStyle().ItemSpacing.x;
+                    V.ToolbarWidth = std::max(100.0f, (ViewMax.x - ViewMin.x) - 2.0f * Pad - 8.0f - 4.0f);   // less the plate's padding and the scrollbar's strip
                     ImGui::SetCursorScreenPos(ImVec2(ViewMin.x + Pad, ViewMin.y + Pad));
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(Theme::Base.x, Theme::Base.y, Theme::Base.z, 0.78f));
                     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));

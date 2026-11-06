@@ -233,7 +233,7 @@ namespace
         T.Check(PresetOf(LightState::Sunset).ExposureValue() == 12.5, "Sunset ev clamps to EvMax 12.5", Num(PresetOf(LightState::Sunset).ExposureValue()));
         T.Check(PresetOf(LightState::Night).ExposureValue() == 3.0 && PresetOf(LightState::Night).Exposure() == 1.0, "Night ev clamps to EvMin 3, exposure 2^0", Num(PresetOf(LightState::Night).ExposureValue()));
         T.Check(Near(PresetOf(LightState::Sunset).Exposure(), std::pow(2.0, 9.5), 1e-6), "Sunset exposure 2^(12.5 - 3)");
-        T.Check(TargetMid(LightState::Day) == 0.18f && TargetMid(LightState::Night) == 0.06f, "target mid greys 0.18, Night 0.06");
+        T.Check(Near(SkyGain(LightState::Day), 16384.0 / (1941.2540 * 4.0), 1e-9) && Near(SkyGain(LightState::Night), std::pow(2.0, -2.2), 1e-12), "sky gain is 2^stops over the exposure", Num(SkyGain(LightState::Day)));
     }
 
     void Locator(Harness& T, const fs::path& Tmp)

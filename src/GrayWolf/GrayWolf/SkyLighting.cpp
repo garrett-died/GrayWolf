@@ -17,10 +17,10 @@ namespace SkyLighting
 
     namespace
     {
-        // The sun as the preview's key light takes it, against HydraX's sun radiance (colour * 2^stops / exposure): HydraX's HDR buffer and
-        // GrayWolf's differ in scale (this preview's environments are baked to the studio sky's mean), so one constant, set by eye
-        // against the baked sky (hypothesis, not the game's value).
-        constexpr double kSunToPreview = 0.5;
+        // The sun as the preview's key light takes it. HydraX shades the sun as albedo / pi * SunRadiance * N.L (SunRadiance = colour *
+        // 2^stops / exposure, Shading.Shade) and the preview's light as albedo * LightColor * N.L, so LightColor is SunRadiance / pi for the
+        // same pixels. The sky is baked at the same units (SkyGain), so sun and sky keep HydraX's ratio.
+        constexpr double kSunToPreview = 0.318309886183790671538;   // 1 / pi
     }
 
     const char* StateKey(LightState S)
@@ -495,8 +495,18 @@ namespace SkyLighting
             // the exposure rule: Day's sun is 2^14 over its exposure 2^(log2(1941.254) + 5 - 3) = 4 * 1941.254 (inside the EV range), then the preview's scale
             PreviewLighting L;
             ApplyBakedSky(L, LightState::Day, "sky-day-x");
-            const double Want = 16384.0 / (1941.2540 * 4.0) * 0.5;
-            if (std::fabs(L.Sun.Radiance[0] - Want) > 0.005) Fail("the sun follows the preset's stops and exposure rule");
+            const double Want = 16384.0 / (1941.2540 * 4.0) / 3.14159265358979;
+            if (std::fabs(L.Sun.Radiance[0] - Want) > 0.002) Fail("the sun follows the preset's stops and exposure rule");
+        }
+        {
+            // the sky and the sun turn together: a quarter turn of the environment takes the sun from +X to -Y
+            PreviewLighting::SunLight Sun;
+            Sun.Toward = { 1.0f, 0.0f, 0.5f };
+            const auto Q = TurnedSunDirection(Sun, 90.0f);
+            if (!Near(Q[0], 0.0f) && std::fabs(Q[0]) > 1e-5f) Fail("a turned sun: x");
+            if (std::fabs(Q[1] + 1.0f) > 1e-5f || !Near(Q[2], 0.5f)) Fail("a turned sun: -Y, height kept");
+            const auto Z = TurnedSunDirection(Sun, 0.0f);
+            if (!Near(Z[0], 1.0f) || !Near(Z[1], 0.0f)) Fail("no turn keeps the sun");
         }
         char Line[96];
         std::snprintf(Line, sizeof(Line), "sky lighting menu ok=%d\n", Ok ? 1 : 0);

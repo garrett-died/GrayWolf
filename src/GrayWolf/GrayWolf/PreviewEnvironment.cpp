@@ -465,7 +465,7 @@ namespace
             for (size_t x = 0; x < Size; x++)
             {
                 const XMFLOAT3 D = CubeDir(F, 2.0f * (x + 0.5f) / Size - 1, 2.0f * (y + 0.5f) / Size - 1);
-                XMVECTOR C = XMVectorScale(Src.Sample(D), Scale);
+                XMVECTOR C = XMVectorMin(XMVectorScale(Src.Sample(D), Scale), XMVectorReplicate(60000.0f));   // BC6H's half range: a very bright texel is capped, not infinite
                 C = XMVectorSetW(XMVectorClamp(C, XMVectorZero(), XMVectorReplicate(60000.0f)), 1.0f);
                 XMStoreFloat4(&Row[x], C);
             }
@@ -525,8 +525,8 @@ bool BakePreviewEnvironment(const EnvironmentImage& Env, const std::string& OutD
 
     const SourceSampler Src(Env, Control.ClampTexel);
     const float Mean = Src.MeanLuminance();
-    if (!(Mean > 0)) return Fail("the panorama is black");
-    const float Scale = kStudioMeanLuminance / Mean * Control.ScaleMultiplier;
+    if (!Control.AbsoluteScale && !(Mean > 0)) return Fail("the panorama is black");
+    const float Scale = Control.AbsoluteScale ? Control.ScaleMultiplier : kStudioMeanLuminance / Mean * Control.ScaleMultiplier;
     Progress(0.02f);
 
     // the panorama as a cube twice the output's size, every mip

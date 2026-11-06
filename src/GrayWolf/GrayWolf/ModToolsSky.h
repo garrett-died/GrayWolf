@@ -54,8 +54,10 @@ namespace ModToolsSky
         double Exposure() const;                 // 2^(ExposureValue - 3)
     };
     const LightingPreset& PresetOf(LightState S);
-    // The mid grey HydraX exposes a state's sky to (linear): 0.18, Night 0.06 (calibrated by eye there, not the game's)
-    float TargetMid(LightState S);
+    // What a state's sky texels are multiplied by on screen: the sun's radiance over the exposure, 2^stops / Exposure (so the sky, in
+    // the units of the sun, is divided by the same exposure as the sun: Day 2.11, Morning 1.41, Sunset 2.83, Night 0.22). Hypothesis that
+    // a sky texel is in units of the sun, supported by the LED's probe colours (docs/hydrax-port/sky-axes.md); not the game's own rule.
+    double SkyGain(LightState S);
 
     // ---------------------------------------------------------------- where the Mod Tools are
 

@@ -19,8 +19,7 @@ namespace ModToolsSky
 namespace
 {
     constexpr double Pi = 3.14159265358979323846;
-    constexpr int kBakeVersion = 1;   // bump when the decode or bake changes what a source gives
-    constexpr float kSunCutoff = 1000.0f;   // HydraX's SkyMath.ExposureCutoff: texels above it are the sun disc
+    constexpr int kBakeVersion = 2;   // bump when the decode or bake changes what a source gives
 
     const LightingPreset kPresets[kStateCount] = {
         { LightState::Morning, "Morning", 165, 263, { 1.0f, 0.7758f, 0.5088f }, 11.3, -32, 31, 442.3148, { 0.9580f, 1.0122f, 1.0028f } },
@@ -107,7 +106,7 @@ const LightingPreset& PresetOf(LightState S)
     const int I = (int)S;
     return kPresets[(I >= 0 && I < kStateCount) ? I : 0];
 }
-float TargetMid(LightState S) { return S == LightState::Night ? 0.06f : 0.18f; }
+double SkyGain(LightState S) { return PresetOf(S).SunIntensity() / PresetOf(S).Exposure(); }
 
 double LightingPreset::SunIntensity() const { return std::pow(2.0, SunStops); }
 void LightingPreset::SunDirection(float (&Out)[3]) const
@@ -578,8 +577,7 @@ Catalog Discover(const LocateInput& Input, const std::atomic<bool>* Cancel)
 
 namespace
 {
-    // A made-up lat-long: a gradient (zenith, horizon, ground) per state and a sun disc far above 1000 where the preset's sun is,
-    // so the cutoff is exercised as well. Nothing of the Mod Tools in it.
+    // A made-up lat-long: a gradient (zenith, horizon, ground) per state and a sun disc as bright as the real Morning one where the preset's sun is. Nothing of the Mod Tools in it.
     void DemoSky(LightState State, EnvironmentImage& Out)
     {
         struct Grade { float Zenith[3], Horizon[3], Ground[3]; };
@@ -608,10 +606,10 @@ namespace
                 for (int C = 0; C < 3; C++)
                 {
                     const float Up = std::pow(std::max(Dz, 0.0f), 0.5f);
-                    Out.Rgba[At + (size_t)C] = Dz >= 0 ? G.Horizon[C] + (G.Zenith[C] - G.Horizon[C]) * Up : G.Ground[C];
+                    Out.Rgba[At + (size_t)C] = 0.3f * (Dz >= 0 ? G.Horizon[C] + (G.Zenith[C] - G.Horizon[C]) * Up : G.Ground[C]);   // a real sky's mean is about 0.2
                 }
                 const float Cos = Dx * Sun[0] + Dy * Sun[1] + Dz * Sun[2];
-                if (Cos > 0.9995f) for (size_t C = 0; C < 3; C++) Out.Rgba[At + C] = 4000.0f;   // the disc
+                if (Cos > 0.9995f) for (size_t C = 0; C < 3; C++) Out.Rgba[At + C] = 14.0f;   // the disc (a real one: 13.6)
             }
     }
 }
@@ -830,8 +828,10 @@ BakeOutcome BakeState(const SkySource& Source, const BakeSettings& Settings, con
     EnvironmentBakeControl Control;
     Control.Cancel = Cancel;
     Control.Progress = [&](float V) { Report(0.3f + 0.7f * V); };
-    Control.ClampTexel = kSunCutoff;   // the sun disc is the preset's sun, not the image based light
-    Control.ScaleMultiplier = TargetMid(Source.State) / TargetMid(LightState::Day);   // Night darker, as HydraX exposes it (hypothesis: calibrated by eye there)
+    // the sky's own scale times the state's exposure rule (SkyGain), no mean normalisation and no cut: what the cube holds is what the preview shows
+    // (times kPreviewIblScale, which the preview multiplies every environment by)
+    Control.AbsoluteScale = true;
+    Control.ScaleMultiplier = (float)(SkyGain(Source.State) / kPreviewIblScale);
     std::string BakeReport;
     const bool Baked = BakePreviewEnvironment(Image, Temp.string(), Out.Id, Settings.Size, BakeReport, Control);
     Image = EnvironmentImage();

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "PreviewShadows.h"
+#include "PreviewToolbar.h"
 #include "ModelPreviewGPU.h"   // PreviewGpuMesh, PreviewGpuMaterial, PreviewCamera
 #include "PreviewD3D.h"
 #include "SettingsManager.h"
@@ -237,19 +238,19 @@ void SavePreviewShadowSettings(const PreviewShadowSettings& S)
 bool DrawPreviewShadowControls(PreviewShadowSettings& S)
 {
     bool Changed = false;
-    ImGui::SameLine(0, ImGui::GetFontSize() * 0.4f);
+    PreviewToolbar::SameLine(ImGui::GetFontSize() * 0.4f, ImGui::GetFontSize() * 5.5f);
     if (Theme::Pill("Shadows", S.Shadows)) { S.Shadows = !S.Shadows; Changed = true; }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("The key light's soft shadow, on the model and on the ground");
     if (S.Shadows)
     {
-        ImGui::SameLine();
+        PreviewToolbar::SameLine(-1.0f, ImGui::GetFontSize() * 4.0f);
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.0f);
         ImGui::SliderFloat("##shadowsoftness", &S.Softness, 0.0f, 1.0f, "soft %.2f");
         Changed |= ImGui::IsItemDeactivatedAfterEdit();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The key light's size: sharp shadows at 0, wide soft ones at 1 (right-click resets)");
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { S.Softness = kDefaultSoftness; Changed = true; }
     }
-    ImGui::SameLine();
+    PreviewToolbar::SameLine(-1.0f, ImGui::GetFontSize() * 4.5f);
     if (Theme::Pill("Ground", S.Ground)) { S.Ground = !S.Ground; Changed = true; }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("A ground under the model that shows only its shadow and where it touches");
     return Changed;

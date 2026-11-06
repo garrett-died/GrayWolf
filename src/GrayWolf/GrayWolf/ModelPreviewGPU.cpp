@@ -318,7 +318,7 @@ float4 BackdropPS(float4 Pos : SV_Position) : SV_Target0
 
     struct SceneConstants { float IblScale, Samples, Ambient, NoSpecular; };
     // the image based light's scale on the environment's cubes (and the backdrop's)
-    constexpr float kIblScale = 0.45f;
+    constexpr float kIblScale = kPreviewIblScale;
 
     // The image based light: a sky that only varies with height (orbiting never makes it jump).
     // Each radiance mip is that sky through a GGX-sized lobe, the irradiance cube the cosine-
@@ -787,6 +787,14 @@ bool FitPreviewCamera(const PreviewGpuMesh& Mesh, float Yaw, float Pitch, float 
     return true;
 }
 
+std::array<float, 3> TurnedSunDirection(const PreviewLighting::SunLight& Sun, float EnvRotationDegrees)
+{
+    // The environment is looked up at the view direction turned by +EnvRotation about Z (EnvDir), so a feature of the sky is seen at its
+    // direction turned by -EnvRotation: the sun goes with it
+    const float T = XMConvertToRadians(EnvRotationDegrees), C = std::cos(T), S = std::sin(T);
+    return { C * Sun.Toward[0] + S * Sun.Toward[1], -S * Sun.Toward[0] + C * Sun.Toward[1], Sun.Toward[2] };
+}
+
 PreviewCamera OrbitPreviewCamera(const PreviewGpuMesh& Mesh, float Yaw, float Pitch, float DistScale, XMFLOAT3 Pan)
 {
     PreviewCamera C;
@@ -1048,7 +1056,8 @@ void PreviewRenderer::Render(ID3D11DeviceContext* Ctx, const PreviewGpuMesh* Mes
             // a sky state's sun: the key light, fixed in the world, at the sun's radiance (the Lights slider's 0.5 is one times);
             // the sky's cubes are the fill, so the other two lights are off
             const float Rel = K / 0.5f;
-            KeyDir = XMVector3Normalize(XMVectorSet(-L.Sun.Toward[0], -L.Sun.Toward[1], -L.Sun.Toward[2], 0));
+            const auto Toward = TurnedSunDirection(L.Sun, L.EnvRotation);   // turned with the sky
+            KeyDir = XMVector3Normalize(XMVectorSet(-Toward[0], -Toward[1], -Toward[2], 0));
             P->Effect->SetLightDirection(0, KeyDir);
             P->Effect->SetLightDiffuseColor(0, XMVectorSet(L.Sun.Radiance[0] * Rel, L.Sun.Radiance[1] * Rel, L.Sun.Radiance[2] * Rel, 0));
             P->Effect->SetLightDirection(1, From(-1.0f, 1.0f, -0.1f));

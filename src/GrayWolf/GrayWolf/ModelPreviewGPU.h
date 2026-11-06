@@ -183,6 +183,10 @@ struct PreviewLighting
     }
 };
 
+// The sun's direction (towards it, world, Z up) with the environment turned by EnvRotationDegrees (PreviewLighting::EnvRotation):
+// the sky and the sun turn together
+std::array<float, 3> TurnedSunDirection(const PreviewLighting::SunLight& Sun, float EnvRotationDegrees);
+
 // The one model renderer every preview uses (offscreen PNG, the orbit window, the asset browser).
 // DirectXTK's PBREffect supplies the vertex stage and the camera/light constants; the pixel shader
 // is ours (see the .cpp for why), ToneMapPostProcess the display transform.

@@ -5,6 +5,7 @@
 #include "ModelPreviewGPU.h"   // PreviewLighting
 #include "SettingsManager.h"
 #include "SkyLighting.h"
+#include "PreviewToolbar.h"
 #include "ImGuiTheme.h"
 
 #include "imgui.h"
@@ -107,7 +108,7 @@ void DrawPreviewEnvironmentControls(PreviewLighting& L, SkyLighting::Service& Sk
     for (const SkyLighting::StateRow& R : Menu.States)
         if (R.Preparing)
         {
-            ImGui::SameLine(0, Em * 0.3f);
+            PreviewToolbar::SameLine(Em * 0.3f, Em * 6.0f);
             char Text[48];
             std::snprintf(Text, sizeof(Text), "%s %d%%", R.Label.c_str(), (int)std::lround(R.Progress * 100.0f));
             ImGui::ProgressBar(R.Progress, ImVec2(Em * 6.0f, 0), Text);
@@ -115,13 +116,13 @@ void DrawPreviewEnvironmentControls(PreviewLighting& L, SkyLighting::Service& Sk
         }
 
     // ---- the sky chip: the sky behind the model, or a background colour
-    ImGui::SameLine(0, Em * 0.3f);
+    PreviewToolbar::SameLine(Em * 0.3f, Em * 3.0f);
     if (Theme::Pill("Sky", L.Backdrop)) { L.Backdrop = !L.Backdrop; Save(L); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("The sky seen behind the model. Off: a plain background colour (screenshots stay transparent either way)");
     if (!L.Backdrop)
     {
         static bool ColorDirty = false;
-        ImGui::SameLine(0, Em * 0.2f);
+        PreviewToolbar::SameLine(Em * 0.2f, Em * 1.3f);
         const ImVec4 Swatch(Background[0], Background[1], Background[2], 1.0f);
         if (ImGui::ColorButton("##background", Swatch, ImGuiColorEditFlags_NoTooltip, ImVec2(Em * 1.3f, Em * 1.3f))) ImGui::OpenPopup("backgroundflyout");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Background colour");
@@ -144,7 +145,7 @@ void DrawPreviewEnvironmentControls(PreviewLighting& L, SkyLighting::Service& Sk
         }
     }
 
-    ImGui::SameLine(0, ImGui::GetFontSize() * 0.2f);
+    PreviewToolbar::SameLine(ImGui::GetFontSize() * 0.2f, ImGui::GetFontSize() * 2.2f);
     if (Theme::IconButton("envsettings", Theme::Icon::Sliders, "Environment turn and strength, backdrop, bloom", L.Bloom))
         ImGui::OpenPopup("envpopup");
     if (ImGui::BeginPopup("envpopup"))

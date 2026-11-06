@@ -70,9 +70,7 @@ and that is what the self-test compares.
   eye (a mirrored or turned sky would show against the sun's direction: the preset sun is at the pitch and yaw of `LightingPreset`).
 - The preset's sun direction versus the sky's visible sun: HydraX has a per-state yaw offset, 0 for all four, for that comparison.
   Not ported (not needed until the sky is drawn behind a model).
-- The sun disc: texels above 1000 are cut before the bake (HydraX's exposure cutoff), so the disc does not light the model a
-  second time on top of the preset's sun. **Hypothesis** that this looks right.
-- Night is baked at 0.06 / 0.18 of the others' strength (HydraX's per-state target grey, calibrated by eye there, not the game's value).
+- The sun disc and Night's strength: see "U9b" below; the 1000 cut and the 0.06 / 0.18 factors are gone.
 
 ## Looked at in the previewer (U9, owner's install, read only; numbers only, no pixels kept)
 
@@ -94,3 +92,39 @@ sky is the environment and the backdrop). Labels as above.
   stays a hypothesis; the source's real ratio is about 160 to 1.
 - **Sunset's sky is a blue-sky mountain scene** in the image the chain resolves (not a fallback), with the preset's orange sun on the
   model: sun and sky do not match in colour. Unknown whether that is the game's own asset or a wrong link of the chain.
+
+## U9b: the sky's scale, the sun twice, Sunset, Morning's sun (owner's install, read only; figures only)
+
+**How HydraX does it** (read in `SkyImage.cs`, `Shading.cs`, `ProceduralEnvironment.cs`, `Mesh.hlsl`): the sky cube is only the **backdrop**
+there (scaled by `TargetMid / geometric-mean luminance`, 0.18, Night 0.06, by eye); the model's **light** is a procedural gradient from the
+preset's probe colours (`ProbeScale` 0.55, Night x 0.1), so the sun disc never lights anything in HydraX. The 1000 cutoff only keeps the
+disc out of that mean. GrayWolf bakes the sky into the light, so it needs a rule of its own. Apex has no sky exposure of its own (HDR buffer
+times the global exposure, `led-and-sky.md`).
+
+**The rule now (hypothesis, supported):** a sky texel is multiplied by `2^stops / Exposure` of its state (`SkyGain`: Day 2.11, Morning 1.43,
+Sunset 2.83, Night 0.22), the same number the sun's radiance has, so sky and sun keep HydraX's ratio; no mean normalisation, no cut.
+Checked against the other source in HydraX, the LED's probe colours (0.55 x luminance): the sky's mean times this gain is 0.58 (Morning),
+0.36 (Day) and 0.56 (Sunset) against 0.55: within 6, 35 and 3 percent. **Night disagrees**: its sky's mean is 0.001, so 0.0002 on screen
+against 0.055 from HydraX's probe rule (about 275 times darker); Night is now close to black, lit by the preset's sun only. Unknown which
+is the game's. The Night ssi also carries `evcmp 2.5` (+2.5 EV), which is not applied anywhere.
+
+**Sun twice, measured, so left alone:** no texel in the four skies is above 14, so the old 1000 cut did nothing. The brightest cluster
+(Morning, max 13.6) integrates to 0.012 in sun units (sum of L times solid angle, 0.0014 sr): 1.2 percent of the preset sun's light, and Day,
+Sunset and Night hold no disc (their brightest area is cloud). It stays in the image light and in the backdrop, as in the asset.
+
+**Light colour:** HydraX shades the sun as `albedo / pi * SunRadiance * N.L`, the preview as `albedo * LightColor * N.L`, so
+`LightColor = SunRadiance / pi` (the earlier 0.5 was a guess).
+
+**Sunset (traced):** `ssi.gdt` `default_sunset` has `skyboxmodel skybox_default_sunset`; that xmodel's skinOverride material has `colorMap
+skybox_default_sunset_ft`; that image's `baseImage` is `model_export\t7_skybox\skybox_default\skybox_default_sunset_ll.exr`, a lat-long (2048 x 1024
+after downsampling). The folder also holds `_ft _lf _rt _up _dn` for sunset but **no `_bk`**, and nothing in the GDT points at them; the day-clear
+cube is complete (`_bk` present) and Night's cube lives in `zm_factory\Temp` (`zm_skybox_factory_05_*`, all six). So the chain is right and follows
+what the Mod Tools hold: Sunset's own image is a blue-sky snow-mountain lat-long with its brightest area at elevation 1 degree, azimuth -10 (no sun,
+max 4.1), while the preset's sun is orange at azimuth -60 and elevation 22. Whether APE shows the same is for the owner to compare.
+
+**Morning's sun (traced):** the sky is `skybox_default_day_clear_0700` (a 07:00 sky; the folder also has `_0615` and `_1830`). Its disc is at
+azimuth -97.9, elevation 7.1; the preset (`default_morning` pitch 165, yaw 263) gives -97.0 and 15.0, and HydraX's per-state yaw offset is 0 for all four
+(no pitch offset exists). The azimuth agrees to 1 degree; the 8 degree elevation difference is between two assets of the Mod Tools (the sun lamp
+and the sky image), not a bake error.
+
+**Turn:** the environment's Turn now turns the preset sun with the sky (`TurnedSunDirection`), proven by `ui-selftest`.
