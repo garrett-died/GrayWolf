@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cctype>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -18,12 +19,16 @@ namespace GameBadges
 {
     namespace
     {
-        // the exe of an install of each reader id, filled once by a worker
+        // the exe of an install of each reader id, filled once by a worker. The worker is joined (Shutdown, or
+        // the destructor): it reads the install tables' statics, which a detached thread would still be reading
+        // while they were destroyed at the program's end (an ASan finding)
         struct Exes
         {
             std::mutex Lock;
             std::map<std::string, std::string> ById, ByPath;
             std::atomic<bool> Started{ false }, Done{ false };
+            std::thread Worker;
+            ~Exes() { if (Worker.joinable()) Worker.join(); }
         };
 
         std::atomic<bool>& NoLookup()
@@ -32,12 +37,21 @@ namespace GameBadges
             return Off;
         }
 
-        Exes& Found()
+        Exes& State()
         {
             static Exes E;
+            return E;
+        }
+
+        Exes& Found()
+        {
+            Exes& E = State();
             if (NoLookup().load() && !E.Started.exchange(true)) { E.Done = true; return E; }
             if (!E.Started.exchange(true))
-                std::thread([] {
+                E.Worker = std::thread([] {
+                    // the exit-time test (ASan): the lookup is held up so the program ends while it runs
+                    char Ms[16] = {};
+                    if (GetEnvironmentVariableA("GRAYWOLF_TEST_BADGE_DELAY_MS", Ms, sizeof(Ms)) > 0) Sleep((DWORD)std::atoi(Ms));
                     for (const auto& I : GameInstalls::Detect())
                     {
                         const std::string Exe = GameInstalls::GameExe(I.Path);
@@ -47,7 +61,7 @@ namespace GameBadges
                         if (!I.DiskId.empty()) Found().ById.emplace(I.DiskId, Exe);   // the first install of a game stands for it
                     }
                     Found().Done = true;
-                }).detach();
+                });
             return E;
         }
 
@@ -71,6 +85,12 @@ namespace GameBadges
     }
 
     void NoInstallLookup() { NoLookup() = true; }
+
+    void Shutdown()
+    {
+        Exes& E = State();   // not Found(): that would start the lookup
+        if (E.Worker.joinable()) E.Worker.join();
+    }
 
     std::string Title(const std::string& Id)
     {

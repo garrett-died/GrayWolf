@@ -6,7 +6,8 @@
 #include "ImGuiLoadGamePanel.h" // the Extract tab: a game exported from its files
 #include "UiAsync.h"           // dialogs, shell opens and disk lookups off the frame
 #include "SettingsManager.h"   // the list or the grid, the anims' rig
-#include "ImGuiTheme.h"        // the fonts and colours
+#include "ImGuiTheme.h"
+#include "GameBadges.h"        // the fonts and colours
 
 #include "imgui.h"
 #include "imgui_internal.h"   // FindWindowByName
@@ -277,6 +278,7 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
 
     S.Catalog.Stop();
     UiAsync::Shutdown();
+    GameBadges::Shutdown();   // its install lookup is joined, not left to run into the exit
 
     S.Assets.Grid.reset();   // its workers stop before the device goes
     if (S.Recorder) S.Recorder->Finish();   // its frames on disk, audio.wav written
