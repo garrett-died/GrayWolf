@@ -79,12 +79,13 @@ namespace ShellUi
                     "It only changes colours, so it is safe to switch at any time."));
 
                 E.push_back(Custom(Exp, "Where files go", "@output", "Export folder",
-                    "The folder your exports are written to. GrayWolf makes one folder per game inside it. Pick a drive with plenty of free "
+                    "The folder your exports are written to (spaces and quotes around a pasted path are removed). GrayWolf makes one folder per game inside it. Pick a drive with plenty of free "
                     "space: a whole map or a game's images can be several gigabytes. Changing it does not move exports you already made."));
                 E.push_back(Custom(Exp, "Where files go", "@languages", "Languages",
                     "Which languages' voices and subtitles are exported. \"The install's\" uses the language your game is set to (read from Steam or "
                     "Battle.net); \"All\" exports every language the game holds, which is much bigger. Things that belong to no language are always "
-                    "exported. If you are unsure, leave it on the default."));
+                    "exported. If GrayWolf cannot find your game's language (no Steam or Battle.net information), it exports every language. "
+                    "If you are unsure, leave it on the default."));
 
                 E.push_back(Choice(Exp, "Images", "exportimg", "Image format", "PNG", { { "PNG", "PNG" }, { "TGA", "TGA" }, { "DDS", "DDS" } },
                     "The file type textures are saved as. PNG is the safe choice: nearly every program opens it. TGA suits older tools. DDS keeps "
@@ -93,9 +94,11 @@ namespace ShellUi
                     "Every exported image is written to the \"images\" folder inside the game's export folder, whichever asset used it. "
                     "There is no switch for this. (An old setting named global_images is still kept "
                     "in your settings file; no part of GrayWolf reads it.)"));
-                E.push_back(Toggle(Exp, "Images", "patchnormals", "Mark normal maps for expansion", "true",
-                    "Games store a normal map with only two channels. With this on, GrayWolf marks the file so tools expand it the way the game "
-                    "does and the surface looks right. Leave it on unless you know your tool wants the raw data."));
+                E.push_back(Toggle(Exp, "Images", "patchnormals", "Fix normal maps", "true",
+                    "Many games store a normal map with only two channels (red and green). With this on, GrayWolf rewrites the blue channel of "
+                    "the normal maps it saves as PNG or TGA, so they look right in other tools. Some games' pictures are fixed while they are "
+                    "converted; for Black Ops III, Black Ops 4 and Cold War it is done at the end of the run, once the materials that use each "
+                    "picture are known. A DDS file is the game's own data and is never changed. Leave it on unless your tool wants the raw data."));
                 E.push_back(Toggle(Exp, "Images", "patchcolor", "Strip the alpha from colour maps (Infinite Warfare)", "true",
                     "Used by the Infinite Warfare reader only: its colour maps carry a hidden alpha channel that makes them look transparent in "
                     "most tools. With this on that channel is removed. Other games ignore it."));
@@ -105,8 +108,8 @@ namespace ShellUi
                     "Opus is the default: about a tenth of WAV's size and fine for listening and most uses. WAV keeps the sound as the game stores "
                     "it, the largest files. FLAC is lossless at about half of WAV's size. Pick a lossless one only if you will edit the audio."));
                 E.push_back(Toggle(Exp, "Sounds", "keepsndpath", "Keep each sound's folder", "true",
-                    "On: sounds are saved in the folder structure the game gives them, under \"sounds\", so related sounds stay together. Off: "
-                    "every sound goes into one folder, which is easier to browse but can mix up sounds that share a name."));
+                    "Only used when you export files with the command-line \"file\" mode: on keeps each sound in its game folder under \"sounds\", off puts "
+                    "all the sounds in one folder. Normal game exports always keep the folders."));
                 E.push_back(Toggle(Exp, "Sounds", "usesabindexbo4", "Name unnamed Black Ops 4 sounds by position", "false",
                     "Black Ops 4 only. Some of its sounds have no known name; they are normally saved as xsound_ followed by a number. With this on "
                     "they are saved under the sound bank's file name and their position in the bank instead. Sounds that have a name are not "
@@ -123,11 +126,12 @@ namespace ShellUi
                 E.push_back(Toggle(Exp, "Model formats", "export_gltf", "glTF (.gltf)", "false",
                     "A modern open model format, written as text plus separate files. Opens in Blender, many viewers and game engines."));
                 E.push_back(Toggle(Exp, "Model formats", "export_glb", "GLB (.glb)", "false",
-                    "The same as glTF but packed into one file, which is easier to move around."));
+                    "Like glTF, but the model's data is packed into one file. The textures are still separate image files next to it, so keep them together."));
                 E.push_back(Toggle(Exp, "Model formats", "export_obj", "OBJ (.obj)", "false",
                     "A very old, very widely read format. Geometry and basic materials only: no skeleton."));
                 E.push_back(Toggle(Exp, "Model formats", "export_ma", "Maya ASCII (.ma)", "false",
-                    "A scene file Maya opens directly, with the skeleton. Handy if you work in Maya without the Cast plugin."));
+                    "A scene file Maya opens directly, with the joints. To attach the mesh to the joints, run the extra _BIND.mel file written next to it in Maya. "
+                    "Handy if you work in Maya without the Cast plugin."));
                 E.push_back(Toggle(Exp, "Model formats", "export_smd", "SMD (.smd)", "false",
                     "The Source engine's model format, read by many older tools. Always written in the game's own units."));
                 E.push_back(Toggle(Exp, "Model formats", "export_xna", "XNALara (.mesh.ascii)", "false",
@@ -183,7 +187,8 @@ namespace ShellUi
                     "The same for compiled plain Lua files. Leave empty to look for it on your PATH."));
 
                 E.push_back(Custom(Prev, "Screenshots", "@screenshots", "Screenshots folder",
-                    "Where the camera button on the 3D view (or Ctrl+Shift+S) saves pictures. Empty uses Pictures\\GrayWolf."));
+                    "Where the camera button on the 3D view (or Ctrl+Shift+S) saves pictures. Left empty, GrayWolf uses the folder the screenshots "
+                    "were last saved to, and Pictures\\GrayWolf when there is none yet. Spaces and quotes around a pasted path are removed."));
                 E.push_back(Choice(Prev, "Screenshots", "preview_shot_scale", "Screenshot size", "1", { { "1", "1x" }, { "2", "2x" }, { "4", "4x" } },
                     "How many times larger than the 3D view the picture is. Pictures have a transparent background. Bigger is sharper and slower."));
                 E.push_back(Custom(Prev, "The 3D view", "@previewinfo", "Light, shadows and quality",
@@ -196,7 +201,8 @@ namespace ShellUi
                     "is read from the GitHub CLI at each check, sent to GitHub only and never saved."));
                 E.push_back(Custom(Prog, "Logs and files", "@logs", "Session log",
                     "GrayWolf writes what it does to a log file beside the program. Open it when you report a problem. The detailed log times "
-                    "every step, so it grows faster: turn it on only when asked. Your settings are saved in graywolf.json next to the program."));
+                    "every step, so it grows faster: turn it on only when asked. It is not remembered: it is off again at every start. Your settings "
+                    "are saved in graywolf.json next to the program."));
                 return E;
             }();
             return All;
@@ -212,10 +218,10 @@ namespace ShellUi
         {
             struct H { const char* Key; const char* Text; };
             static const H All[] = {
-                { "map_png", "Maps are written with their textures as DDS, which Blender reads. Choose \"+ PNG\" to also write PNG copies for glTF tools "
-                             "other than Blender. Safe; it only adds files." },
-                { "map_textures", "Map textures larger than this are also saved at the chosen size (with mipmaps) and read from there. 2K or 1K makes "
-                                  "a map much smaller and lighter to open; Full keeps every texture as it is." },
+                { "map_png", "Map textures use whatever Image format you chose above. Choose \"+ PNG\" to also write PNG copies of the colour maps for glTF "
+                             "tools other than Blender. It does nothing if the Image format is already PNG. It only adds files." },
+                { "map_textures", "DDS map textures larger than this are also saved at the chosen size (with mipmaps) and used from there. 2K or 1K makes "
+                                  "the map's textures smaller; Full keeps every texture as it is. Textures exported as PNG or TGA are not resized." },
                 { "map_cast", "Besides the .glb that Blender imports, also write the map as a Cast scene for Maya and the Cast plugins. Safe; it only "
                               "adds files." },
                 { "map_radiant", "Also write the map as a Radiant .map for the Black Ops III Mod Tools: its collision brushes, entities and model "
@@ -230,7 +236,7 @@ namespace ShellUi
                                  "export and open when you only want to look at the terrain." },
                 { "decompile", "Compiled scripts and Lua files are saved as bytecode by default, which you cannot read. Decompiled turns them back "
                                "into text using the helper programs (see Tools); it takes longer and the result is a reconstruction, not the "
-                               "original source." },
+                               "original source. If a helper program cannot be found, the scripts are saved as bytecode instead." },
                 { "ui_res", "Black Ops 4 keeps its interface images twice, at 4K and at 1080p. Pick which are exported; \"both\" doubles the "
                             "space they take." },
                 { "language", "Call of Duty 1 and 2 shipped in several languages; an install holds English plus at most one more. \"As the export "
@@ -332,7 +338,7 @@ namespace ShellUi
                 ImGui::TextUnformatted(E.Label);
                 ImGui::SetNextItemWidth(ImGui::GetFontSize() * 30.0f);
                 ImGui::InputTextWithHint((std::string("##") + E.Key).c_str(), "Looked for by itself", Buf.data(), Buf.size());
-                if (ImGui::IsItemDeactivatedAfterEdit()) SettingsManager::SetSetting(E.Key, Buf.data());
+                if (ImGui::IsItemDeactivatedAfterEdit()) SettingsManager::SetSetting(E.Key, TrimPath(Buf.data()));
                 ImGui::SameLine();
                 if (ImGui::Button((std::string("Browse\xE2\x80\xA6##") + E.Key).c_str()))
                     UiAsync::PickOpenFile(Id, std::string("Select ") + E.Label, { { L"Program", L"*.exe" } });
@@ -411,7 +417,13 @@ namespace ShellUi
                 else if (K == "@output") LoadGame.DrawOutputFolder();
                 else if (K == "@languages") LoadGame.DrawLanguages();
                 else if (K == "@imagesfolder")
-                    ImGui::TextDisabled("%s", (AbsoluteFolder(SettingsManager::GetSetting("disk_out", "exported_files")) + "\<game>\images").c_str());
+                {
+                    // the folder the images of the game read now go to; the game's id stands in until one is read
+                    const DiskGame::IDiskGame* Loaded = LoadGame.LoadedGame();
+                    const std::filesystem::path Images = std::filesystem::path(AbsoluteFolder(SettingsManager::GetSetting("disk_out", "exported_files"))) /
+                                                         (Loaded ? std::string(Loaded->Id()) : std::string("<game>")) / "images";
+                    ImGui::TextDisabled("%s", Images.string().c_str());
+                }
                 else if (K == "@gamesettings") DrawGameSettings(LoadGame, Width);
                 else if (K == "@blender") DrawBlenderSettings();
                 else if (K == "@screenshots") DrawScreenshotSettings();

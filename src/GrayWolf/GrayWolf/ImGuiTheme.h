@@ -41,6 +41,8 @@ namespace Theme
     const char* Name(int Index);
     const char* About(int Index);
     int CurrentIndex();   // the saved choice (setting ui_theme), read once
+    // The default look for this run, whatever is saved: ui-shot starts from it, never from the user's ui_theme
+    void PinDefault();
     // Sets the colours of theme Index; Remember saves it as the choice
     void Apply(int Index, bool Remember);
     // By its key or name (ui-shot's "theme" step), not saved; false for an unknown one

@@ -67,7 +67,7 @@ namespace ShellUi
         if (!ImGui::IsAnyItemActive()) SetBuf(Buf, sizeof(Buf), ScreenshotDir());
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 30.0f);
         ImGui::InputText("##screenshotdir", Buf, sizeof(Buf));
-        if (ImGui::IsItemDeactivatedAfterEdit()) SettingsManager::SetSetting("screenshot_dir", Buf);
+        if (ImGui::IsItemDeactivatedAfterEdit()) SettingsManager::SetSetting("screenshot_dir", TrimPath(Buf));
         if (ImGui::Button("Browse\xE2\x80\xA6##shots")) UiAsync::PickFolder("screenshots.dir", "Select the screenshots folder", ScreenshotDir());
         ImGui::SameLine();
         if (ImGui::Button("Open folder##shots")) OpenScreenshotDir();

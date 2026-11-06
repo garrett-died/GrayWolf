@@ -328,14 +328,15 @@ namespace ShellUi
         }
 
         // Search box: full-row hint field, an inline clear (x) shown only when there's text, then the help (?).
-        void DrawSearchBox(AssetsTab& A, bool& OpenHelp)
+        void DrawSearchBox(AssetsTab& A, bool& OpenHelp, bool TakesCtrlF)
         {
             const float BtnW = ImGui::GetFrameHeight();
             const float Sp   = ImGui::GetStyle().ItemSpacing.x;
             const bool  HasText = A.Filter[0] != '\0';
             float Reserve = BtnW + Sp;                      // "?" button
             if (HasText) Reserve += BtnW + Sp;              // "x" clear button
-            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_F)) ImGui::SetKeyboardFocusHere();
+            // not while the Settings page covers this panel: Ctrl+F there is the settings search's
+            if (TakesCtrlF && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_F)) ImGui::SetKeyboardFocusHere();
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - Reserve);
             static const std::string Hint = std::string(Theme::Icon::Search) + "  Search assets: name, type:image, \"exact\", !not\xE2\x80\xA6  (Ctrl+F)";
             ImGui::InputTextWithHint("##filter", Hint.c_str(), A.Filter, sizeof(A.Filter), ImGuiInputTextFlags_EscapeClearsAll);
@@ -718,7 +719,7 @@ namespace ShellUi
         if (S.LeftPage != 1) return;   // the Extract page is shown (DrawWorkflowBar); a folder given on the command line starts on this one
         ImGui::Begin(Theme::LibraryWindow);
         DrawFolderBar(S);
-        DrawSearchBox(A, OpenHelp);
+        DrawSearchBox(A, OpenHelp, !S.SettingsOpen);
         DrawFilters(S);
 
         // Built with the last known sort before keyboard nav reads it, so Up/Down walk what is on

@@ -55,6 +55,9 @@ LoadGamePanel::~LoadGamePanel()
 
 void LoadGamePanel::Persist()
 {
+    // spaces and the quotes of a pasted "Copy as path" are not part of a folder
+    SetBuf(GameBuf, sizeof(GameBuf), TrimPath(GameBuf));
+    SetBuf(DiskOutBuf, sizeof(DiskOutBuf), TrimPath(DiskOutBuf));
     SettingsManager::SetSetting("game_folder", GameBuf);
     SettingsManager::SetSetting("disk_out", DiskOutBuf);
     std::string Kinds;

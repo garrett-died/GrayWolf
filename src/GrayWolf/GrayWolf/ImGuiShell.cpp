@@ -167,6 +167,7 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.IniFilename = nullptr;
+    if (Record && Record->Shots) Theme::PinDefault();   // a screenshot run starts from the default look, not the saved one
     SetUpFontsAndStyle(Hwnd, Record ? Record->Dpi : 0.0f);
 
     ImGui_ImplWin32_Init(Hwnd);

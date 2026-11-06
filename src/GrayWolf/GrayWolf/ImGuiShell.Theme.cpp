@@ -209,6 +209,8 @@ namespace Theme
         return Chosen();
     }
 
+    void PinDefault() { Chosen() = 0; }
+
     void Apply(int Index, bool Remember)
     {
         Chosen() = std::clamp(Index, 0, Count() - 1);

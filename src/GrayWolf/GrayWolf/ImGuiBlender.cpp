@@ -120,7 +120,7 @@ void DrawBlenderSettings()
     PathLoaded = true;
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 30.0f);
     ImGui::InputTextWithHint("##blenderpath", "Found by itself: BLENDER, Program Files, Steam, registry, PATH", PathBuf, sizeof(PathBuf));
-    if (ImGui::IsItemDeactivatedAfterEdit()) SettingsManager::SetSetting("blender_path", PathBuf);
+    if (ImGui::IsItemDeactivatedAfterEdit()) SettingsManager::SetSetting("blender_path", TrimPath(PathBuf));
     bool Pending = false;
     const Blender::Exe B = BlenderExe(&Pending);
     if (ImGui::Button("Browse\xE2\x80\xA6##blender"))
