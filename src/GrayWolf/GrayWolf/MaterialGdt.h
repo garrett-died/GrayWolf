@@ -70,6 +70,9 @@ namespace MaterialGdt
     class Builder
     {
     public:
+        // A test replaces the derive step (null: the real one): it gets the request and fills the file, or fails
+        std::function<bool(const char* What, const Bo3Target::DeriveRequest& Request, std::filesystem::path& File)> DeriveHook;
+
         // BaseImage: an image file (absolute) as the GDT's baseImage, a path below the BO3 root
         // with '/' separators ("" leaves the slot out). Prefix: the counters' ("material_gdt_").
         Builder(std::function<std::string(const std::filesystem::path& File)> BaseImage, std::string Prefix);
@@ -174,6 +177,7 @@ namespace MaterialGdt
             std::map<std::string, Image> Slots;                 // colorMap -> image
             std::vector<std::pair<std::string, std::string>> Values;   // other fields set
             bool Targeted = false;
+            Materials::ImageNaming Naming;                      // the game adapter's declaration of its image names (Description::Naming)
             bool SourceDecal = false;                           // the source game's techset name or renderFlags say decal (read when no catalog chose the BO3 techset)
             std::vector<Note> Notes;
         };

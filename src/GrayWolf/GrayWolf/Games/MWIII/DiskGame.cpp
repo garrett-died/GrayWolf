@@ -851,6 +851,7 @@ namespace
             {
                 const Vector3 Normal = MeshDecode::UnpackPackedQuat(At<uint32_t>(Img, B + N));
                 V.Normal[0] = Normal.X, V.Normal[1] = Normal.Y, V.Normal[2] = Normal.Z;
+                V.NormalRead = true;
             }
             const uint32_t Layers = std::max<uint32_t>(At<uint32_t>(Img, D + DtLayers), 1);
             const int64_t Uv = (int64_t)At<uint32_t>(Img, D + DtUvs) + K * 8 * Layers;

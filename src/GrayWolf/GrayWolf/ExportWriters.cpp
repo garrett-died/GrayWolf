@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "ExportWriters.h"
+#include "DiskGuard.h"
 
 #include "CoDAssetType.h"
 #include "CoDXModelTranslator.h"
@@ -281,18 +282,32 @@ std::string ImageExtension(const std::string& Format)
 bool WriteImage(const XImageDDS& Dds, const std::string& Path, const std::string& Format)
 {
     if (!Dds.DataBuffer || !Dds.DataSize) return false;
+    // below the free space floor no image is written (the run sees DiskGuard::Reached() and winds down; a write never ends the process)
+    if (!DiskGuard::Admit(Path)) return false;
+    // a write that fails part way leaves no partial file: it is removed
+    const auto DropPartial = [&](bool Ok) {
+        if (!Ok)
+        {
+            std::error_code Ec;
+            std::filesystem::remove(Path, Ec);
+        }
+        return Ok;
+    };
     if (Format == "DDS")
     {
         std::ofstream F(Path, std::ios::binary);
         F.write(reinterpret_cast<const char*>(Dds.DataBuffer), Dds.DataSize);
-        return F.good();
+        F.flush();
+        const bool Good = F.good();
+        F.close();
+        return DropPartial(Good);
     }
     // an engine built-in ("$identitynormalmap", "$white"), 1x1 in the zone: written 4x4 of its pixel,
     // the smallest a mod tool's linker takes (BO3's refuses a normal map under 4x4)
     const bool BuiltIn = std::filesystem::path(Path).filename().string().rfind('$', 0) == 0;
-    return Image::ConvertImageMemory(Dds.DataBuffer, Dds.DataSize, ImageFormat::DDS_WithHeader, Path,
-                                     Format == "TGA" ? ImageFormat::Standard_TGA : ImageFormat::Standard_PNG,
-                                     Dds.ImagePatchType, BuiltIn ? 4 : 0);
+    return DropPartial(Image::ConvertImageMemory(Dds.DataBuffer, Dds.DataSize, ImageFormat::DDS_WithHeader, Path,
+                                                 Format == "TGA" ? ImageFormat::Standard_TGA : ImageFormat::Standard_PNG,
+                                                 Dds.ImagePatchType, BuiltIn ? 4 : 0));
 }
 
 struct WorkerPool::State

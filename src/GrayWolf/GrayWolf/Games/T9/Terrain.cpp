@@ -187,6 +187,7 @@ namespace ColdWar
                      const float Dy = G.Height(V.Pos[0], V.Pos[1] + D) - G.Height(V.Pos[0], V.Pos[1] - D);
                      const float Nx = -Dx / (2 * D), Ny = -Dy / (2 * D), L = std::sqrt(Nx * Nx + Ny * Ny + 1.0f);
                      V.Normal[0] = Nx / L, V.Normal[1] = Ny / L, V.Normal[2] = 1.0f / L;
+                     V.NormalRead = true;
                      V.Uv[0] = ((float)Col + 0.5f) / (float)S.Size;
                      V.Uv[1] = ((float)Row + 0.5f) / (float)S.Size;
                      Sf.Vertices.push_back(V);

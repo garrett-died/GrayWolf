@@ -6,6 +6,8 @@
 
 #include "Bo3Target.MaterialImages.h"
 #include "DiskGame.h"
+#include "DiskGuard.h"
+#include "ImageFacts.h"
 #include "ExportNaming.h"
 #include "GdtWriter.h"
 #include "MapFullExport.h"
@@ -23,6 +25,7 @@
 #include <fstream>
 #include <regex>
 #include <set>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -79,6 +82,32 @@ namespace Bo3Target::Publish
 
     namespace
     {
+        // Where the files of an xmodel go: always under model_export, whatever folder its gdt entry is filed in (every stock filename is relative to model_export,
+        // none uses ..). A folder outside model_export (a model whose gdt sits in texture_assets) keeps its sub folders, minus the texture_assets / art_assets segments.
+        std::string ModelFolder(const std::string& Folder)
+        {
+            // every segment is judged, whether or not the folder starts under model_export: ".." and "." are dropped (the files never leave model_export), the
+            // texture_assets / art_assets / model_export segments are dropped, the rest is kept
+            std::string Out = "model_export";
+            std::stringstream In(Folder);
+            for (std::string Part; std::getline(In, Part, '\\');)
+            {
+                std::string L = Part;
+                for (char& C : L) C = (char)std::tolower((unsigned char)C);
+                if (L.empty() || L == "." || L == "texture_assets" || L == "art_assets" || L == "model_export" || L == "..") continue;
+                Out += "\\" + Part;
+            }
+            return Out;
+        }
+
+        // The value of an xmodel entry filename key for a file written at Rel (under model_export, see ModelFolder): relative to model_export, as the awi says.
+        std::string ModelFilenameValue(const std::string& Rel)
+        {
+            static constexpr std::string_view Prefix = "model_export\\";
+            if (Rel.size() > Prefix.size() && Rel.compare(0, Prefix.size(), Prefix) == 0) return Rel.substr(Prefix.size());
+            return Rel;
+        }
+
         std::string FieldOf(const Gdt::Fields& Fields, const char* Key)
         {
             for (const auto& [K, V] : Fields)
@@ -703,6 +732,8 @@ namespace Bo3Target::Publish
             A.Entry = Out::EntryOf(A.Name, A.Gdf, F);
             Assets.push_back(std::move(A));
         }
+        uint64_t PlanBytes = 0;          // --plan: what the images would take in the target (DiskGuard::EstimateImageBytes)
+        size_t PlanImages = 0, PlanUnknown = 0;
         for (const auto& I : Resolved.ImagesOut)
         {
             Asset A;
@@ -794,6 +825,19 @@ namespace Bo3Target::Publish
                             Count("images_one_channel");
                         }
                     }
+                    if (A.Active && O.Plan)
+                    {
+                        // the estimate: the copied file's size, or the converted TIFF's from the image dimensions; a derived image is not on disk in a plan, so its size is unknown
+                        uint32_t W = 0, H = 0;
+                        std::error_code SizeEc;
+                        if (PlannedOnly) PlanUnknown++;
+                        else if (F.Converted && !ImageFacts::SizeOf(I.File, W, H)) PlanUnknown++;
+                        else
+                        {
+                            PlanBytes += DiskGuard::EstimateImageBytes(F.Converted, fs::file_size(I.File, SizeEc), W, H);
+                            PlanImages++;
+                        }
+                    }
                     if (A.Active)
                     {
                         Gdt::Fields Fields = I.Fields;
@@ -807,6 +851,27 @@ namespace Bo3Target::Publish
                 }
             }
             Assets.push_back(std::move(A));
+        }
+
+        if (O.Plan)
+        {
+            // the plan's size estimate against the free space of the output drive, with the floor
+            std::error_code SpaceEc;
+            fs::path Probe = O.OutputRoot;
+            while (!Probe.empty() && !fs::exists(Probe, SpaceEc) && Probe.has_parent_path() && Probe.parent_path() != Probe) Probe = Probe.parent_path();
+            const auto Space = fs::space(Probe, SpaceEc);
+            const uint64_t Free = SpaceEc ? 0 : static_cast<uint64_t>(Space.available);
+            const double PlanFloor = DiskGuard::FloorGb() < 0.0 ? 8.0 : DiskGuard::FloorGb();   // the CLI default when none was set
+            const bool Exceeds = !SpaceEc && DiskGuard::PlanExceeds(PlanBytes, Free, PlanFloor);
+            Count("plan_estimate_bytes", static_cast<size_t>(PlanBytes));
+            Count("plan_estimate_images", PlanImages);
+            Count("plan_estimate_images_size_unknown", PlanUnknown);
+            Count("plan_free_bytes", static_cast<size_t>(Free));
+            Count("plan_floor_bytes", static_cast<size_t>(PlanFloor * 1073741824.0));
+            const std::string Detail = std::format("estimate_bytes={}, images={}, images_size_unknown={}, free_bytes={}, floor_gb={}", PlanBytes, PlanImages, PlanUnknown, Free, PlanFloor);
+            Approxes.push_back({ Exceeds ? "plan.disk_will_not_fit" : "plan.disk_estimate", "", Detail,
+                                 Exceeds ? "the estimate plus the free space floor exceeds the free space of the output drive: the export would stop at the floor (--min-free-gb). Derived images are not counted (their size is unknown in a plan), so the real need is higher"
+                                         : "the images this plan would write, estimated from the files (copies: their size; TIFF conversions: width x height x 4); derived images are not counted" });
         }
 
         // the xmodels' files and entries (placed above)
@@ -827,7 +892,7 @@ namespace Bo3Target::Publish
             {
                 const fs::path& Bin = M->Bins[K].second;
                 File Fi;
-                Fi.Rel = Join(Folder, Lower(Bin.stem().string()) + ".xmodel_bin");
+                Fi.Rel = Join(ModelFolder(Folder), Lower(Bin.stem().string()) + ".xmodel_bin");
                 Fi.Source = Bin;
                 if (!Out::Sha256File(Bin, Fi.Hash))
                 {
@@ -839,9 +904,7 @@ namespace Bo3Target::Publish
                 if (K < 4)
                 {
                     // filename is relative to model_export
-                    std::string Relative = Fi.Rel;
-                    if (StartsWith(Relative, "model_export\\")) Relative = Relative.substr(13);
-                    F.emplace_back(LodKeys[K], Gdt::Path(Relative));
+                    F.emplace_back(LodKeys[K], Gdt::Path(ModelFilenameValue(Fi.Rel)));
                 }
                 A.Files.push_back(std::move(Fi));
             }
@@ -1040,7 +1103,14 @@ namespace Bo3Target::Publish
                 WriteError.clear();
                 // Create: nothing may be there at the move, so a file that appeared since the check is not replaced
                 const bool Replace = F.V != Out::Verdict::Create;
-                if (F.Converted)
+                if (!DiskGuard::Admit(Abs))
+                {
+                    // one call path for every image written in the publish step (WriteAtomic leaves no partial file); the run winds down and exits 75 from the CLI layer
+                    Ok = false;
+                    WriteError = "disk_floor_reached: free space on the output drive is under the floor";
+                    Count("disk_floor_reached");
+                }
+                else if (F.Converted)
                 {
                     Ok = Out::WriteAtomic(Abs, F.Bytes.data(), F.Bytes.size(), WriteError, Replace);
                 }
@@ -1539,6 +1609,33 @@ namespace Bo3Target::Publish
             ++Failed;
             Failures += std::format("FAIL Publish {} (got '{}')\n", Name, Got);
         };
+
+        // SpecularFromSqrtF0: sqrt(F0) bytes to the sRGB-coded F0 (0 stays 0, 255 stays 255, the dielectric 51 becomes 56), alpha forced opaque
+        {
+            Rgba8Image In;
+            In.Width = 3, In.Height = 1;
+            In.Pixels = { 0, 51, 255, 7, 51, 51, 51, 9, 255, 0, 255, 255 };
+            const Rgba8Image Out = Bo3Target::SpecularFromSqrtF0(In);
+            Check(Out.IsValid() && Out.Pixels[0] == 0 && Out.Pixels[1] == 56 && Out.Pixels[2] == 255 && Out.Pixels[3] == 255 && Out.Pixels[4] == 56 && Out.Pixels[8] == 255 && Out.Pixels[9] == 0 && Out.Pixels[7] == 255,
+                  "SpecularFromSqrtF0: 0, 51 and 255 give 0, 56 and 255, alpha opaque", Out.IsValid() ? std::to_string(Out.Pixels[1]) : std::string("invalid"));
+        }
+        // the disk floor: a drive with less than the floor free stops the export; 0 turns the check off
+        {
+            std::string Row;
+            const bool Under = DiskGuard::Check(fs::temp_directory_path() / "x.png", Row, 1.0e9);   // no drive has 10^9 GB free
+            const bool Room = !DiskGuard::Check(fs::temp_directory_path() / "x.png", Row, 0.0001);
+            Check(Under && Row.rfind("disk_floor_reached", 0) == 0 && Room && DiskGuard::IsBelowFloor(7ull << 30, 8.0) && !DiskGuard::IsBelowFloor(9ull << 30, 8.0),
+                  "the disk floor: a drive under the floor gives a disk_floor_reached row, one over it does not", Row);
+        }
+        // an xmodel's files always go under model_export, whatever folder its gdt entry is in; the filename never uses ..
+        Check(ModelFilenameValue("model_export\\t7_props\\a\\a_lod0.xmodel_bin") == "t7_props\\a\\a_lod0.xmodel_bin" &&
+                  ModelFolder("texture_assets\\t6_legacy") == "model_export\\t6_legacy" &&
+                  ModelFolder("art_assets\\t6_legacy\\texture_assets") == "model_export\\t6_legacy" &&
+                  ModelFolder("model_export\\t7_props\\a") == "model_export\\t7_props\\a" &&
+                  ModelFolder("model_export\\..\\texture_assets\\x") == "model_export\\x" &&
+                  ModelFolder("model_export\\a\\..\\..\\b") == "model_export\\a\\b" &&
+                  ModelFilenameValue(ModelFolder("texture_assets\\x") + "\\a.xmodel_bin").find("..") == std::string::npos,
+              "an xmodel's files go under model_export whatever folder the gdt is in, and the filename has no ..", ModelFolder("texture_assets\\x"));
 
         std::error_code Ec;
         const fs::path Base = fs::temp_directory_path() / std::format("graywolf_selftest_publish_{}", static_cast<unsigned long long>(GetCurrentProcessId()));

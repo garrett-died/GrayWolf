@@ -4,6 +4,7 @@
 
 #include "Bo3Target.MaterialImages.h"
 
+#include "DiskGuard.h"
 #include "ExportNaming.h"
 #include "Image.h"
 
@@ -212,6 +213,14 @@ namespace Bo3Target
                 return false;
             }
         }
+        if (!DiskGuard::Admit(Temp))
+        {
+            // the output drive is under the free space floor: nothing is written, the claimed temp file goes, and the run sees DiskGuard::Reached()
+            std::error_code E3;
+            fs::remove(Temp, E3);
+            Error = "disk_floor_reached";
+            return false;
+        }
         bool Encoded = false;
         try
         {
@@ -346,6 +355,9 @@ namespace Bo3Target
             break;
         case DeriveOp::Channel:
             Out = ExtractChannel(Source, Request.Channel, Request.Invert);
+            break;
+        case DeriveOp::SpecularSqrtF0:
+            Out = SpecularFromSqrtF0(Source);
             break;
         case DeriveOp::FusedAlphaColour:
         case DeriveOp::FusedAlphaSpecular:

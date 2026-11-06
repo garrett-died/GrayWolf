@@ -92,6 +92,10 @@ namespace Bo3Target
     // alpha as greyscale (alpha 1).
     UnpackedSpecularGloss UnpackSpecularGloss(const Rgba8Image& Source);
 
+    // A specular colour stored as the square root of F0 (Modern Warfare Remastered: F0 = rgb^2, mwr-materials.md 12.2), as the sRGB-coded F0 BO3's
+    // specColorMap holds (alpha 1): b' = 255 * sRGBencode((b / 255)^2). 0 stays 0 and 255 stays 255; a constant dielectric 51 becomes 56, the stock "specular simple".
+    Rgba8Image SpecularFromSqrtF0(const Rgba8Image& Source);
+
     // Normalises a vector in place. A zero (or non-finite) length yields straight up (0,0,1).
     // Exposed so the guard can be tested: no hemi-octahedral pixel actually reaches it.
     void NormaliseOrUp(float& X, float& Y, float& Z);

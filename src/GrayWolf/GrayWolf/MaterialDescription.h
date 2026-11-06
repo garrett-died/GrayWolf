@@ -34,7 +34,11 @@ namespace Materials
     //   ColorMetalAlpha    colour in RGB, the metal mask in A (this map and the albedo share the file)
     //   ColorMetalMask     the metal mask of the albedo, held in another file: metal in R, the
     //                      insulator range in A (set on the Metalness map; the albedo is the colour)
-    enum class PackKind { None, Nog, NormalAlphaGreen, ColorMetalAlpha, ColorMetalMask };
+    //   SpecularGlossAlpha a specular image whose alpha is the gloss (set on the gloss map: the BO3 unpack writes the alpha as a one-channel image,
+    //                      unremapped; the adapter states the gloss range in Description::GlossStopsMax)
+    //   SpecularSqrtF0     a specular colour stored as the square root of F0 (set on the Specular map: the BO3 unpack writes the sRGB-coded
+    //                      F0 the Mod Tools' specColorMap holds, alpha dropped)
+    enum class PackKind { None, Nog, NormalAlphaGreen, ColorMetalAlpha, ColorMetalMask, SpecularGlossAlpha, SpecularSqrtF0 };
 
     // A texture file (relative to the model file) and the channel holding the value (0..3 = rgba;
     // colour maps use rgb). Invert: the value is 1 - sample (a gloss map read as roughness).
@@ -104,6 +108,16 @@ namespace Materials
         float Tint[3] = { 1, 1, 1 };    // linear
     };
 
+    // How a game's image file names become BO3's "i_<stem>_<tag>" (declared by the game's adapter, never by shared code): a clean image name that ends
+    // in a declared suffix is renamed to its stem and the tag ("<stem>_col" is "i_<stem>_c"), and a leading prefix of the material name or the stem is
+    // dropped ("mtl_", which the stock names never carry).
+    struct ImageNaming
+    {
+        std::vector<std::pair<std::string, std::string>> Suffixes;   // (source suffix with its '_', BO3 tag): ("_col", "c")
+        std::vector<std::string> StripPrefixes;                      // leading text of a name left out ("mtl_")
+        bool Empty() const { return Suffixes.empty() && StripPrefixes.empty(); }
+    };
+
     struct Description
     {
         std::string Name;
@@ -133,6 +147,8 @@ namespace Materials
         // The surface type the game's own flags give, as a BO3 surfaceType combo name ("metal"); empty when it states none.
         // SurfaceWhy then says why (SurfaceTypes.h): "no_table", "not_read", "none_in_source", "unnamed:0x..."; empty with a type.
         std::string SurfaceType, SurfaceWhy;
+        // The evidence when SurfaceType rests on an inference rather than a read (MWR: a layer id intersection); the exporter writes it as a material.surface_from_layer_id row
+        std::string SurfaceVia;
         // A game's rule that the material is not exported at all (HydraX D-13: a BO3 material with an image named *_combo is an unusable
         // duplicate). Set by the game's adapter, never by shared code; the reason is a code:detail string for the report row.
         std::string SkipWhy;
@@ -141,6 +157,21 @@ namespace Materials
         std::string TechsetName;
         // Why the game's rule left TechsetName empty: "no_techset" (the material names none) or "name_unread" (the reader gave no name). Empty: a name is set.
         std::string TechsetWhy;
+        // The BO3 gloss range (glossRangeMin / glossRangeMax, in stops) the game's gloss image maps to, when the adapter states one (< 0: not stated, the
+        // techset default stays and the exporter says so).
+        float GlossStopsMin = -1.0f, GlossStopsMax = -1.0f;
+        // The adapter's naming of this material's images (ImageNaming)
+        ImageNaming Naming;
+        // Layers of a layered material the description does not carry (the maps are the first layer's): the exporter says how many
+        int LayersDropped = 0;
+        // The game's slot hash of the reveal image of a decal, when the adapter binds one: the builder fills alphaRevealMap of a reveal techset from it
+        uint32_t RevealSemantic = 0;
+        int RevealChannel = 0;   // the channel of that image that holds the reveal (MWR: the grey picture's red); the game's adapter states it
+        // Textures of the source the description does not carry (comma separated names, one per kind: "detail", "parallax", ...): the exporter writes a
+        // material.texture_unbound row and the gate warns
+        std::string TexturesUnbound;
+        // Why the techset family was chosen against the usual rule: "surface_unknown_treated_as_metal" (an ambiguous or unread surface keeps its specular map)
+        std::string FamilyWhy;
     };
 
     // What an exporter or a model file knows about one material: the input of an adapter.
@@ -162,6 +193,7 @@ namespace Materials
         // The game's own flag words, -1 when its reader gave none: the material's surface flags (BO4 +0x28, BO3 +0x24) and
         // its techset's renderFlags (BO4 +0x20). Read by SurfaceTypes against the profile's flag_names.txt.
         int64_t SurfaceFlags = -1, RenderFlags = -1;
+        std::string SurfaceVia;   // the evidence when SurfaceFlags came from an inference (a layer id intersection)
         const Image* BySemantic(uint32_t Semantic) const;
     };
 

@@ -15,6 +15,7 @@
 #include <cstring>
 #include <fstream>
 
+#include "FixRoundSelfTest.h"
 #include "CliOptions.h"
 #include "CliCommands.h"
 
@@ -1015,6 +1016,7 @@ static int SelfTest(std::string& Failures)
     // pool-coverage: the state of a pool on synthetic rows, the pool map file, the run report parsers
     Failed += PoolCoverage::SelfTest(Failures);
     Failed += Maps::FullMapSelfTest(Failures);
+    Failed += FixRound::SelfTest(Failures);
 
     // The Radiant source export's stand-alone rules (hulls, limits, tiny faces, contents, lights, angles, usage)
     Failed += Maps::RadiantRulesSelfTest(Failures);

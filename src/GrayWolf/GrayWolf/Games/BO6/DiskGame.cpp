@@ -882,6 +882,7 @@ namespace
                     Vx.Pos[2] = (float)((Packed >> 42) & 0x1FFFFF) * Scale + Oz;
                     const Vector3 Normal = MeshDecode::UnpackPackedQuat(ExportNaming::At<uint32_t>(Tz, Pos + N + (int64_t)V * 4));
                     Vx.Normal[0] = Normal.X, Vx.Normal[1] = Normal.Y, Vx.Normal[2] = Normal.Z;
+                    Vx.NormalRead = true;
                     for (int J = 0; J < 2; J++) Vx.Uv[J] = ExportNaming::At<float>(Tz, Pos + Uv + (int64_t)V * 8 * Layers + J * 4);
                     if (Cl != 0) std::memcpy(Vx.Color, Tz.data() + Pos + Cl + (int64_t)V * 4, 4);
                     Out.Vertices.push_back(Vx);

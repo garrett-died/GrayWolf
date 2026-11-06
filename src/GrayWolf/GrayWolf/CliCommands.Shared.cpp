@@ -3,6 +3,7 @@
 // fallthrough().
 
 #include "CliOptions.h"
+#include "DiskGuard.h"
 #include "CliCommands.h"
 
 #include <CLI/CLI.hpp>
@@ -16,6 +17,7 @@ void AddSharedOptions(CLI::App& App, CliOptions& Options)
     App.add_option("--threads", Options.Threads, "Worker thread count")->group("Shared options");
     App.add_option("--limit", Options.Limit, "Cap the number of assets exported (disk-export: per kind, what they pull from other zones not counted)")->group("Shared options");
     App.add_option("--type", Options.Type, "Asset type filter (model, image, sound, ...)")->group("Shared options");
+    App.add_option("--min-free-gb", DiskGuard::FloorGb(), "Stop the export (exit code 75, a row in graywolf_disk_floor.tsv) when the output drive has less than this many GB free, checked before image writes (default 8; 0 turns it off)")->group("Shared options");
     App.add_option("--report", Options.Report, "Write the result report to this file")->group("Shared options");
     App.add_flag("--export-all", Options.ExportAll, "Export every asset matching --type/--limit/--name-filter")->group("Shared options");
     App.add_option("--name-filter", Options.NameFilter,

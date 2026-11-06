@@ -114,6 +114,7 @@ bool IsDecalMaterial(const MapScene& Scene, const std::string& MaterialName)
 int WindingOf(const std::string& Game)
 {
     const std::string G = LowerOf(Game);
+    if (G == "mwr") return -1;   // measured on mp_crash: the triangle cross runs opposite the vertex normal on 1,080,760 of 1,080,760
     return G == "bo3" || G == "bo4" ? -1 : 1;
 }
 
@@ -122,12 +123,17 @@ std::map<std::string, Bo3Target::Techsets::MapUse> GeometryUse(const MapScene& S
     using RadiantGeometry::V3;
     std::map<std::string, Bo3Target::Techsets::MapUse> Drawn;
     const int Winding = WindingOf(Scene.Game);
-    // a reader that fills the vertex normal gives some vertex a normal other than the default (0, 0, 1)
-    bool NormalsRead = false;
+    // a reader that read the vertex normals says so per vertex (Vertex::NormalRead); judged per surface. The value (0, 0, 1) cannot tell unread from read (a flat
+    // floor reads exactly that), so unset means unknown and the game's winding decides
+    const auto SurfaceHasNormals = [](const Surface& S) {
+        for (const Vertex& V : S.Vertices)
+            if (V.NormalRead) return true;
+        return false;
+    };
+    bool NormalsRead = false;   // any surface of the scene (the stats only)
     for (const Mesh& M : Scene.Objects)
         for (const Surface& S : M.Surfaces)
-            for (const Vertex& V : S.Vertices)
-                if (V.Normal[0] != 0.0f || V.Normal[1] != 0.0f || V.Normal[2] != 1.0f) NormalsRead = true;
+            if (SurfaceHasNormals(S)) NormalsRead = true;
     if (Stats != nullptr) Stats->NormalsRead = NormalsRead;
     // the area of one mesh's surfaces by facing, into Drawn; Terrain / Sky: the role of the mesh
     const auto Measure = [&](const Mesh& M, const std::string& Label, bool Terrain, bool Sky) {
@@ -141,6 +147,7 @@ std::map<std::string, Bo3Target::Techsets::MapUse> GeometryUse(const MapScene& S
             U.Sky = U.Sky || Sky;
             if (Sky) continue;   // the sky model's triangles are in the model's space: they say nothing about a floor or a wall
             FacingAreas A;
+            const bool SurfaceNormals = SurfaceHasNormals(S);
             for (size_t K = 0; K + 2 < S.Indices.size(); K += 3)
             {
                 if (S.Indices[K] >= S.Vertices.size() || S.Indices[K + 1] >= S.Vertices.size() || S.Indices[K + 2] >= S.Vertices.size()) continue;
@@ -151,7 +158,7 @@ std::map<std::string, Bo3Target::Techsets::MapUse> GeometryUse(const MapScene& S
                 // the vertex normal when the reader gives one (the mean of the three, a unit vector), else the game's winding
                 V3 Mean = { 0, 0, 0 };
                 bool HaveNormal = false;
-                if (NormalsRead)
+                if (SurfaceNormals)
                 {
                     for (size_t J = 0; J < 3; J++)
                         for (size_t Axis = 0; Axis < 3; Axis++) Mean[Axis] += S.Vertices[S.Indices[K + J]].Normal[Axis];
@@ -617,13 +624,51 @@ int FullMapSelfTest(std::string& Failures)
         Mesh N;
         N.Name = "world";
         Surface S = Triangle("m_normal_down", 1);               // cross up, but the reader's normal says down
-        for (Vertex& V : S.Vertices) V.Normal[0] = 0, V.Normal[1] = 0, V.Normal[2] = -1;
+        for (Vertex& V : S.Vertices) V.Normal[0] = 0, V.Normal[1] = 0, V.Normal[2] = -1, V.NormalRead = true;
         N.Surfaces = { S };
         Normal.Objects = { N };
         FacingStats Stats;
         const auto UseC = GeometryUse(Normal, nullptr, &Stats);
         Check(UseC.at("m_normal_down").Ceiling > 0 && UseC.at("m_normal_down").Floor == 0 && Stats.NormalsRead && Stats.WithNormal == 1 && Stats.CrossAgainst == 1,
               "the reader's vertex normal decides, and the stats compare it with the cross product");
+        // a scene where one surface has real normals and another has the default (0, 0, 1): the default one must follow the winding, not count as a floor
+        MapScene Mixed;
+        Mixed.Game = "bo4";
+        Mesh X;
+        X.Name = "world";
+        Surface Real = Triangle("m_real_down", 1);
+        for (Vertex& V : Real.Vertices) V.Normal[0] = 0, V.Normal[1] = 0, V.Normal[2] = -1, V.NormalRead = true;
+        X.Surfaces = { Real, Triangle("m_unread_down", -1) };   // the second: cross down, no read normal
+        Mixed.Objects = { X };
+        const auto UseD = GeometryUse(Mixed);
+        Check(UseD.at("m_real_down").Ceiling > 0 && UseD.at("m_unread_down").Floor > 0, "a surface without read normals follows the winding even when another surface has normals");
+        Mixed.Game = "iw3";   // winding +1: the unread surface's cross product points down, so it is a ceiling by the sign convention, not a floor by the default normal
+        const auto UseE = GeometryUse(Mixed);
+        Check(UseE.at("m_unread_down").Ceiling > 0 && UseE.at("m_unread_down").Floor == 0, "an unread surface is not counted as a floor by the default normal");
+        {
+            const float At[3] = { 350.8f, 1180.3f, 389.0f };
+            Check(Maps::LightGuid(At, 0) != Maps::LightGuid(At, 1) && Maps::LightGuid(At, 7) == Maps::LightGuid(At, 7), "two light records at one origin get different guids (the record index is in the hash)");
+        }
+        // a real flat floor reads exactly (0, 0, 1): it is a floor by its read normal, whichever way the winding runs
+        MapScene Flat;
+        Flat.Game = "bo4";
+        Mesh Fl;
+        Fl.Name = "world";
+        Surface Floor = Triangle("m_flat_floor", 1);            // cross up: bo4 winding -1 alone would call it a ceiling; only the read normal (0, 0, 1) makes it a floor
+        for (Vertex& V : Floor.Vertices) V.Normal[0] = 0, V.Normal[1] = 0, V.Normal[2] = 1, V.NormalRead = true;
+        Fl.Surfaces = { Floor };
+        Flat.Objects = { Fl };
+        FacingStats FlatStats;
+        const auto UseF = GeometryUse(Flat, nullptr, &FlatStats);
+        Check(UseF.at("m_flat_floor").Floor > 0 && UseF.at("m_flat_floor").Ceiling == 0 && FlatStats.NormalsRead, "a surface whose read normal is exactly (0, 0, 1) is a floor (the value is no sentinel)");
+        // mwr: the cross product runs opposite the vertex normal, so a surface with no read normal follows winding -1
+        MapScene Mwr;
+        Mwr.Game = "mwr";
+        Mesh Mw;
+        Mw.Name = "world";
+        Mw.Surfaces = { Triangle("m_mwr_cross_down", -1) };
+        Mwr.Objects = { Mw };
+        Check(GeometryUse(Mwr).at("m_mwr_cross_down").Floor > 0, "mwr has winding -1: a surface whose cross product points down is a floor");
     }
 
     // what the maps draw, read back from the lists the index names (the stand-alone gate and the hook share this)

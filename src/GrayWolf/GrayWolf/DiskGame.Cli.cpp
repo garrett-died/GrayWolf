@@ -1,3 +1,4 @@
+#include "DiskGuard.h"
 #include "stdafx.h"
 
 #include "DiskGameCli.h"
@@ -321,6 +322,10 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
         CliReport(Options, std::string("result=ok\ngame=") + Game.Id() + "\nexport_skipped=1 (--plan reads the earlier export)\n" + PublishLines + Report(Planned));
         return 0;
     }
+    // the free space floor applies to the CLI export (8 GB unless --min-free-gb says otherwise); the GUI path never sets it
+    if (DiskGuard::FloorGb() < 0.0) DiskGuard::FloorGb() = 8.0;
+    DiskGuard::ReportDir() = C.OutRoot;
+    DiskGuard::Reset();
     C.NameFilter = Options.NameFilter;
     C.Limit = Options.Limit;
     // --assets kind:name,...: only those (as the Load Game panel's picks and previews ask)
@@ -376,8 +381,10 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
         Publishing(T, Refused);
         if (!Refused.empty())
         {
-            CliReport(Options, "result=error\nreason=" + Refused + "\n" + PublishLines + Report(T));
-            return 1;
+            // a publish that failed because the floor was reached is the floor's exit, with its row
+            const bool Floor = DiskGuard::WriteReport(fs::path(C.OutRoot));
+            CliReport(Options, std::string(Floor ? "result=disk_floor_reached\ndisk_floor_reached=1\n" + DiskGuard::RowText() : std::string("result=error\n")) + "reason=" + Refused + "\n" + PublishLines + Report(T));
+            return Floor ? DiskGuard::ExitCode : 1;
         }
     }
     const bool Ignored = !C.NameFilter.empty() && !Game.FiltersByName();
@@ -385,6 +392,12 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
     for (const std::string& Z : Zones) ZoneNames += (ZoneNames.empty() ? "" : "|") + Z;
     const std::string LanguageLines = "languages=" + Spoken.Text() + "\n" + "zone_names=" + ZoneNames + "\n" +
                                   (Zones.size() < Named ? "zones_other_languages=" + std::to_string(Named - Zones.size()) + "\n" : "");
+    // the floor was reached: every report above was written; the row goes into the report folder and the CLI layer (only) exits 75
+    if (DiskGuard::WriteReport(fs::path(C.OutRoot)))
+    {
+        CliReport(Options, std::string("result=disk_floor_reached\ngame=") + Game.Id() + "\ndisk_floor_reached=1\n" + DiskGuard::RowText() + LanguageLines + PublishLines + Report(T));
+        return DiskGuard::ExitCode;
+    }
     CliReport(Options, std::string("result=ok\ngame=") + Game.Id() + "\n" + (Ignored ? "name_filter=ignored\n" : "") + LanguageLines + PublishLines + Report(T));
     return 0;
 }

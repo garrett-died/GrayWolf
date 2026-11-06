@@ -133,8 +133,16 @@ namespace Bo3Target::Verify
             bool HaveAwi = false;
             // material asset (lower case) -> the reason its surfaceType is <none>, from graywolf_approximations.tsv
             std::map<std::string, std::string> SurfaceWhy;
+            size_t StockLateRows = 0;                          // material.stock_semantic_late rows: the image is held by an installed GDT, or stock
+            std::map<std::string, std::string> Unbound;         // asset (lower case) -> detail of a material.texture_unbound row
+            std::map<std::string, std::string> FamilyAssumed;   // asset (lower case) -> what a material.family_* row says was assumed
+            std::map<std::string, std::string> F0Failed;        // asset (lower case) -> detail of a material.f0_conversion_failed row
+            std::map<std::string, std::string> GlossFailed, RevealFailed;   // likewise for material.gloss_conversion_failed and material.reveal_conversion_failed
+            std::map<std::string, std::string> FallbackWhy;     // asset (lower case) -> detail of a material.techset_fallback row: the techset was not the game's rule choice
             std::map<std::string, std::string> SkippedWhy;      // asset (lower case) -> "code detail" of a material.skipped_* row: the exporter left this material out on purpose
             bool HaveApproximations = false;
+            // asset (lower case) -> (gdt file, held usage) from the material.usage_held rows of graywolf_approximations.tsv: the stand-alone gate has no run behind it, only these rows
+            std::map<std::string, std::pair<std::string, std::string>> HeldRows;
 
             explicit Context(const Inputs& I) : In(I)
             {
@@ -149,6 +157,57 @@ namespace Bo3Target::Verify
                     std::vector<std::string> Cells;
                     std::istringstream Row(Line);
                     for (std::string Cell; std::getline(Row, Cell, '\t');) Cells.push_back(Cell);
+                    if (Cells.size() >= 3 && Cells[0] == "material.usage_held")
+                    {
+                        // detail: gdt=<file>, held_usage=<usage>, this_export_would_choose=<usage>, surface=<via>
+                        const std::string& D = Cells[2];
+                        const size_t G = D.find("gdt="), U = D.find(", held_usage="), W = D.find(", this_export_would_choose=");
+                        if (G == 0 && U != std::string::npos && W != std::string::npos && W > U)
+                        {
+                            std::string Asset = Cells[1];
+                            for (char& Ch : Asset) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
+                            std::string Gdt = D.substr(4, U - 4);
+                            if (Gdt == "(unknown)") Gdt.clear();
+                            HeldRows[Asset] = { Gdt, D.substr(U + 13, W - U - 13) };
+                        }
+                        continue;
+                    }
+                    if (Cells.size() >= 3 && Cells[0] == "material.stock_semantic_late") StockLateRows++;
+                    if (Cells.size() >= 3 && Cells[0] == "material.texture_unbound")
+                    {
+                        std::string Asset = Cells[1];
+                        for (char& Ch : Asset) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
+                        Unbound[Asset] = Cells[2];
+                        continue;
+                    }
+                    if (Cells.size() >= 3 && Cells[0].rfind("material.family_", 0) == 0)
+                    {
+                        std::string Asset = Cells[1];
+                        for (char& Ch : Asset) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
+                        FamilyAssumed[Asset] = Cells[0].substr(16);
+                        continue;
+                    }
+                    if (Cells.size() >= 3 && (Cells[0] == "material.gloss_conversion_failed" || Cells[0] == "material.reveal_conversion_failed"))
+                    {
+                        std::string Asset = Cells[1];
+                        for (char& Ch : Asset) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
+                        (Cells[0] == "material.gloss_conversion_failed" ? GlossFailed : RevealFailed)[Asset] = Cells[2];
+                        continue;
+                    }
+                    if (Cells.size() >= 3 && Cells[0] == "material.f0_conversion_failed")
+                    {
+                        std::string Asset = Cells[1];
+                        for (char& Ch : Asset) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
+                        F0Failed[Asset] = Cells[2];
+                        continue;
+                    }
+                    if (Cells.size() >= 3 && Cells[0] == "material.techset_fallback")
+                    {
+                        std::string Asset = Cells[1];
+                        for (char& Ch : Asset) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
+                        FallbackWhy[Asset] = Cells[2];
+                        continue;
+                    }
                     if (Cells.size() < 3 || (Cells[0].rfind("material.surface_", 0) != 0 && Cells[0].rfind("material.skipped_", 0) != 0)) continue;
                     std::string Asset = Cells[1];
                     for (char& Ch : Asset) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
@@ -1167,6 +1226,44 @@ namespace Bo3Target::Verify
                 }
             }
 
+            // techset fallback: a material whose techset was not the game's rule choice. A rule table that could not be used (reason=rules_...) is a failure, any other is a warning
+            if (C.HaveApproximations)
+            {
+                std::string Key = E.Name;
+                for (char& Ch : Key) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
+                if (const auto U = C.Unbound.find(Key); U != C.Unbound.end())
+                {
+                    C.Judged("material.texture_unbound");
+                    C.Warn("material.texture_unbound", E, "the source binds textures this export does not write: " + U->second);
+                }
+                if (const auto A = C.FamilyAssumed.find(Key); A != C.FamilyAssumed.end())
+                {
+                    C.Judged("material.family_assumed");
+                    C.Warn("material.family_assumed", E, "the techset family rests on an assumption, the surface being unknown: " + A->second);
+                }
+                if (const auto X = C.GlossFailed.find(Key); X != C.GlossFailed.end())
+                {
+                    C.Judged("material.gloss_conversion");
+                    C.Fail("material.gloss_conversion", E, "the gloss could not be extracted from the specular composite: " + X->second);
+                }
+                if (const auto X = C.RevealFailed.find(Key); X != C.RevealFailed.end())
+                {
+                    C.Judged("material.reveal_conversion");
+                    C.Fail("material.reveal_conversion", E, "the reveal image could not be reduced to one channel: " + X->second);
+                }
+                if (const auto X = C.F0Failed.find(Key); X != C.F0Failed.end())
+                {
+                    C.Judged("material.f0_conversion");
+                    C.Fail("material.f0_conversion", E, "the specular colour could not be converted from sqrt(F0): " + X->second);
+                }
+                if (const auto F = C.FallbackWhy.find(Key); F != C.FallbackWhy.end())
+                {
+                    C.Judged("material.techset_fallback");
+                    if (F->second.rfind("reason=rules_", 0) == 0) C.Fail("material.techset_fallback", E, "the techset rule table could not be used: " + F->second);
+                    else C.Warn("material.techset_fallback", E, "the techset is not the game's rule choice: " + F->second);
+                }
+            }
+
             // usage
             if (const std::string* Usage = E.Get("usage"); Usage != nullptr)
             {
@@ -1646,6 +1743,9 @@ namespace Bo3Target::Verify
             for (const fs::path& R : In.Roots) RootsText += (RootsText.empty() ? "" : "|") + fs::absolute(R).lexically_normal().generic_string();
             C.R.RunRoots = RootsText;
             C.R.Mode = (In.ListedOnly || !In.OnlyFiles.empty()) ? "listed" : "scan";
+            if (C.StockLateRows != 0)
+                C.Add("material.stock_semantic_late", "gate", Severity::Info,
+                      std::format("{} material.stock_semantic_late rows in graywolf_approximations.tsv: an image whose final name is held by an installed GDT, or stock, is judged again with that name (not necessarily a stock image)", C.StockLateRows));
 
             // the GDT files; any input that gives nothing is a failure
             if (In.Roots.empty()) C.Add("gate.input", "gate", Severity::Failure, "no layout root: the input folder does not exist or none was given");
@@ -1697,7 +1797,10 @@ namespace Bo3Target::Verify
             }
             C.R.Entries = C.Entries.size();
             // a map-drawn material the Mod Tools hold is not ours to rewrite: warn where its usage there hides it (or cannot be read)
-            for (const auto& [Asset, Held] : In.MapHeld)
+            // (the run's own list, else the rows the run wrote to its approximations file, so the stand-alone gate and the export's gate agree)
+            std::map<std::string, std::pair<std::string, std::string>> AllHeld = C.HeldRows;
+            for (const auto& [Asset, Held] : In.MapHeld) AllHeld[Asset] = Held;
+            for (const auto& [Asset, Held] : AllHeld)
             {
                 C.Judged("material.usage_held");
                 if (Held.second == "<not in editor>" || Held.second.rfind("unavailable", 0) == 0)
@@ -2773,6 +2876,24 @@ void GenerateUI( asset Asset )
                     if (F.Asset == "material:mtl_held_hidden" && F.Detail.find("t7.gdt") != std::string::npos) HeldNamed++;
                 }
             Check(HeldWarn == 2 && HeldNamed == 1, "a held map material: a warning naming its gdt when its usage hides it or is unreadable, none when it has a usage", std::to_string(HeldWarn) + "/" + std::to_string(HeldNamed));
+            // the stand-alone gate has no run behind it: the same warnings come from the material.usage_held rows of graywolf_approximations.tsv
+            Inputs FromRows = Map;
+            FromRows.MapHeld.clear();
+            FromRows.Approximations = Base / "approx_held.tsv";
+            Put(FromRows.Approximations,
+                "code\tasset\tdetail\tmessage\n"
+                "material.usage_held\tmtl_held_hidden\tgdt=model_export\\t7.gdt, held_usage=<not in editor>, this_export_would_choose=floor, surface=world#3\tx\n"
+                "material.usage_held\tmtl_held_shown\tgdt=model_export\\t7.gdt, held_usage=floor, this_export_would_choose=floor, surface=world#4\tx\n"
+                "material.usage_held\tmtl_held_unread\tgdt=(unknown), held_usage=unavailable: no file, this_export_would_choose=floor, surface=world#5\tx\n");
+            const Result Rows = Run(FromRows);
+            size_t RowWarn = 0, RowNamed = 0;
+            for (const Finding& F : Rows.Findings)
+                if (F.Check == "material.usage_held" && F.Level == Severity::Warning)
+                {
+                    RowWarn++;
+                    if (F.Asset == "material:mtl_held_hidden" && F.Detail.find("t7.gdt") != std::string::npos && F.Detail.find("<not in editor>") != std::string::npos) RowNamed++;
+                }
+            Check(RowWarn == HeldWarn && RowNamed == HeldNamed, "the stand-alone gate reads usage_held rows from the approximations file and agrees with the export's gate", std::to_string(RowWarn) + "/" + std::to_string(RowNamed));
         }
         Check(R.ExitCode() == 2 && R.Failures > 0, "failures give exit 2");
         const std::string Tsv = R.Tsv();
@@ -2886,6 +3007,43 @@ void GenerateUI( asset Asset )
             Put(Positive.Approximations, "code\tasset\tdetail\tmessage\nmaterial.surface_none_in_source\tmtl_bad\tgame=bo4\tread and names none\n");
             Check(SurfaceFindings(In, Severity::Failure, "material:mtl_bad") == 1, "no approximations: a <none> surfaceType is a failure");
             Check(SurfaceFindings(Why, Severity::Failure, "material:mtl_bad") == 1 && SurfaceFindings(Why, Severity::Info, "material:mtl_bad") == 0, "a reported reason keeps the failure and names it");
+            {
+                // a fallback caused by an unusable rule table is a failure, any other fallback a warning
+                const auto FallbackFindings = [&](const char* Detail, Severity S) {
+                    Inputs I2 = In;
+                    I2.Approximations = Base / "approx_fallback.tsv";
+                    Put(I2.Approximations, std::string("code\tasset\tdetail\tmessage\nmaterial.techset_fallback\tmtl_bad\t") + Detail + "\ty\n");
+                    size_t N = 0;
+                    for (const Finding& F : Run(I2).Findings)
+                        if (F.Check == "material.techset_fallback" && F.Level == S && F.Asset == "material:mtl_bad") N++;
+                    return N;
+                };
+                Check(FallbackFindings("reason=rules_missing", Severity::Failure) == 1 && FallbackFindings("reason=no_rule", Severity::Warning) == 1 && FallbackFindings("reason=no_rule", Severity::Failure) == 0,
+                      "a techset fallback caused by an unusable rule table is a gate failure; any other fallback is a counted warning");
+                // the other conversion rows and the unbound textures: a gloss or reveal conversion failure fails the material, an unbound texture warns
+                const auto RowFindings = [&](const char* Code, const char* CheckName, Severity S) {
+                    Inputs I4 = In;
+                    I4.Approximations = Base / "approx_row.tsv";
+                    Put(I4.Approximations, std::string("code\tasset\tdetail\tmessage\n") + Code + "\tmtl_bad\timage=x.png\ty\n");
+                    size_t N = 0;
+                    for (const Finding& F : Run(I4).Findings)
+                        if (F.Check == CheckName && F.Level == S && F.Asset == "material:mtl_bad") N++;
+                    return N;
+                };
+                Check(RowFindings("material.gloss_conversion_failed", "material.gloss_conversion", Severity::Failure) == 1 &&
+                          RowFindings("material.reveal_conversion_failed", "material.reveal_conversion", Severity::Failure) == 1 &&
+                          RowFindings("material.texture_unbound", "material.texture_unbound", Severity::Warning) == 1 &&
+                          RowFindings("material.family_surface_unknown_treated_as_metal", "material.family_assumed", Severity::Warning) == 1 &&
+                          RowFindings("material.family_surface_unknown_specular_dropped_by_rule", "material.family_assumed", Severity::Warning) == 1,
+                      "a gloss or reveal conversion failure is a gate failure; an unbound texture or an assumed family is a gate warning");
+                Inputs I3 = In;
+                I3.Approximations = Base / "approx_f0.tsv";
+                Put(I3.Approximations, "code\tasset\tdetail\tmessage\nmaterial.f0_conversion_failed\tmtl_bad\timage=x_spc.png\ty\n");
+                size_t F0Fails = 0;
+                for (const Finding& F : Run(I3).Findings)
+                    if (F.Check == "material.f0_conversion" && F.Level == Severity::Failure && F.Asset == "material:mtl_bad") F0Fails++;
+                Check(F0Fails == 1, "a failed sqrt(F0) conversion is a gate failure naming the image");
+            }
             Check(SurfaceFindings(NoRow, Severity::Failure, "material:mtl_bad") == 1 && SurfaceFindings(NoRow, Severity::Info, "material:mtl_bad") == 0, "approximations with no row for the material: no evidence, a failure (absence is never 'the source said none')");
             Check(SurfaceFindings(Positive, Severity::Failure, "material:mtl_bad") == 0 && SurfaceFindings(Positive, Severity::Info, "material:mtl_bad") == 1, "only a material.surface_none_in_source row makes <none> Info");
         }

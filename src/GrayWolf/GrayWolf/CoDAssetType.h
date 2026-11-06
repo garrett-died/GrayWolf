@@ -224,6 +224,8 @@ struct XImage_t
 
     // The image's DXGI format when the reader knows it (Black Ops 4: image header +0x64), else 0. Not a constructor argument.
     uint32_t Format = 0;
+
+    // The game's own usage byte for the texture when its reader knows it (Modern Warfare Remastered: 2 colour, 5 normal, 8 specular, 16 occlusion...), else 0xff.
 };
 
 struct XMaterialSetting_t
@@ -274,6 +276,8 @@ struct XMaterial_t
     // The game's flag words when its reader knows them, else -1: the material's surface flags and its techset's renderFlags
     // (Materials::Source, SurfaceTypes.h).
     int64_t SurfaceFlags = -1, RenderFlags = -1;
+    // Set when a reader gave SurfaceFlags from an inference (MWR: a layer id intersection of the level blends): the evidence, for a material.surface_from_layer_id row
+    std::string SurfaceVia;
 };
 
 struct XModelLod_t

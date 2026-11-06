@@ -54,18 +54,36 @@ bool Names::Parse(std::string_view Text)
         if (!Line.empty() && Line.back() == '\r') Line.pop_back();
         if (Line.empty() || Line[0] == '#') continue;
         std::istringstream Fields(Line);
-        std::string Kind, Name, Value;
+        std::string Kind, Name, Value, Target;
         if (!std::getline(Fields, Kind, '|') || !std::getline(Fields, Name, '|') || !std::getline(Fields, Value, '|')) continue;
+        std::getline(Fields, Target, '|');   // the optional fourth field: a surface_bit row's BO3 name
         uint32_t Word = 0;
         if (!ParseWord(Value, Word)) continue;
-        if (Kind == "surface_mask") TypeMask = Word;
+        if (Kind == "surface_bits") BitSet = true;
+        else if (Kind == "surface_bit" && !Name.empty() && Word < 64) Bits.push_back({ static_cast<int>(Word), Name, Target });
+        else if (Kind == "surface_mask") TypeMask = Word;
         else if (Kind == "game" && !Name.empty()) Games.push_back(Name);
         else if (Kind == "surface" && !Name.empty()) Types.emplace_back(Word, Name);
         else if (Kind == "bo3_unused" && !Name.empty()) Unused.push_back(Name);
         else if (Kind == "render" && Name == "opaque") OpaqueBit = Word;
         else if (Kind == "render" && Name == "decal") DecalBit = Word;
     }
+    if (BitSet) return !Bits.empty();
     return TypeMask != 0 && !Types.empty();
+}
+
+Names::BitState Names::DecodeBits(uint64_t Word, std::string& Name, std::string& Target) const
+{
+    if (Word == 0) return BitState::NoSurface;
+    if ((Word & (Word - 1)) != 0) return BitState::Ambiguous;
+    for (const BitRow& Row : Bits)
+        if ((Word >> Row.Bit) == 1)
+        {
+            Name = Row.Name;
+            Target = Row.Target;
+            return BitState::Named;
+        }
+    return BitState::Unnamed;
 }
 
 bool Names::UnusedInBo3(const std::string& SurfaceName) const
@@ -124,6 +142,7 @@ const Names* For(const std::string& Profile, bool* ProfileFound)
 void Apply(const std::string& Profile, const Materials::Source& Source, Materials::Description& D)
 {
     D.SurfaceType.clear();
+    D.SurfaceVia.clear();
     bool Found = true;
     const Names* Table = For(Profile, &Found);
     if (Table == nullptr)
@@ -137,6 +156,29 @@ void Apply(const std::string& Profile, const Materials::Source& Source, Material
         return;
     }
     std::string Name;
+    if (Table->IsBitSet())
+    {
+        std::string Target;
+        const uint64_t Word = static_cast<uint64_t>(Source.SurfaceFlags);
+        switch (Table->DecodeBits(Word, Name, Target))
+        {
+        case Names::BitState::Named:
+            D.SurfaceType = Target.empty() ? Name : Target;   // no BO3 name: the game's own, which the exporter reports as surface_unmapped
+            D.SurfaceWhy.clear();
+            D.SurfaceVia = Source.SurfaceVia;                 // the reader's evidence when the word came from an inference (a layer id intersection)
+            break;
+        case Names::BitState::NoSurface:
+            D.SurfaceWhy = "none_in_source";
+            break;
+        case Names::BitState::Ambiguous:
+            D.SurfaceWhy = std::format("ambiguous:0x{:X}", Word);   // two or more bits: the reader did not say which layer it wants
+            break;
+        case Names::BitState::Unnamed:
+            D.SurfaceWhy = std::format("unnamed:0x{:X}", Word);
+            break;
+        }
+        return;
+    }
     switch (Table->Decode(static_cast<uint32_t>(Source.SurfaceFlags), Name))
     {
     case Names::State::Named:
@@ -174,10 +216,11 @@ bool ReadAndNamesNoSurface(const std::string& Game, int64_t Flags)
 {
     if (Flags < 0) return false;
     const std::string Id = ExportNaming::Lower(Game);
-    for (const char* Profile : { "bo4", "t7", "t9" })
+    for (const char* Profile : { "bo4", "t7", "t9", "h1" })
         if (const Names* Table = For(Profile); Table != nullptr && Table->HasGame(Id))
         {
-            std::string Name;
+            std::string Name, Target;
+            if (Table->IsBitSet()) return Table->DecodeBits(static_cast<uint64_t>(Flags), Name, Target) == Names::BitState::NoSurface;
             return Table->Decode(static_cast<uint32_t>(Flags), Name) == Names::State::NoSurface;
         }
     return false;
@@ -258,6 +301,32 @@ int SelfTest(std::string& Failures)
     Src.SurfaceFlags = 0xD440A0;
     Apply("bo4", Src, D);
     Check(D.SurfaceType == "metal", "bo4 metal is still metal", D.SurfaceType);
+    // a bit-set game (Modern Warfare Remastered): the word's one bit names the surface, none states none, two are ambiguous, a bit with no BO3 name keeps the game's
+    {
+        Names Bits;
+        const bool Ok = Bits.Parse("game|mwr|0\nsurface_bits||1\nsurface_bit|metal_solid|12|metal\nsurface_bit|slush|29|\nsurface_bit|cushion|51|cushion\n");
+        std::string BitName, BitTarget;
+        Check(Ok && Bits.IsBitSet() && Bits.DecodeBits(1ull << 12, BitName, BitTarget) == Names::BitState::Named && BitName == "metal_solid" && BitTarget == "metal", "bits: a one-bit word is its row, with the BO3 name");
+        Check(Bits.DecodeBits(1ull << 51, BitName, BitTarget) == Names::BitState::Named && BitTarget == "cushion", "bits: bit 51 (above 32) is read");
+        Check(Bits.DecodeBits(1ull << 29, BitName, BitTarget) == Names::BitState::Named && BitTarget.empty() && BitName == "slush", "bits: a bit with no BO3 name has an empty target");
+        Check(Bits.DecodeBits(0, BitName, BitTarget) == Names::BitState::NoSurface && Bits.DecodeBits((1ull << 12) | (1ull << 51), BitName, BitTarget) == Names::BitState::Ambiguous &&
+                  Bits.DecodeBits(1ull << 30, BitName, BitTarget) == Names::BitState::Unnamed, "bits: zero states none, two bits are ambiguous, an undeclared bit is unnamed");
+        const Names* Mwr = For("h1");
+        Check(Mwr != nullptr && Mwr->IsBitSet() && Mwr->HasGame("mwr"), "the shipped h1 table is a bit set for mwr");
+        Check(ReadAndNamesNoSurface("mwr", 0) && !ReadAndNamesNoSurface("mwr", 1ll << 12) && !ReadAndNamesNoSurface("mwr", -1), "mwr: a read word of zero states no surface; a typed or unread word does not");
+        Materials::Source Mw;
+        Materials::Description Dm;
+        Mw.SurfaceFlags = 1ll << 38;
+        Apply("h1", Mw, Dm);
+        Check(Dm.SurfaceType == "metalcar" && Dm.SurfaceWhy.empty(), "mwr bit 38 (metal_vehicle) is metalcar", Dm.SurfaceType);
+        Mw.SurfaceFlags = 1ll << 29;
+        Apply("h1", Mw, Dm);
+        Check(Dm.SurfaceType == "slush", "mwr bit 29 (slush) has no BO3 name: the game's own name is carried for the exporter to report", Dm.SurfaceType);
+        Mw.SurfaceFlags = (1ll << 4) | (1ll << 5);
+        Apply("h1", Mw, Dm);
+        Check(Dm.SurfaceType.empty() && Dm.SurfaceWhy.rfind("ambiguous:", 0) == 0, "mwr two bits: ambiguous, no type", Dm.SurfaceWhy);
+        // every BO3 name of the shipped table is a combo value of the Mod Tools' material.awi surfaceType (checked against the BO3 install by the M1 measurement)
+    }
     const std::vector<std::string> Options = { "<error>", "<none>", "Metal", "wood" };
     Check(ToBo3("metal", Options) == "Metal" && ToBo3("wood", Options) == "wood" && ToBo3("ladder", Options).empty(), "ToBo3 matches an option by name, case aside, and nothing else");
     return Failed;

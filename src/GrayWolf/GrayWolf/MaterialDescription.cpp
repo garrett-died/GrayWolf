@@ -391,13 +391,15 @@ const char* PackName(PackKind Kind)
     case PackKind::NormalAlphaGreen: return "normal_ag";
     case PackKind::ColorMetalAlpha:  return "color_metal_alpha";
     case PackKind::ColorMetalMask:   return "color_metal_mask";
+    case PackKind::SpecularGlossAlpha: return "spec_gloss_alpha";
+    case PackKind::SpecularSqrtF0:   return "spec_sqrt_f0";
     default:                         return "none";
     }
 }
 
 PackKind PackFromName(const std::string& Name)
 {
-    for (const PackKind K : { PackKind::Nog, PackKind::NormalAlphaGreen, PackKind::ColorMetalAlpha, PackKind::ColorMetalMask })
+    for (const PackKind K : { PackKind::Nog, PackKind::NormalAlphaGreen, PackKind::ColorMetalAlpha, PackKind::ColorMetalMask, PackKind::SpecularGlossAlpha, PackKind::SpecularSqrtF0 })
         if (Name == PackName(K)) return K;
     return PackKind::None;
 }
@@ -499,9 +501,25 @@ std::string SidecarText(const Sidecar& S)
         if (D.Roughness.Empty()) J["roughness_value"] = Rounded(D.RoughnessValue);
         if (!D.SurfaceType.empty()) J["surface_type"] = D.SurfaceType;
         if (!D.SurfaceWhy.empty()) J["surface_why"] = D.SurfaceWhy;
+        if (!D.SurfaceVia.empty()) J["surface_via"] = D.SurfaceVia;
         if (!D.SkipWhy.empty()) J["skip_why"] = D.SkipWhy;
         if (!D.TechsetName.empty()) J["techset_name"] = D.TechsetName;
         if (!D.TechsetWhy.empty()) J["techset_why"] = D.TechsetWhy;
+        if (D.RevealSemantic != 0) J["reveal_semantic"] = D.RevealSemantic;
+        if (D.RevealChannel != 0) J["reveal_channel"] = D.RevealChannel;
+        if (!D.TexturesUnbound.empty()) J["textures_unbound"] = D.TexturesUnbound;
+        if (!D.FamilyWhy.empty()) J["family_why"] = D.FamilyWhy;
+        if (D.GlossStopsMax >= 0.0f) J["gloss_stops"] = { Rounded(D.GlossStopsMin < 0.0f ? 0.0f : D.GlossStopsMin), Rounded(D.GlossStopsMax) };
+        if (D.LayersDropped > 0) J["layers_dropped"] = D.LayersDropped;
+        if (!D.Naming.Empty())
+        {
+            nlohmann::json N = nlohmann::json::object();
+            nlohmann::json Sf = nlohmann::json::array();
+            for (const auto& [Suffix, Tag] : D.Naming.Suffixes) Sf.push_back({ Suffix, Tag });
+            N["suffixes"] = std::move(Sf);
+            N["strip_prefixes"] = D.Naming.StripPrefixes;
+            J["image_naming"] = std::move(N);
+        }
         if (!D.Color.Empty())
         {
             nlohmann::json C = nlohmann::json::object();
@@ -524,6 +542,7 @@ std::string SidecarText(const Sidecar& S)
             if (Src.SortKey >= 0) J["sort_key"] = Src.SortKey;
             if (Src.SurfaceFlags >= 0) J["surface_flags"] = Src.SurfaceFlags;
             if (Src.RenderFlags >= 0) J["render_flags"] = Src.RenderFlags;
+            if (!Src.SurfaceVia.empty()) J["surface_via"] = Src.SurfaceVia;
             nlohmann::json Imgs = nlohmann::json::array();
             char Hex[16];
             for (const auto& Img : Src.Images)
@@ -608,9 +627,26 @@ bool ReadSidecar(const std::string& Path, Sidecar& S)
             D.MetalnessValue = J.value("metalness_value", D.MetalnessValue);
             D.SurfaceType = J.value("surface_type", std::string());
             D.SurfaceWhy = J.value("surface_why", std::string());
+            D.SurfaceVia = J.value("surface_via", std::string());
             D.SkipWhy = J.value("skip_why", std::string());
             D.TechsetName = J.value("techset_name", std::string());
             D.TechsetWhy = J.value("techset_why", std::string());
+            D.RevealSemantic = J.value("reveal_semantic", static_cast<uint32_t>(0));
+            D.RevealChannel = J.value("reveal_channel", 0);
+            D.TexturesUnbound = J.value("textures_unbound", std::string());
+            D.FamilyWhy = J.value("family_why", std::string());
+            if (J.contains("gloss_stops") && J["gloss_stops"].is_array() && J["gloss_stops"].size() == 2)
+            {
+                D.GlossStopsMin = J["gloss_stops"][0].get<float>();
+                D.GlossStopsMax = J["gloss_stops"][1].get<float>();
+            }
+            D.LayersDropped = J.value("layers_dropped", 0);
+            if (J.contains("image_naming") && J["image_naming"].is_object())
+            {
+                for (const auto& P : J["image_naming"].value("suffixes", nlohmann::json::array()))
+                    if (P.is_array() && P.size() == 2) D.Naming.Suffixes.emplace_back(P[0].get<std::string>(), P[1].get<std::string>());
+                for (const auto& P : J["image_naming"].value("strip_prefixes", nlohmann::json::array())) D.Naming.StripPrefixes.push_back(P.get<std::string>());
+            }
             if (J.contains("tint") && J["tint"].is_object()) TintFromJson(J["tint"], D.Tint);
             if (J.contains("color_tint") && J["color_tint"].is_object())
             {
@@ -624,6 +660,7 @@ bool ReadSidecar(const std::string& Path, Sidecar& S)
             Src.Techset = J.value("techset", std::string());
             Src.SortKey = J.value("sort_key", -1);
             Src.SurfaceFlags = J.value("surface_flags", static_cast<int64_t>(-1));
+            Src.SurfaceVia = J.value("surface_via", std::string());
             Src.RenderFlags = J.value("render_flags", static_cast<int64_t>(-1));
             for (const auto& One : J.value("sources", nlohmann::json::array()))
             {

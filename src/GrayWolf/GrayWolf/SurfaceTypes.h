@@ -40,12 +40,27 @@ namespace SurfaceTypes
         size_t Count() const { return Types.size(); }
         uint32_t Mask() const { return TypeMask; }
         bool HasGame(const std::string& Game) const;
+
+        // A game whose surface word is a bit set (a `surface_bits` row: Modern Warfare Remastered, a u64): bit n of the word names surface type n.
+        // Zero bits state no surface; one bit is named by its `surface_bit` row; two or more are ambiguous (a layered material holds the union
+        // of its layers' bits: the reader resolves the layer it wants before the word is decoded). Target is the BO3 surfaceType the row maps to
+        // (empty: none near enough; Name is then the game's own name, which the exporter reports as unmapped).
+        bool IsBitSet() const { return BitSet; }
+        enum class BitState { NoSurface, Named, Unnamed, Ambiguous };
+        BitState DecodeBits(uint64_t Word, std::string& Name, std::string& Target) const;
         // A `bo3_unused|<name>|<value>` row: the game names this surface type but no stock BO3 material entry uses it (HydraX writes
         // <none> for the BO4 player and riotshield). Per game, as data: the t7 table has no such row, BO3 keeps both.
         bool UnusedInBo3(const std::string& SurfaceName) const;
 
     private:
         uint32_t TypeMask = 0, OpaqueBit = 0, DecalBit = 0;
+        bool BitSet = false;
+        struct BitRow
+        {
+            int Bit;
+            std::string Name, Target;
+        };
+        std::vector<BitRow> Bits;
         std::vector<std::string> Games;
         std::vector<std::pair<uint32_t, std::string>> Types;
         std::vector<std::string> Unused;

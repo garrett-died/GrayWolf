@@ -1,0 +1,66 @@
+# Surface type names of Modern Warfare Remastered (profile h1), read as data (SurfaceTypes.h). Rows: kind|name|value[|bo3 name]
+#   surface_bits   the material's surface word is a BIT SET, not an enum: the u64 at material +0x20 (value unused). A bit n set means the surface type n.
+#   game           the game id the materials sidecar names for this profile (value unused)
+#   surface_bit    a surface type: bit <value> of the word. The fourth field is the Black Ops III surfaceType the name maps to (a material.awi combo value);
+#                  empty: no BO3 name is near enough, the name is carried as it is and the exporter says surface_unmapped (never guessed).
+# Names: the table the SP executable ships as plain strings (file offset 8,184,664 of h1_sp64_ship.exe), in order; bit index = position, bark = 0. See docs/hydrax-port/mwr-materials.md
+# section 12.5. proven: bits 1..4, 8, 11, 12, 15..18, 21, 23..25, 27, 28, 51 (an impact_<surface> material carries exactly that bit; MP and SP agree on 98.7% of shared materials);
+# tested: bits 5..7, 9, 10, 13, 22, 26 (name keywords on the materials that carry them); the names of bits 0, 14, 19, 29..50 come from the exe's list order and fit the
+# per-bit name evidence (bit 39 stickers/blinds/barrels = metal_thin, 37 containers = metal_hollow, 46 water decals = water_ankle); hypothesis: bit 20 water.
+# The MP executable has none of these strings (its table is not plain), so the SP list is taken for both (the words agree).
+# BO3 mapping (hypothesis where a variant is folded): a _wet or _debris variant maps to its base, _solid and the bare name to the base,
+# hollow, thin and vehicle to metalhollow, metalthin and metalcar (stock BO3 GDTs use them), grate to metalcatwalk (the nearest grating), ankle and knee water to watershallow.
+game|mwr|0
+surface_bits||1
+surface_bit|bark|0|bark
+surface_bit|brick|1|brick
+surface_bit|carpet|2|carpet
+surface_bit|cloth|3|cloth
+surface_bit|concrete|4|concrete
+surface_bit|dirt|5|dirt
+surface_bit|flesh|6|flesh
+surface_bit|foliage_debris|7|foliage
+surface_bit|glass|8|glass
+surface_bit|grass|9|grass
+surface_bit|gravel|10|gravel
+surface_bit|ice|11|ice
+surface_bit|metal_solid|12|metal
+surface_bit|metal_grate|13|metalcatwalk
+surface_bit|mud|14|mud
+surface_bit|paper|15|paper
+surface_bit|plaster|16|plaster
+surface_bit|rock|17|rock
+surface_bit|sand|18|sand
+surface_bit|snow|19|snow
+surface_bit|water_waist|20|water
+surface_bit|wood_solid|21|wood
+surface_bit|asphalt|22|asphalt
+surface_bit|ceramic|23|ceramic
+surface_bit|plastic_solid|24|plastic
+surface_bit|rubber|25|rubber
+surface_bit|fruit|26|fruit
+surface_bit|paintedmetal|27|paintedmetal
+surface_bit|riotshield|28|riotshield
+surface_bit|slush|29|
+surface_bit|asphalt_wet|30|asphalt
+surface_bit|asphalt_debris|31|asphalt
+surface_bit|concrete_wet|32|concrete
+surface_bit|concrete_debris|33|concrete
+surface_bit|foliage_vegetation|34|foliage
+surface_bit|foliage_leaves|35|foliage
+surface_bit|grass_tall|36|tallgrass
+surface_bit|metal_hollow|37|metalhollow
+surface_bit|metal_vehicle|38|metalcar
+surface_bit|metal_thin|39|metalthin
+surface_bit|metal_wet|40|metal
+surface_bit|metal_debris|41|metal
+surface_bit|plastic_hollow|42|plastic
+surface_bit|plastic_tarp|43|plastic
+surface_bit|rock_wet|44|rock
+surface_bit|rock_debris|45|rock
+surface_bit|water_ankle|46|watershallow
+surface_bit|water_knee|47|watershallow
+surface_bit|wood_hollow|48|wood
+surface_bit|wood_wet|49|wood
+surface_bit|wood_debris|50|wood
+surface_bit|cushion|51|cushion

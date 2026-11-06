@@ -35,7 +35,7 @@ std::string AddMaterial(MapScene& Scene, const XMaterial_t& M)
     Out.Techset = M.TechsetName;
     Out.Constants = M.Constants;
     Out.SortKey = M.SortKey;
-    Out.SurfaceFlags = M.SurfaceFlags, Out.RenderFlags = M.RenderFlags;
+    Out.SurfaceFlags = M.SurfaceFlags, Out.RenderFlags = M.RenderFlags, Out.SurfaceVia = M.SurfaceVia;
     for (const XImage_t& I : M.Images)
     {
         if (I.ImageName.empty()) continue;
@@ -89,6 +89,7 @@ bool AddModel(MapScene& Scene, const std::string& Name, const ExportWriters::Liv
             O.Normal[0] = V.Normal.X;
             O.Normal[1] = V.Normal.Y;
             O.Normal[2] = V.Normal.Z;
+            O.NormalRead = true;   // a model vertex of the live export carries its normal
             if (!V.UVLayers.empty())
             {
                 O.Uv[0] = V.UVLayers[0].U;

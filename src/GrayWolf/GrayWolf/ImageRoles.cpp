@@ -6,6 +6,7 @@
 
 #include "Bo3Target.MaterialImages.h"
 #include "Bo3Target.Techsets.h"
+#include "DiskGame.Monitor.h"
 #include "ExportNaming.h"
 #include "ExportWriters.h"
 #include "MemoryBudget.h"
@@ -182,6 +183,15 @@ namespace ImageRoles
         // 90% in the disc. The proxy stubs of the Black Ops 4 props (8x32 and 64x64 'proxy_normal': 0% to 77% in the
         // disc) fail it.
         const double Centre = Strict ? 0.12 : 0.25, Spread = Strict ? 0.35 : 0.40, Disc = Strict ? 0.97 : 0.90;
+        // An image that two kinds of slot bind and whose red and green never vary has no sign of being a normal: a flat colour such as (128, 128, 0)
+        // passes the centre and disc tests. It is a normal only if its blue already holds the Z of red and green (then nothing is rewritten).
+        if (Strict && DevR < 0.01 && DevG < 0.01)
+        {
+            size_t Fit = 0;
+            for (size_t I = 0; I < Count; I++)
+                if (std::abs((int)Image.Pixels[I * 4 + 2] - (int)ZByte(Image.Pixels[I * 4], Image.Pixels[I * 4 + 1])) <= 12) Fit++;
+            if ((double)Fit < 0.97 * (double)Count) return false;
+        }
         return std::abs(MeanR - 0.5) < Centre && std::abs(MeanG - 0.5) < Centre && DevR < Spread && DevG < Spread && (double)Inside >= Disc * Count;
     }
 
@@ -406,6 +416,15 @@ namespace ImageRoles
             Stub.Pixels = { 4, 4, 4, 255,  3, 5, 4, 255,  4, 3, 5, 255,  5, 4, 3, 255 };
             Check(!LooksLikeNormal(Tilted2) && LooksLikeNormal(Tilted2, false), "slot: a tilted normal passes the slot check, not the tie check", "");
             Check(!LooksLikeNormal(Stub, false) && !LooksLikeNormal(Colour, false), "slot: a dark stub and a colour do not", "");
+            // a flat colour bound to both kinds of slot: (128, 128, 0, 255) is no evidence of a normal; with its Z in blue it is the flat normal
+            Rgba8Image FlatColour;
+            FlatColour.Width = 4;
+            FlatColour.Height = 1;
+            FlatColour.Pixels = { 128, 128, 0, 255,  128, 128, 0, 255,  128, 128, 0, 255,  128, 128, 0, 255 };
+            Rgba8Image FlatNormal = FlatColour;
+            for (size_t I = 0; I < 4; I++) FlatNormal.Pixels[I * 4 + 2] = 255;
+            Check(!LooksLikeNormal(FlatColour) && LooksLikeNormal(FlatNormal) && LooksLikeNormal(FlatColour, false),
+                  "tie: a flat (128, 128, 0) colour is left; a flat normal with its Z passes; the slot check (not strict) is unchanged", "");
         }
         // the pass over the files: only what this run wrote, one role per file, 8-bit RGB(A) only, normal-looking pixels only
         {
@@ -468,6 +487,40 @@ namespace ImageRoles
         // images met through a model pulled from another zone belong to the run's normals too
         Check(KindBindsImages(DiskGame::Kind::Model) && KindBindsImages(DiskGame::Kind::Material) && KindBindsImages(DiskGame::Kind::Fx) && !KindBindsImages(DiskGame::Kind::Sound),
               "a pulled model reads its zone's image roles", "");
+        // a pulled dependency's zone: the roles of its materials' images come into the book through CollectRolesForDependencies, which is what a
+        // pulled model's normals depend on. Without it the book stays empty (the images keep the game's two-component Z).
+        {
+            struct FakeZone : DiskGame::IDiskZone
+            {
+                const std::string& Name() const override
+                {
+                    static const std::string N = "fake";
+                    return N;
+                }
+                bool WalkedToEnd() const override { return true; }
+                bool MaterialImages(DiskGame::MaterialBook& Out) override
+                {
+                    Out["mtl_pulled"] = { { 2, 0x59D30D0Fu, "i_pulled_normal" }, { 1, 0xA0AB1041u, "i_pulled_colour" } };
+                    return true;
+                }
+            };
+            FakeZone Zone;
+            DiskGame::Context Run;
+            DiskGame::Totals T;
+            DiskGame::RunMonitor Mon("", nullptr);
+            Book Roles;
+            DiskGame::Selection Model;
+            Model.insert({ DiskGame::Kind::Model, "xmodel_a" });
+            DiskGame::CollectRolesForDependencies(Zone, &Roles, Model, Run, T, Mon);
+            Check(Roles.RoleOf("i_pulled_normal") == Book::Role::Normal && Roles.RoleOf("i_pulled_colour") == Book::Role::Other && T.Counters["role_materials_read"] == 1,
+                  "dependencies: a pulled model's zone gives its images' roles to the book", std::to_string(T.Counters["role_materials_read"]));
+            Book Sounds;
+            DiskGame::Selection Sound;
+            Sound.insert({ DiskGame::Kind::Sound, "alias_a" });
+            DiskGame::CollectRolesForDependencies(Zone, &Sounds, Sound, Run, T, Mon);
+            Check(Sounds.RoleOf("i_pulled_normal") == Book::Role::Unknown, "dependencies: a pulled sound reads no roles", "");
+            DiskGame::CollectRolesForDependencies(Zone, nullptr, Model, Run, T, Mon);   // a game that does not rebuild normals: no book, no crash
+        }
         return Failed;
     }
 }

@@ -1,6 +1,9 @@
 #include "stdafx.h"
 
 #include "MaterialGdt.h"
+
+bool H1TechsetRulesSelfTest(const std::string& TempDir, std::string& Got);   // Games/H1/MaterialAdapter.cpp
+#include "ImageFacts.h"
 #include "WraithModel.h"
 #include "XMEExport.h"
 #include <stdexcept>
@@ -59,7 +62,7 @@ namespace
     {
         static const std::map<std::string, std::string> Tags = { { "diffuseMap", "c" }, { "normalMap", "n" }, { "glossMap", "g" },
                                                                  { "specularMap", "s" }, { "specularMask", "sm" }, { "occlusionMap", "o" },
-                                                                 { "thicknessMap", "t" } };
+                                                                 { "thicknessMap", "t" }, { "revealMap", "r" } };
         const auto It = Tags.find(Semantic);
         return It == Tags.end() ? Semantic : It->second;
     }
@@ -144,6 +147,14 @@ ScopedModelMaterialNames::ScopedModelMaterialNames(WraithModel& Model, bool On) 
 ScopedModelMaterialNames::~ScopedModelMaterialNames()
 {
     if (On) RestoreModelMaterialNames(Model, Saved);
+}
+
+// A name without the leading prefix the game adapter declares left out ("mtl_"); one the prefix would empty is kept
+std::string WithoutPrefix(const Materials::ImageNaming& Naming, const std::string& Name)
+{
+    for (const std::string& P : Naming.StripPrefixes)
+        if (!P.empty() && Name.size() > P.size() && Name.compare(0, P.size(), P) == 0) return Name.substr(P.size());
+    return Name;
 }
 
 bool IsDecoratedImageName(const std::string& Stem)
@@ -270,6 +281,7 @@ bool Builder::Convertible(const Materials::Map& Map, const fs::path& Dir, fs::pa
 
 bool Builder::Derive(const char* What, const Bo3Target::DeriveRequest& Request, fs::path& File)
 {
+    if (DeriveHook) return DeriveHook(What, Request, File);
     // Convertible has checked the source already; the mask and the output (beside the source) are checked here too
     if (RunRoot.empty() || !Bo3Target::Output::IsUnder(RunRoot, Request.Source) ||
         (!Request.Mask.empty() && !Bo3Target::Output::IsUnder(RunRoot, Request.Mask)))
@@ -315,7 +327,29 @@ void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Ma
     }
     Material M;
     M.Source = D.Name;
+    M.Naming = D.Naming;
     if (Name != D.Name) Counter("renamed")++;
+    if (D.LayersDropped > 0)
+    {
+        // a layered material has the maps of its first layer only: the others are not carried (a multi-mesh decomposition is a later step)
+        Counter("layers_dropped_materials")++;
+        Counter("layers_dropped") += (size_t)D.LayersDropped;
+        M.Notes.push_back({ "material.layers_dropped", "game=" + Game + ", layers=" + std::to_string(D.LayersDropped), "the material has more layers than the first: only the first layer maps are written, the others are not" });
+    }
+
+    if (!D.TexturesUnbound.empty())
+    {
+        // textures of the source the description does not carry: named, counted per kind, and the gate warns (nothing is dropped silently)
+        Counter("texture_unbound_materials")++;
+        std::stringstream Kinds(D.TexturesUnbound);
+        for (std::string Kind; std::getline(Kinds, Kind, ',');) Counter("texture_unbound_" + Kind.substr(0, Kind.find('(')))++;
+        M.Notes.push_back({ "material.texture_unbound", "game=" + Game + ", semantics=" + D.TexturesUnbound, "the source binds textures this export does not write: they are named here and not carried to BO3" });
+    }
+    if (!D.FamilyWhy.empty())
+    {
+        Counter("family_" + D.FamilyWhy)++;
+        M.Notes.push_back({ "material.family_" + D.FamilyWhy, "game=" + Game, "the surface is ambiguous or unread, so the material is not known to be a dielectric: the row's name says what became of its specular map" });
+    }
 
     // the surface type: the game's own flags (SurfaceTypes.h), never a guess; <none> with a note when the game gave none
     if (!D.SurfaceType.empty())
@@ -330,6 +364,13 @@ void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Ma
         {
             M.SurfaceType = Value;
             Counter("surface_" + Value)++;
+            if (!D.SurfaceVia.empty())
+            {
+                // the value rests on an intersection of the level's blends, not on this material's own word: said with its evidence (hypothesis)
+                Counter("surface_from_layer_id")++;
+                M.Notes.push_back({ "material.surface_from_layer_id", "game=" + Game + ", surface=" + Value + ", " + D.SurfaceVia,
+                                    "the first layer's surface was inferred by intersecting the words of the blends that hold its layer id; a layer with no bit of its own in a single-bit partner's blend would be handed the partner's bit" });
+            }
         }
     }
     else if (D.SurfaceWhy == "none_in_source" && Source != nullptr && SurfaceTypes::ReadAndNamesNoSurface(Game, Source->SurfaceFlags))
@@ -483,11 +524,17 @@ void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Ma
             if (Derive("gloss", Rq, File) && DerivedSlot(M, "cosinePowerMap", File, "glossMap", "Linear1ch", "compressed"))
             {
                 GlossDone = true;
-                Counter(Roughness.Invert ? "converted_channel_cosinePowerMap" : "converted_roughness_to_gloss")++;
+                Counter(Roughness.Pack == PackKind::SpecularGlossAlpha ? "converted_spec_gloss_alpha" : Roughness.Invert ? "converted_channel_cosinePowerMap" : "converted_roughness_to_gloss")++;
             }
         }
     }
     if (GlossDone) {}
+    else if (!Roughness.Empty() && Roughness.Pack == PackKind::SpecularGlossAlpha)
+    {
+        // the gloss is the alpha of a composite: never publish the composite itself as the gloss map (its RGB would be read as gloss). cosinePowerMap stays empty, the gate fails the material
+        Counter("gloss_conversion_failed")++;
+        M.Notes.push_back({ "material.gloss_conversion_failed", "image=" + fs::path(Roughness.Path).filename().string(), "the gloss is the alpha of a specular composite and could not be extracted; cosinePowerMap is left empty" });
+    }
     else if (!Roughness.Empty() && !Roughness.Invert) Counter("roughness_not_gloss")++;
     else Slot(M, "cosinePowerMap", Roughness, Dir, "glossMap", "Linear1ch", "compressed");
     if (Spec)
@@ -495,8 +542,26 @@ void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Ma
         // a full colour in the fullspec and emissive techniques, else the intensity mask theirs take
         // (with a target the slot the techset has decides: ChooseTechset gives a scalar slot its mask semantic)
         const bool Colour = Catalog || M.Type == "lit_advanced_fullspec" || M.Type == "lit_emissive";
-        if (Fused ? DerivedSlot(M, "specColorMap", FusedSpec, Colour ? "specularMap" : "specularMask", Colour ? "sRGB3ch" : "Linear1ch", "compressed")
-                  : Slot(M, "specColorMap", D.Specular, Dir, Colour ? "specularMap" : "specularMask", Colour ? "sRGB3ch" : "Linear1ch", "compressed"))
+        // a specular colour stored as sqrt(F0) (the description says so by its pack kind): the sRGB-coded F0 BO3 specColorMap holds, alpha dropped
+        fs::path F0From, F0File;
+        bool F0Done = false;
+        if (!Fused && Colour && D.Specular.Pack == PackKind::SpecularSqrtF0 && Convertible(D.Specular, Dir, F0From))
+        {
+            Bo3Target::DeriveRequest Rq;
+            Rq.Source = F0From;
+            Rq.Op = DeriveOp::SpecularSqrtF0;
+            Rq.Tag = Tag("specularMap");
+            F0Done = Derive("spec_sqrt_f0", Rq, F0File) && DerivedSlot(M, "specColorMap", F0File, "specularMap", "sRGB3ch", "compressed");
+            if (F0Done) Counter("converted_spec_sqrt_f0")++;
+        }
+        if (!F0Done && !Fused && Colour && D.Specular.Pack == PackKind::SpecularSqrtF0)
+        {
+            // never publish the sqrt(F0) encoding as if it were F0: the slot stays empty and the gate fails the material, naming the image
+            Counter("f0_conversion_failed")++;
+            M.Notes.push_back({ "material.f0_conversion_failed", "image=" + fs::path(D.Specular.Path).filename().string(), "the specular colour is sqrt(F0) and could not be converted to F0; specColorMap is left empty" });
+        }
+        else if (F0Done || (Fused ? DerivedSlot(M, "specColorMap", FusedSpec, Colour ? "specularMap" : "specularMask", Colour ? "sRGB3ch" : "Linear1ch", "compressed")
+                  : Slot(M, "specColorMap", D.Specular, Dir, Colour ? "specularMap" : "specularMask", Colour ? "sRGB3ch" : "Linear1ch", "compressed")))
         {
             if (!Colour) Counter("spec_as_mask")++;
             if (D.LegacySpecular) Counter("spec_legacy")++;
@@ -715,6 +780,11 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
     {
         M.Type = "lit";
         Counter("techset_none")++;
+        // no techset at all: the fallback is still reported (a rules_* reason must reach the gate)
+        Counter("techset_fallback")++;
+        Counter("techset_fallback_" + (NameFallback.empty() ? std::string("none_chosen") : NameFallback))++;
+        M.Notes.push_back({ "material.techset_fallback", "reason=" + (NameFallback.empty() ? std::string("none_chosen") : NameFallback) + ", source_name=" + (Source != nullptr && !Source->Techset.empty() ? Source->Techset : D.TechsetName.empty() ? std::string("(none)") : D.TechsetName) + ", result=lit",
+                            "no techset could be chosen: the material is written as lit" });
         return;
     }
     const Tc::Techset& T = *C.Chosen;
@@ -740,12 +810,13 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
     // A reveal map is no field of the material description: the source material's own reveal image (the texture named revealMap, a decal's
     // alpha reveal) is bound by its slot hash to the key the chosen techset gives that texture (alphaRevealMap). Found on
     // t8_decal_grunge_drips_lrg_01_lgt, which lost its reveal image.
-    if (Hashed && Source != nullptr)
+    if ((Hashed || D.RevealSemantic != 0) && Source != nullptr)   // a game whose adapter states its reveal image's slot hash (D.RevealSemantic) is bound like a hashed one
     {
-        const uint32_t RevealHash = Tc::SlotHash("revealMap");
+        const uint32_t SlotHash = Tc::SlotHash("revealMap");
+        const uint32_t RevealHash = D.RevealSemantic != 0 ? D.RevealSemantic : SlotHash;
         const Tc::Slot* RevealSlot = nullptr;
         for (const Tc::Slot& S : T.Slots)
-            if (S.Hash == RevealHash && !S.Key.empty()) RevealSlot = &S;
+            if (S.Hash == SlotHash && !S.Key.empty()) RevealSlot = &S;
         for (const Materials::Source::Image& Im : Source->Images)
         {
             if (Im.Semantic != RevealHash) continue;
@@ -758,7 +829,29 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
             {
                 Materials::Map Reveal;
                 Reveal.Path = Im.Path;
-                if (Slot(M, RevealSlot->Key.c_str(), Reveal, AddDir, "revealMap", "Linear1ch", "compressed")) Counter("reveal_image_bound")++;
+                bool Bound = false, Failed = false;
+                if (D.RevealSemantic != 0)
+                {
+                    // the game's reveal image is a grey picture in four channels: its red channel is the one-channel reveal map the techset takes (written as _r)
+                    fs::path Grey, From;
+                    if (Convertible(Reveal, AddDir, From))
+                    {
+                        Bo3Target::DeriveRequest Rq;
+                        Rq.Op = Bo3Target::DeriveOp::Channel;
+                        Rq.Source = From;
+                        Rq.Channel = ChannelOf(D.RevealChannel);   // the adapter states which channel of the game's image holds the reveal
+                        Rq.Tag = Tag("revealMap");
+                        Bound = Derive("reveal", Rq, Grey) && DerivedSlot(M, RevealSlot->Key.c_str(), Grey, "revealMap", "Linear1ch", "compressed");
+                    }
+                    Failed = !Bound;
+                }
+                if (Failed)
+                {
+                    // never bind the raw four-channel picture as a reveal map: the slot stays empty, the gate fails the material, reveal_image_bound is not counted
+                    Counter("reveal_conversion_failed")++;
+                    M.Notes.push_back({ "material.reveal_conversion_failed", "image=" + fs::path(Im.Path).filename().string(), "the reveal image could not be reduced to one channel; alphaRevealMap is left empty" });
+                }
+                else if (Bound || Slot(M, RevealSlot->Key.c_str(), Reveal, AddDir, "revealMap", "Linear1ch", "compressed")) Counter("reveal_image_bound")++;
             }
             break;
         }
@@ -852,7 +945,14 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
 
     // The gloss range maps the gloss image to BO3 stops (0..17). It is written only where a source constant proves it (BO4 below); for
     // every other game the image is written and the range is left at the techset default, which is a stated assumption, never a copied value.
-    if (M.Slots.count("cosinePowerMap") && ExportNaming::Lower(Game) != "bo4" && !(Source != nullptr && Source->Techset.rfind("xtechset_", 0) == 0))
+    if (M.Slots.count("cosinePowerMap") && D.GlossStopsMax >= 0.0f)
+    {
+        // the adapter states the range its gloss image maps to (a measured law of the source game shader, not a copied value)
+        M.Values.emplace_back("glossRangeMin", Tc::FloatText(D.GlossStopsMin < 0.0f ? 0.0f : D.GlossStopsMin));
+        M.Values.emplace_back("glossRangeMax", Tc::FloatText(D.GlossStopsMax));
+        Counter("gloss_range_from_adapter")++;
+    }
+    else if (M.Slots.count("cosinePowerMap") && ExportNaming::Lower(Game) != "bo4" && !(Source != nullptr && Source->Techset.rfind("xtechset_", 0) == 0))
     {
         const std::string G = ExportNaming::Lower(Game);
         const char* Label = G == "t5" || G == "t4" ? "hypothesis" : "unknown";
@@ -939,6 +1039,7 @@ Builder::Resolved Builder::Resolve() const
         // them (material name, then slot key, in sorted order), so the name is the same wherever the image is used. "Decorated" is read from the
         // source file name alone: a stock decision about the new name must not move an image back to its raw stem (the two would alternate).
         std::map<Image, std::pair<std::string, std::string>> Owner;
+        std::map<Image, std::string> Declared;     // a name the game adapter's suffix declaration gave
         std::set<Image> Seen;
         for (const auto& [Name, M] : Work)
             for (const auto& [Key, I] : M.Slots)
@@ -951,7 +1052,24 @@ Builder::Resolved Builder::Resolve() const
                         continue;
                     }
                     // BO3's own convention, "i_<name>" (a name that has it already keeps it)
-                    const std::string Stem = AssetName(Raw);
+                    std::string Stem = AssetName(Raw);
+                    // the game adapter's declaration: a leading prefix left out, a declared suffix replaced by its BO3 tag ("<stem>_col" is "i_<stem>_c")
+                    if (!M.Naming.Empty())
+                    {
+                        Stem = WithoutPrefix(M.Naming, Stem);
+                        std::string Tagged;
+                        for (const auto& [Suffix, Tag2] : M.Naming.Suffixes)
+                            if (Stem.size() > Suffix.size() && Stem.compare(Stem.size() - Suffix.size(), Suffix.size(), Suffix) == 0)
+                            {
+                                Tagged = "i_" + Stem.substr(0, Stem.size() - Suffix.size()) + "_" + Tag2;
+                                break;
+                            }
+                        if (!Tagged.empty())
+                        {
+                            Declared[I] = Tagged;
+                            continue;
+                        }
+                    }
                     ByStem[Stem.rfind("i_", 0) == 0 ? Stem : "i_" + Stem].push_back(I);
                 }
         std::map<Image, std::string> Candidate;
@@ -967,7 +1085,8 @@ Builder::Resolved Builder::Resolve() const
                 Candidate[I] = Name;
             }
         }
-        for (const auto& [I, From] : Owner) Candidate[I] = "i_" + From.first + "_" + SlotTag(From.second, I.Semantic);
+        for (const auto& [I, Name] : Declared) Candidate[I] = Name;
+        for (const auto& [I, From] : Owner) Candidate[I] = "i_" + WithoutPrefix(Work.at(From.first).Naming, From.first) + "_" + SlotTag(From.second, I.Semantic);
         // One name for one source image and semantic, across clean, decorated and shortened names (Publish shortens a name over 63 characters;
         // two long names can meet there). A reference to a stock image (a clean stem the stock database holds) may be shared: nothing is written
         // for it. Every other image that finds its name taken gets _2, _3, ... in Image order, which does not depend on the order materials were added.
@@ -1004,7 +1123,7 @@ Builder::Resolved Builder::Resolve() const
                 Changed = true;
                 const std::string Judged = I.StockSemantic;
                 Late[Name].push_back({ "material.stock_semantic_late", "slot=" + Key + ", image=" + Bound + ", judged=" + (Judged.empty() ? "(none)" : Judged) + ", final=" + (Now.empty() ? "(none)" : Now),
-                                       "the image got its final name after the techset was chosen; its stock decision is made again with that name" });
+                                       "the image got its final name after the techset was chosen; it is held by an installed GDT, or stock: that decision is made again with the final name" });
                 const Tc::Slot* Sl = TS != nullptr ? TS->ByKey(Key) : nullptr;
                 I.StockSemantic = Now;
                 const std::string Effective = Now.empty() ? I.Semantic : Now;
@@ -1094,7 +1213,13 @@ Builder::Resolved Builder::Resolve() const
     for (const auto& [I, Name] : ImageNames) Images[Name] = &I;
     for (const auto& [Name, I] : Images)
     {
-        Gdt::Fields F = { { "baseImage", BaseImageOf(I->File) }, { "compressionMethod", I->Compression },
+        // a block compressed image needs width and height in multiples of 4 (the gate's image.block_size): a smaller one (the 1x1 black and white a zone ships) is uncompressed
+        std::string Compression = I->Compression;
+        {
+            uint32_t W = 0, H = 0;
+            if (ImageFacts::SizeOf(I->File, W, H)) Compression = ImageFacts::CompressionFor(Compression, W, H);
+        }
+        Gdt::Fields F = { { "baseImage", BaseImageOf(I->File) }, { "compressionMethod", Compression },
                           { "coreSemantic", I->Core }, { "imageType", "Texture" }, { "semantic", I->Semantic },
                           { "streamable", "1" }, { "type", "image" } };
         if (I->FromAlpha) F.emplace_back("fromAlpha", "1");
@@ -1453,6 +1578,194 @@ int SelfTest(std::string& Failures)
         Check(SurfaceOf("", "no_bo3_use:player", Options, Note, Counters) == "<none>" && Note == "material.surface_no_bo3_use" && Counters["t_surface_no_bo3_use"] == 1,
               "a surface no stock BO3 material uses is <none> with its own row, not unknown", Note);
     }
+    // Modern Warfare Remastered: the techset grammar, the surface bit, the packs and the gloss range the adapter states (zonekit/profiles/h1)
+    {
+        const Materials::IAdapter& Mwr = Materials::AdapterFor("H1");
+        const auto Described = [&](const char* Techset, int SortKey, int64_t Surface, bool Layer) {
+            Materials::Source Src;
+            Src.Name = "mtl_h1_probe";
+            Src.Techset = Techset;
+            Src.SortKey = SortKey;
+            Src.SurfaceFlags = Surface;
+            Src.Images.push_back({ "h1_probe_col.png", Materials::Role::Unknown, 0xA0AB1041u, 0 });
+            Src.Images.push_back({ "h1_probe_nml.png", Materials::Role::Unknown, 0x59D30D0Fu, 0 });
+            Src.Images.push_back({ "~h1_probe_spc&h1_probe_cos-l~1.png", Materials::Role::Unknown, 0x34ECCCB3u, 0 });
+            if (Layer) Src.Images.push_back({ "h1_probe2_col.png", Materials::Role::Unknown, 0xB60D1850u, 0 });
+            return Mwr.Describe(Src);
+        };
+        const Materials::Description Lit = Described("m_l_sm_lmpb_r0c0n0sd0om0_nfwpf", 2, 1ll << 38, false);
+        Check(Lit.TechsetName == "lit_advanced_fullspec" && Lit.SurfaceType == "metalcar" && Lit.SurfaceWhy.empty() && Lit.Alpha == Materials::AlphaMode::Opaque,
+              "mwr: a lit single-layer material is lit_advanced_fullspec, opaque, with the surface of its one bit", Lit.TechsetName + " " + Lit.SurfaceType);
+        Check(Lit.Specular.Pack == Materials::PackKind::SpecularSqrtF0 && Lit.Roughness.Pack == Materials::PackKind::SpecularGlossAlpha && Lit.Roughness.Channel == 3 && Lit.Roughness.Invert &&
+                  Lit.GlossStopsMin == 0.0f && Lit.GlossStopsMax == 16.0f,
+              "mwr: the specular is sqrt(F0), the gloss its alpha in 0..16 stops", "");
+        Check(!Lit.Naming.Empty() && Lit.LayersDropped == 0, "mwr: the image naming is declared, no layer is dropped on a single layer", "");
+        const Materials::Description Decal = Described("m_l_sm_lmpb_r0c0n0sd0om0_ndw_aat_nfwpf", 0x10, 1ll << 4, false);
+        Check(Decal.TechsetName == "lit_decal_plus" && Decal.Specular.Empty() && Decal.Alpha == Materials::AlphaMode::Blend, "mwr: ndw + aat is a decal (plus family for a non-metal, no specular map), blended", Decal.TechsetName);
+        const Materials::Description Pane = Described("m_l_sm_lmpb_r0c0n0sd0om0_cltrans_nfwpf", 0x20, 1ll << 8, false);
+        const Materials::Description PaneNoBit = Described("m_l_sm_lmpb_r0c0n0sd0om0_cltrans_nfwpf", 0x20, 1ll << 12, false);
+        Check(Pane.TechsetName == "glass" && PaneNoBit.TechsetName == "lit_transparent_advanced_fullspec", "mwr: cltrans with the glass surface is glass, without it coloured glass", Pane.TechsetName + " / " + PaneNoBit.TechsetName);
+        const Materials::Description Test = Described("m_l_sm_lmpb_r0c0n0sd0om0_aat_nfwpf", 2, 1ll << 7, false);
+        Check(Test.TechsetName == "lit_alphatest_plus" && Test.Alpha == Materials::AlphaMode::Cutout, "mwr: aat without ndw is alpha tested, cutout", Test.TechsetName);
+        const Materials::Description Ui = Described("2d_add_nfwpf", 0x3c, 0, false);
+        Check(Ui.SkipWhy.rfind("ui_2d:", 0) == 0, "mwr: a 2d techset is skipped", Ui.SkipWhy);
+        const Materials::Description Fx = Described("effect_blend_nfwpf", 0x35, 0, false);
+        Check(Fx.TechsetName == "effect_lit_blend" && Fx.SurfaceWhy == "none_in_source", "mwr: an effect is effect_lit_blend and states no surface", Fx.TechsetName + " " + Fx.SurfaceWhy);
+        const Materials::Description Unknown = Described("zz_unheard_of", 2, 0, false);
+        Check(Unknown.TechsetName.empty() && Unknown.TechsetWhy == "no_rule", "mwr: a name no rule fits gets no techset and says why", Unknown.TechsetWhy);
+        const Materials::Description NoLightmap = Described("m_l_sm_r0c0n0sd0_nfwpf", 2, 1ll << 21, false);
+        Check(NoLightmap.TechsetName == "lit_plus" && NoLightmap.Specular.Empty(), "mwr: a lit name without the lmpb token is lit too; a non-metal (wood) takes lit_plus with no specular colour map", NoLightmap.TechsetName);
+        {
+            std::string Got;
+            const bool Ok = ::H1TechsetRulesSelfTest(Dir.string(), Got);
+            Check(Ok, "mwr: a missing rule table, a malformed row and an unknown condition are distinct errors, and a failed load is not kept", Got);
+        }
+        const Materials::Description Layered = Described("l_sm_lmpb_r0c0nl0sld0oml0_b1c1vl1nl1sl1oml1_nfwpf", 2, (1ll << 4) | (1ll << 5), true);
+        Check(Layered.LayersDropped == 1 && Layered.SurfaceType.empty() && Layered.SurfaceWhy.rfind("ambiguous:", 0) == 0,
+              "mwr: a layered blend counts its dropped layers, and a word of two bits is ambiguous until the reader picks the first layer bit", std::to_string(Layered.LayersDropped) + " " + Layered.SurfaceWhy);
+        // the Builder: the layers_dropped row, the gloss range and the F0 conversion's slot (the gloss is extracted by a derive that works here: a failing one is C4's test)
+        for (const char* F : { "c.png", "n.png", "g.png", "s.png" }) std::ofstream(Dir / F, std::ios::binary) << "x";
+        Builder B(Base, "t_");
+        B.TechsetData(&Data);
+        B.ConvertImages(true);
+        B.SetRunRoot(Dir);
+        B.DeriveHook = [&Dir](const char* What, const Bo3Target::DeriveRequest&, fs::path& File) {
+            File = Dir / (std::string("derived_") + What + ".png");
+            std::ofstream(File, std::ios::binary) << "x";
+            return true;
+        };
+        Materials::Source Src;
+        Src.Name = "mtl_h1_layered";
+        Materials::Description Written = Layered;
+        Written.Name = "mtl_h1_layered";
+        Written.Albedo = Map("c.png");
+        Written.Normal = Map("n.png");
+        Written.Roughness = Map("g.png", true);
+        Written.Roughness.Channel = 3;
+        Written.Roughness.Pack = Materials::PackKind::SpecularGlossAlpha;
+        Written.Specular = Map("s.png");
+        B.Add(Written, Dir, &Src, "mwr");
+        const auto R = B.Resolve();
+        bool Dropped = false;
+        for (const auto& N : R.Materials.empty() ? std::vector<Builder::Note>() : R.Materials[0].Notes) Dropped = Dropped || N.Code == "material.layers_dropped";
+        Check(Dropped && B.Counters().at("t_layers_dropped") == 1, "mwr: the Builder writes a material.layers_dropped row", "");
+        {
+            // B2, Builder side: a sqrt(F0) specular whose conversion fails is not published as it came: specColorMap stays empty and a material.f0_conversion_failed row names the image
+            std::ofstream(Dir / "f0s.png", std::ios::binary) << "x";
+            Builder Bf(Base, "t_");
+            Bf.TechsetData(&Data);
+            Bf.ConvertImages(true);
+            Bf.SetRunRoot(Dir);
+            Bf.DeriveHook = [](const char*, const Bo3Target::DeriveRequest&, fs::path&) { return false; };
+            Materials::Description F0 = Written;
+            F0.Name = "mtl_h1_f0fail";
+            F0.LayersDropped = 0;
+            F0.TechsetName = "lit_advanced_fullspec";
+            F0.Specular = Map("f0s.png");
+            F0.Specular.Pack = Materials::PackKind::SpecularSqrtF0;
+            Materials::Source Sf;
+            Sf.Name = F0.Name;
+            Bf.Add(F0, Dir, &Sf, "mwr");
+            const auto Rf = Bf.Resolve();
+            bool Row = false;
+            for (const auto& N : Rf.Materials.empty() ? std::vector<Builder::Note>() : Rf.Materials[0].Notes) Row = Row || (N.Code == "material.f0_conversion_failed" && N.Detail.find("f0s.png") != std::string::npos);
+            Check(!Rf.Materials.empty() && Value(Rf.Materials[0], "specColorMap").empty() && Row, "mwr: a failed sqrt(F0) conversion leaves specColorMap empty and writes a material.f0_conversion_failed row naming the image",
+                  Rf.Materials.empty() ? "(none)" : Value(Rf.Materials[0], "specColorMap"));
+            // C4: the same failing derive leaves cosinePowerMap empty (the RGBA composite is never the gloss map) and writes a gate-failing row
+            std::ofstream(Dir / "g.png", std::ios::binary) << "x";
+            bool GlossRow = false;
+            for (const auto& N : Rf.Materials.empty() ? std::vector<Builder::Note>() : Rf.Materials[0].Notes) GlossRow = GlossRow || N.Code == "material.gloss_conversion_failed";
+            Check(!Rf.Materials.empty() && Value(Rf.Materials[0], "cosinePowerMap").empty() && GlossRow, "C4: a gloss derive failure leaves cosinePowerMap empty and writes material.gloss_conversion_failed",
+                  Rf.Materials.empty() ? "(none)" : Value(Rf.Materials[0], "cosinePowerMap"));
+        }
+        {
+            // C5: a reveal that cannot be reduced to one channel is not bound raw: alphaRevealMap empty, a row, reveal_image_bound not counted
+            std::ofstream(Dir / "rvl.png", std::ios::binary) << "x";
+            Builder Br(Base, "t_");
+            Br.TechsetData(&Data);
+            Br.ConvertImages(true);
+            Br.SetRunRoot(Dir);
+            Br.DeriveHook = [](const char*, const Bo3Target::DeriveRequest&, fs::path&) { return false; };
+            Materials::Description Rv;
+            Rv.Name = "mtl_h1_revealfail";
+            Rv.Albedo = Map("c.png");
+            Rv.Normal = Map("n.png");
+            Rv.TechsetName = "lit_decal_reveal_plus";
+            Rv.RevealSemantic = 0x34D849D5u;
+            Materials::Source Sr;
+            Sr.Name = Rv.Name;
+            Sr.Images.push_back({ "rvl.png", Materials::Role::Unknown, 0x34D849D5u, 0 });
+            Br.Add(Rv, Dir, &Sr, "mwr");
+            const auto Rr = Br.Resolve();
+            bool RevealRow = false;
+            for (const auto& N : Rr.Materials.empty() ? std::vector<Builder::Note>() : Rr.Materials[0].Notes) RevealRow = RevealRow || N.Code == "material.reveal_conversion_failed";
+            const auto Counted = Br.Counters().find("t_reveal_image_bound");
+            Check(!Rr.Materials.empty() && Value(Rr.Materials[0], "alphaRevealMap").empty() && RevealRow && (Counted == Br.Counters().end() || Counted->second == 0),
+                  "C5: a reveal derive failure binds no raw image, writes material.reveal_conversion_failed and does not count reveal_image_bound", Rr.Materials.empty() ? "(none)" : Value(Rr.Materials[0], "alphaRevealMap"));
+            // D12: the channel of the reveal image comes from the adapter (the description), not from shared code
+            ImageChannel Asked = ImageChannel::Red;
+            Builder Bc(Base, "t_");
+            Bc.TechsetData(&Data);
+            Bc.ConvertImages(true);
+            Bc.SetRunRoot(Dir);
+            Bc.DeriveHook = [&](const char*, const Bo3Target::DeriveRequest& Request, fs::path& File) {
+                Asked = Request.Channel;
+                File = Dir / "derived_reveal.png";
+                std::ofstream(File, std::ios::binary) << "x";
+                return true;
+            };
+            Rv.RevealChannel = 2;
+            Bc.Add(Rv, Dir, &Sr, "mwr");
+            Bc.Resolve();
+            Check(Asked == ChannelOf(2), "D12: the reveal channel asked of the derive is the description's (RevealChannel), not a constant in shared code", std::to_string(static_cast<int>(Asked)));
+        }
+        {
+            // C6: no techset can be chosen: the fallback is still reported, and a rules_* reason reaches the gate
+            Tc::Data None;
+            None.LoadCatalogText(R"({"techsets":[{"n":"zz_unrelated","c":"Effect","f":"none","b":"Other","t":0,"s":[["colorMap","colorMap",null,null]]}]})");
+            Builder Bn(Base, "t_");
+            Bn.TechsetData(&None);
+            Materials::Description Nd;
+            Nd.Name = "mtl_h1_nonechosen";
+            Nd.Albedo = Map("c.png");
+            Nd.TechsetWhy = "rules_missing:test";
+            Materials::Source Sn;
+            Sn.Name = Nd.Name;
+            Bn.Add(Nd, Dir, &Sn, "mwr");
+            const auto Rn = Bn.Resolve();
+            std::string FallbackDetail;
+            for (const auto& N : Rn.Materials.empty() ? std::vector<Builder::Note>() : Rn.Materials[0].Notes)
+                if (N.Code == "material.techset_fallback") FallbackDetail = N.Detail;
+            Check(FallbackDetail.rfind("reason=rules_missing:test", 0) == 0, "C6: with no techset chosen material.techset_fallback is still written, so a rules_* reason reaches the gate", FallbackDetail);
+        }
+        {
+            // B1/B3: the emissive map binds on an emissive family, the unbound textures are named, an ambiguous surface keeps its specular map
+            const auto Described = [&](const char* Techset, int64_t Surface, bool WithEmissive, bool WithDetail) {
+                Materials::Source Src;
+                Src.Name = "mtl_h1_probe";
+                Src.Techset = Techset;
+                Src.SortKey = 2;
+                Src.SurfaceFlags = Surface;
+                Src.Images.push_back({ "p_col.png", Materials::Role::Unknown, 0xA0AB1041u, 0 });
+                Src.Images.push_back({ "p_nml.png", Materials::Role::Unknown, 0x59D30D0Fu, 0 });
+                Src.Images.push_back({ "~p_spc.png", Materials::Role::Unknown, 0x34ECCCB3u, 0 });
+                if (WithEmissive) Src.Images.push_back({ "p_ems.png", Materials::Role::Unknown, 0x34614347u, 0 });
+                if (WithDetail) Src.Images.push_back({ "p_detail.png", Materials::Role::Unknown, 0xEB529B4Du, 0 });
+                return Materials::AdapterFor("H1").Describe(Src);
+            };
+            const Materials::Description Em = Described("m_l_sm_lmpb_r0c0n0sd0om0_nfwpf", 1ll << 4, true, false);
+            const Materials::Description EmMetal = Described("m_l_sm_lmpb_r0c0n0sd0om0_nfwpf", 1ll << 12, true, false);
+            const Materials::Description EmDecal = Described("m_l_sm_lmpb_r0c0n0sd0om0_ndw_aat_nfwpf", 1ll << 4, true, true);
+            const Materials::Description Amb = Described("m_l_sm_lmpb_r0c0n0sd0om0_nfwpf", (1ll << 4) | (1ll << 5), false, false);
+            Check(Em.TechsetName == "lit_emissive_plus" && !Em.Emissive.Empty() && EmMetal.TechsetName == "lit_emissive_advanced_fullspec" && !EmMetal.Emissive.Empty(),
+                  "B1: an emissive map (0x34614347) binds, on lit_emissive_plus (non-metal) or lit_emissive_advanced_fullspec (metal)", Em.TechsetName + " " + EmMetal.TechsetName);
+            Check(EmDecal.Emissive.Empty() && EmDecal.TexturesUnbound.find("emissive") != std::string::npos && EmDecal.TexturesUnbound.find("detail") != std::string::npos,
+                  "B2: an emissive map on a decal family and a detail texture are named in TexturesUnbound", EmDecal.TexturesUnbound);
+            Check(Amb.TechsetName == "lit_advanced_fullspec" && !Amb.Specular.Empty() && Amb.FamilyWhy == "surface_unknown_treated_as_metal",
+                  "B3: an ambiguous surface keeps its specular map (treated as metal, with a row reason)", Amb.TechsetName + " " + Amb.FamilyWhy);
+        }
+        Check(!R.Materials.empty() && std::atof(Value(R.Materials[0], "glossRangeMax").c_str()) == 16.0 && std::atof(Value(R.Materials[0], "glossRangeMin").c_str()) == 0.0 && Value(R.Materials[0], "glossRangeMax") != "(no key)", "mwr: the adapter's gloss range is written", R.Materials.empty() ? "(none)" : Value(R.Materials[0], "glossRangeMax"));
+    }
     // HydraX D-13: the BO3 adapter says a material with a *_combo image is not exported; the builder writes no entry and no image and reports it
     {
         Materials::Source Src;
@@ -1514,10 +1827,11 @@ int SelfTest(std::string& Failures)
             Side.Materials.push_back(Named);
             Side.Materials.back().SkipWhy = "combo_image:image=x";
             Side.Materials.back().TechsetWhy = "no_techset";
+            Side.Materials.back().RevealSemantic = 0x34D849D5u;
             const std::string SidePath = (Dir / "rules.materials.json").string();
             const bool Wrote = Materials::WriteSidecar(SidePath, Side), Read = Materials::ReadSidecar(SidePath, Back);
-            Check(Wrote && Read && Back.Materials.size() == 1 && Back.Materials[0].TechsetName == "lit_advanced" && Back.Materials[0].SkipWhy == "combo_image:image=x" && Back.Materials[0].TechsetWhy == "no_techset",
-                  "the sidecar keeps a game's techset name and skip reason", std::format("{} {}", Wrote, Read));
+            Check(Wrote && Read && Back.Materials.size() == 1 && Back.Materials[0].TechsetName == "lit_advanced" && Back.Materials[0].SkipWhy == "combo_image:image=x" && Back.Materials[0].TechsetWhy == "no_techset" && Back.Materials[0].RevealSemantic == 0x34D849D5u,
+                  "the sidecar keeps a game's techset name, skip reason and reveal slot", std::format("{} {}", Wrote, Read));
         }
         Builder::Resolved Rn, Ru, Rz, Rr;
         Run(Named, Rn);
@@ -1922,6 +2236,48 @@ int SelfTest(std::string& Failures)
         for (const std::string& N : Names)
             for (const char C : N) Legal = Legal && ((C >= 'a' && C <= 'z') || (C >= '0' && C <= '9') || C == '_');
         Check(Legal, "image names are lower case letters, digits and underscore", "");
+    }
+    // a game adapter's declared image naming: a leading mtl_ is left out, and a declared suffix becomes its BO3 tag (_col is _c, _nml is _n)
+    {
+        for (const char* Name : { "h1_car_col.png", "h1_car_nml.png", "~h1_car_spc&h1_car_cos-l~abc123.png", "mtl_h1_other_col.png" })
+        {
+            std::ofstream F(Dir / Name, std::ios::binary);
+            F << "x";
+        }
+        Materials::ImageNaming Naming;
+        Naming.Suffixes = { { "_col", "c" }, { "_nml", "n" } };
+        Naming.StripPrefixes = { "mtl_" };
+        const auto Named = [&](const Materials::ImageNaming& Use) {
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            Materials::Description Car;
+            Car.Name = "mtl_h1_car";
+            Car.Albedo = Map("h1_car_col.png");
+            Car.Normal = Map("h1_car_nml.png");
+            Car.Specular = Map("~h1_car_spc&h1_car_cos-l~abc123.png");
+            Car.Naming = Use;
+            Materials::Description Other;
+            Other.Name = "mtl_h1_other";
+            Other.Albedo = Map("mtl_h1_other_col.png");
+            Other.Naming = Use;
+            Materials::Source Src;
+            for (const Materials::Description* D : { &Car, &Other })
+            {
+                Src.Name = D->Name;
+                B.Add(*D, Dir, &Src, "mwr");
+            }
+            std::map<std::string, std::string> Img;
+            for (const auto& M : B.Resolve().Materials)
+                for (const auto& [Key, V] : M.Fields)
+                    if (!V.empty() && (Key == "colorMap" || Key == "normalMap" || Key == "specColorMap")) Img[M.Name + "." + Key] = V;
+            return Img;
+        };
+        auto With = Named(Naming);
+        Check(With["mtl_h1_car.colorMap"] == "i_h1_car_c" && With["mtl_h1_car.normalMap"] == "i_h1_car_n", "naming: _col and _nml become _c and _n", With["mtl_h1_car.colorMap"] + "," + With["mtl_h1_car.normalMap"]);
+        Check(With["mtl_h1_car.specColorMap"] == "i_h1_car_s", "naming: a decorated image is i_<material without mtl_>_s", With["mtl_h1_car.specColorMap"]);
+        Check(With["mtl_h1_other.colorMap"] == "i_h1_other_c", "naming: a leading mtl_ of the stem is left out", With["mtl_h1_other.colorMap"]);
+        auto Without = Named(Materials::ImageNaming());
+        Check(Without["mtl_h1_car.colorMap"] == "i_h1_car_col" && Without["mtl_h1_car.specColorMap"] == "i_mtl_h1_car_s", "naming: with no declaration nothing changes", Without["mtl_h1_car.colorMap"] + "," + Without["mtl_h1_car.specColorMap"]);
     }
     // one name per source image: the clean, the tagged and the shortened name never meet, and no source is dropped
     {

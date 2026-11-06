@@ -162,18 +162,28 @@ namespace Bo3Target::GdtDb
                 Why = "the gdt file " + Stored + " holds no entry for " + Current;
                 return false;
             }
-            const size_t Key = Lower.find("\"usage\"", Open);
-            if (Key != std::string::npos && Key < Close)
+            // the entry's body is "key" "value" pairs: walk them as pairs, so a value that reads "usage" is never taken for the key
             {
-                const size_t V0 = Text.find('"', Key + 7);
-                const size_t V1 = V0 == std::string::npos ? V0 : Text.find('"', V0 + 1);
-                if (V1 == std::string::npos)
+                const auto Next = [&](size_t& At, std::string& Out) {
+                    const size_t A = Text.find('"', At);
+                    if (A == std::string::npos || A >= Close) return false;
+                    const size_t B = Text.find('"', A + 1);
+                    if (B == std::string::npos || B >= Close) return false;
+                    Out = Text.substr(A + 1, B - A - 1);
+                    At = B + 1;
+                    return true;
+                };
+                size_t At = Open + 1;
+                std::string Key, Value;
+                while (Next(At, Key))
                 {
-                    Why = "the usage value cannot be read";
-                    return false;
+                    if (!Next(At, Value)) break;
+                    if (LowerAscii(Key) == "usage")
+                    {
+                        Usage = Value;
+                        return true;
+                    }
                 }
-                Usage = Text.substr(V0 + 1, V1 - V0 - 1);
-                return true;
             }
             if (Parent.empty())
             {
@@ -1353,10 +1363,12 @@ namespace Bo3Target::GdtDb
                      "\t\"mtl_hidden\" ( \"material.gdf\" )\n\t{\n\t\t\"usage\" \"<not in editor>\"\n\t}\n"
                      "\t\"mtl_child\" [ \"mtl_plain\" ]\n\t{\n\t\t\"colorTint\" \"1 1 1 1\"\n\t}\n"
                      "\t\"mtl_own\" [ \"mtl_plain\" ]\n\t{\n\t\t\"usage\" \"floor\"\n\t}\n"
+                     "\t\"mtl_trap\" ( \"material.gdf\" )\n\t{\n\t\t\"colorMap\" \"usage\"\n\t\t\"usage\" \"<not in editor>\"\n\t}\n"
+                     "\t\"mtl_valueonly\" ( \"material.gdf\" )\n\t{\n\t\t\"colorMap\" \"usage\"\n\t\t\"type\" \"material\"\n\t}\n"
                      "\t\"mtl_nousage\" ( \"material.gdf\" )\n\t{\n\t\t\"type\" \"material\"\n\t}\n}\n";
             }
             Catalog Held;
-            for (const char* Name : { "mtl_plain", "mtl_hidden", "mtl_child", "mtl_own", "mtl_nousage", "mtl_nofile" })
+            for (const char* Name : { "mtl_plain", "mtl_hidden", "mtl_child", "mtl_own", "mtl_nousage", "mtl_trap", "mtl_valueonly", "mtl_nofile" })
             {
                 Row R;
                 R.Name = Name;
@@ -1373,6 +1385,11 @@ namespace Bo3Target::GdtDb
             Check(Read("mtl_hidden", U2, W) && U2 == "<not in editor>", "held usage: <not in editor> is read as it is", U2 + W);
             Check(Read("mtl_child", U3, W) && U3 == "decal", "held usage: a derived entry takes its parent's", U3 + W);
             Check(Read("mtl_own", U4, W) && U4 == "floor", "held usage: a derived entry's own value wins", U4 + W);
+            std::string U7, U8;
+            W.clear();
+            Check(Read("mtl_trap", U7, W) && U7 == "<not in editor>", "held usage: a value that reads usage (colorMap usage) is not taken for the key", U7 + W);
+            W.clear();
+            Check(!Read("mtl_valueonly", U8, W) && W.find("no usage") != std::string::npos, "held usage: a value that reads usage, with no usage key, is no usage", U8 + W);
             W.clear();
             Check(!Read("mtl_nousage", U5, W) && W.find("no usage") != std::string::npos, "held usage: an entry with none says so", W);
             W.clear();

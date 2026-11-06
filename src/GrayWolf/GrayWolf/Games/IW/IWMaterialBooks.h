@@ -26,6 +26,9 @@ namespace IWMaterialBooks
         uint8_t Rows = 0, Cols = 0;
         std::string Techset;
         int SortKey = -1;
+        // its surface word (a game whose Layout names one: -1 when not read) and the raw bytes of its constant table
+        int64_t SurfaceBits = -1;
+        std::vector<uint8_t> Constants;
     };
     // a zone's book, kept on disk and read in place (IWMaterialBooks.cpp)
     class Book;
@@ -44,7 +47,9 @@ namespace IWMaterialBooks
         // its u8 atlas row and column counts, its techset pointer (the name at 0; a hashed title's
         // hash) and its u8 sort key (-1: not read). A hashed title reads its sort key alone.
         int64_t AtlasRows = -1, AtlasCols = -1, Techset = -1, SortKey = -1;
-        bool WithExtras() const { return (AtlasRows >= 0 && AtlasCols >= 0) || (Hashed && SortKey >= 0); }
+        // its u64 surface word, and its constants: a u8 count, a pointer to the table, the size of one record (the book keeps the table bytes whole)
+        int64_t SurfaceBits = -1, ConstantCount = -1, Constants = -1, ConstantSize = 0x20;
+        bool WithExtras() const { return (AtlasRows >= 0 && AtlasCols >= 0) || SurfaceBits >= 0 || (Hashed && SortKey >= 0); }
         // A hashed title's (Modern Warfare III, Black Ops 7): a material and its images named by the
         // name hash at their 0 (under HashMask; the book keeps it in hex; all ones: no image), its
         // slots {u8 semantic, u8 image} at the pointer at Slots (count u8 ImageCount) picking from
@@ -78,6 +83,8 @@ namespace IWMaterialBooks
         bool Find(const std::string& Name, ImageList& Out);
         // the material's atlas grid, techset and sort key, false when no book has them (Layout::WithExtras)
         bool Details(const std::string& Name, Extra& Out);
+        // Every material of the first book (the levels own techsets zone) that has extras, in name order
+        void EachDetails(const std::function<void(const std::string& Name, const Extra&)>& Visit);
         // How many headers a book filled (Filled) and how many none did (Unfilled)
         void Measure(DiskGame::Totals& T, const char* Filled, const char* Unfilled) const;
 
@@ -90,4 +97,8 @@ namespace IWMaterialBooks
         std::set<std::string> Booked, NotBooked;
         void Open();
     };
+
+    // Self-test (IWMaterialBooks.cpp): the extras of a kept book (HasExtra 0, 1, 2) survive a write and a read
+    bool BookRoundTripSelfTest(const std::filesystem::path& Dir, std::string& Got);
 }
+

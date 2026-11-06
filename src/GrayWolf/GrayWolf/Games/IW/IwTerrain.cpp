@@ -477,6 +477,7 @@ namespace IwTerrain
             const float Gy = (Sample(R1, Col) - Sample(R0, Col)) / ((float)(R1 - R0) * Dy);
             const float Len = std::sqrt(Gx * Gx + Gy * Gy + 1.0f);
             V.Normal[0] = -Gx / Len, V.Normal[1] = -Gy / Len, V.Normal[2] = 1.0f / Len;
+            V.NormalRead = true;
             // the colour map covers the grid, its first row the grid's first (rows along y)
             V.Uv[0] = (float)Col / (float)(W - 1);
             V.Uv[1] = (float)Row / (float)(H - 1);
@@ -529,6 +530,7 @@ namespace IwTerrain
                 const float Gx = (Height(Row, Col + 1) - Height(Row, Col - 1)) / (2 * Dx), Gy = (Height(Row + 1, Col) - Height(Row - 1, Col)) / (2 * Dy);
                 const float Len = std::sqrt(Gx * Gx + Gy * Gy + 1.0f);
                 V.Normal[0] = -Gx / Len, V.Normal[1] = -Gy / Len, V.Normal[2] = 1.0f / Len;
+                V.NormalRead = true;
                 V.Uv[0] = Col / (float)(W - 1);
                 V.Uv[1] = Row / (float)(H - 1);
                 Sf.Vertices.push_back(V);

@@ -68,6 +68,12 @@ public:
         int64_t Size = 0, Color = 0, Dir = 0, Origin = 0, Radius = 0, CosHalfFov = 0, Def = -1;
         int64_t Count = 0xc, Array = 0x10;   // ComWorld's count (u32) and array
         int64_t TypeAt = 0;                  // the type byte (Modern Warfare 2019: 1, after the spawn flags)
+        // A record that keeps its light basis (the up vector, 3 floats at Up; < 0: none) is read as a compiled light (Light::Compiled): the basis, the definition
+        // name (Def) and a guid made from the origin (the record has none). ColorUnit > 0 divides the colour (Modern Warfare Remastered keeps it premultiplied by
+        // 15500.03: tested, channel / 15500.03 is 0.5..90 on 188 records of four maps); ColorKey names the Radiant key the divided colour is written under.
+        int64_t Up = -1;
+        float ColorUnit = 0.0f;
+        std::string ColorKey;
     };
 
     // A dynamic entity's pose (a quaternion, the origin) and its model in its record

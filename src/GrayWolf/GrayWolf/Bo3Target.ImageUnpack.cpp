@@ -307,6 +307,28 @@ namespace Bo3Target
         return Result;
     }
 
+    Rgba8Image SpecularFromSqrtF0(const Rgba8Image& Source)
+    {
+        Rgba8Image Out;
+        if (!Source.IsValid()) return Out;
+        uint8_t Lut[256];
+        for (int B = 0; B < 256; B++)
+        {
+            const double F0 = (B / 255.0) * (B / 255.0);
+            const double Srgb = F0 <= 0.0031308 ? F0 * 12.92 : 1.055 * std::pow(F0, 1.0 / 2.4) - 0.055;
+            Lut[B] = (uint8_t)std::clamp((int)std::lround(Srgb * 255.0), 0, 255);
+        }
+        Out = Source;
+        for (size_t I = 0; I + 3 < Out.Pixels.size(); I += 4)
+        {
+            Out.Pixels[I] = Lut[Source.Pixels[I]];
+            Out.Pixels[I + 1] = Lut[Source.Pixels[I + 1]];
+            Out.Pixels[I + 2] = Lut[Source.Pixels[I + 2]];
+            Out.Pixels[I + 3] = 255;
+        }
+        return Out;
+    }
+
     UnpackedSpecularGloss UnpackSpecularGloss(const Rgba8Image& Source)
     {
         UnpackedSpecularGloss Result;

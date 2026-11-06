@@ -119,9 +119,21 @@ namespace IWMaterialBooks
                 if (L.WithExtras())
                 {
                     Extra E;
-                    E.Rows = ExportNaming::At<uint8_t>(Z, I.Pos + L.AtlasRows), E.Cols = ExportNaming::At<uint8_t>(Z, I.Pos + L.AtlasCols);
+                    if (L.AtlasRows >= 0 && L.AtlasCols >= 0)
+                        E.Rows = ExportNaming::At<uint8_t>(Z, I.Pos + L.AtlasRows), E.Cols = ExportNaming::At<uint8_t>(Z, I.Pos + L.AtlasCols);
                     if (const int64_t T = L.Techset >= 0 ? Ptr(I.Pos + L.Techset) : -1; T >= 0) E.Techset = Unprefixed(Str(T));
                     if (L.SortKey >= 0) E.SortKey = ExportNaming::At<uint8_t>(Z, I.Pos + L.SortKey);
+                    if (L.SurfaceBits >= 0) E.SurfaceBits = (int64_t)ExportNaming::At<uint64_t>(Z, I.Pos + L.SurfaceBits);
+                    if (L.Constants >= 0 && L.ConstantCount >= 0)
+                    {
+                        const int64_t Table = Ptr(I.Pos + L.Constants);
+                        const int64_t Bytes = (int64_t)ExportNaming::At<uint8_t>(Z, I.Pos + L.ConstantCount) * L.ConstantSize;
+                        if (Table >= 0 && Bytes > 0 && Table + Bytes <= (int64_t)Z.size()) {
+                            const ByteView Zone(Z.data(), Z.size());
+                            const ByteView Block = Zone.subspan(static_cast<size_t>(Table), static_cast<size_t>(Bytes));
+                            E.Constants.assign(Block.begin(), Block.end());
+                        }
+                    }
                     More.emplace(Name, std::move(E));
                 }
                 Out.emplace(std::move(Name), std::move(Images));
@@ -206,7 +218,8 @@ namespace IWMaterialBooks
                 Offsets.push_back((uint32_t)(Head + Body.size()));
                 Text(*Name);
                 const auto E = M.More.find(*Name);
-                const uint8_t HasExtra = E != M.More.end();
+                // 1: rows, columns, sort key, techset; 2: those, then the surface word and the constant table
+                const uint8_t HasExtra = E == M.More.end() ? 0 : (E->second.SurfaceBits >= 0 || !E->second.Constants.empty()) ? 2 : 1;
                 Put(&HasExtra, 1);
                 if (HasExtra)
                 {
@@ -215,6 +228,14 @@ namespace IWMaterialBooks
                     const int32_t SortKey = E->second.SortKey;
                     Put(&SortKey, 4);
                     Text(E->second.Techset);
+                }
+                if (HasExtra == 2)
+                {
+                    const int64_t Bits = E->second.SurfaceBits;
+                    Put(&Bits, 8);
+                    const uint32_t Size = (uint32_t)E->second.Constants.size();
+                    Put(&Size, 4);
+                    Put(E->second.Constants.data(), Size);
                 }
                 const ImageList& Images = M.Images.at(*Name);
                 const uint16_t Count = (uint16_t)std::min<size_t>(Images.size(), 0xffff);
@@ -261,6 +282,11 @@ namespace IWMaterialBooks
             uint8_t HasExtra = 0;
             // (its extras skipped: rows, columns, sort key, techset)
             if (!R.Take(HasExtra) || (HasExtra && (!R.Skip(6) || !R.Text(nullptr)))) return false;
+            if (HasExtra == 2)
+            {
+                uint32_t Size = 0;
+                if (!R.Skip(8) || !R.Take(Size) || !R.Skip(Size)) return false;
+            }
             uint16_t Count = 0;
             if (!R.Take(Count)) return false;
             ImageList Images;
@@ -280,16 +306,32 @@ namespace IWMaterialBooks
             Reader R;
             uint8_t HasExtra = 0;
             if (!Entry(Name, R) || !R.Take(HasExtra) || !HasExtra) return false;
-            Extra E;
-            int32_t SortKey = -1;
-            if (!R.Take(E.Rows) || !R.Take(E.Cols) || !R.Take(SortKey) || !R.Text(&E.Techset)) return false;
-            E.SortKey = SortKey;
-            Out = std::move(E);
-            return true;
+            return TakeExtra(R, HasExtra, Out);
+        }
+        // every material that has extras, in name order
+        void Each(const std::function<void(const std::string&, const Extra&)>& Visit) const
+        {
+            const std::span<const uint8_t> All(Base, Size);
+            const std::span<const uint8_t> Offsets = All.subspan(sizeof(BookMagic) + 4);
+            for (uint32_t K = 0; K < Count; K++)
+            {
+                uint32_t Offset = 0;
+                std::memcpy(&Offset, Offsets.subspan(static_cast<size_t>(K) * 4, 4).data(), 4);
+                Reader R;
+                R.At = All.subspan(std::min<size_t>(Offset, Size)).data();
+                R.End = All.last(0).data();
+                std::string Name;
+                uint8_t HasExtra = 0;
+                Extra E;
+                if (!R.Text(&Name) || !R.Take(HasExtra) || !HasExtra || !TakeExtra(R, HasExtra, E)) continue;
+                Visit(Name, E);
+            }
         }
 
     private:
         explicit Book(MappedFile M) : Map(std::move(M)), Base(Map.data()), Size(Map.size()) {}
+        struct Reader;
+        static bool TakeExtra(Reader& R, uint8_t HasExtra, Extra& Out);
         struct Reader
         {
             const uint8_t* At = nullptr;
@@ -349,6 +391,24 @@ namespace IWMaterialBooks
         uint32_t Count = 0;
     };
 
+    bool Book::TakeExtra(Reader& R, uint8_t HasExtra, Extra& Out)
+    {
+        Extra E;
+        int32_t SortKey = -1;
+        if (!R.Take(E.Rows) || !R.Take(E.Cols) || !R.Take(SortKey) || !R.Text(&E.Techset)) return false;
+        E.SortKey = SortKey;
+        if (HasExtra == 2)
+        {
+            uint32_t Size = 0;
+            if (!R.Take(E.SurfaceBits) || !R.Take(Size) || (size_t)(R.End - R.At) < Size) return false;
+            const std::span<const uint8_t> Table(R.At, Size);   // the length was checked above
+            E.Constants.assign(Table.begin(), Table.end());
+            R.Skip(Size);
+        }
+        Out = std::move(E);
+        return true;
+    }
+
     std::shared_ptr<const Book> ZoneBook(const fs::path& Ff, const std::string& CacheDir, const Layout& L)
     {
         static std::mutex Lock;
@@ -362,7 +422,7 @@ namespace IWMaterialBooks
         const auto Time = fs::last_write_time(Ff, Ec).time_since_epoch().count();
         const std::string Stem = std::format("{}_{:x}_{:x}_{}{}", Ff.stem().string().c_str(), (unsigned long long)Size, (unsigned long long)Time,
                                              ProfileKey(*Loaded).c_str(),
-                                             L.Hashed ? (L.WithExtras() ? "_h3" : "_h2") : !L.WithExtras() ? "" : L.SortKey >= 0 ? "_x2" : "_x1");
+                                             L.Hashed ? (L.WithExtras() ? "_h3" : "_h2") : !L.WithExtras() ? "" : L.SurfaceBits >= 0 ? "_x3" : L.SortKey >= 0 ? "_x2" : "_x1");
         const fs::path File = fs::path(CacheDir) / (Stem + ".gwb");
         if (const auto It = Read.find(File.string()); It != Read.end()) return It->second;
         if (auto B = Book::Open(File)) return Read[File.string()] = B;
@@ -415,6 +475,12 @@ namespace IWMaterialBooks
         return false;
     }
 
+    void Lookup::EachDetails(const std::function<void(const std::string&, const Extra&)>& Visit)
+    {
+        Open();
+        if (!Books.empty()) Books.front()->Each(Visit);
+    }
+
     bool Lookup::Find(const std::string& Name, ImageList& Out)
     {
         Open();
@@ -433,4 +499,44 @@ namespace IWMaterialBooks
         if (!Booked.empty()) T.Counters[Filled] += Booked.size();
         if (!NotBooked.empty()) T.Counters[Unfilled] += NotBooked.size();
     }
+
+    // Self-test of the kept book's extras: a material with a surface word and a constant table (HasExtra 2), one with the techset only (HasExtra 1) and one with
+    // neither are written and read back (Details, Images, Each). Got names the first difference.
+    bool BookRoundTripSelfTest(const std::filesystem::path& Dir, std::string& Got)
+    {
+        Materials M;
+        Extra Full;
+        Full.Rows = 2, Full.Cols = 3, Full.Techset = "m_l_sm_probe", Full.SortKey = 7, Full.SurfaceBits = (1ll << 51) | (1ll << 4);
+        Full.Constants = { 1, 2, 3, 4, 5, 6, 7, 8 };
+        Extra Techset;
+        Techset.Techset = "wc_probe";
+        Techset.SortKey = 2;
+        M.Images["*49n_50n"] = { { 0xA0AB1041u, "a_col" } };
+        M.More["*49n_50n"] = Full;
+        M.Images["plain_techset"] = { { 0x59D30D0Fu, "p_nml" }, { 0x34ECCCB3u, "p_spc" } };
+        M.More["plain_techset"] = Techset;
+        M.Images["no_extras"] = { { 0xA0AB1041u, "n_col" } };
+        std::error_code Ec;
+        std::filesystem::create_directories(Dir, Ec);
+        const std::filesystem::path File = Dir / "roundtrip.gwb";
+        if (!WriteBook(File, M)) return Got = "write failed", false;
+        const auto B = Book::Open(File);
+        if (!B) return Got = "open failed", false;
+        Extra E;
+        if (!B->Details("*49n_50n", E) || E.SurfaceBits != Full.SurfaceBits || E.Constants != Full.Constants || E.Techset != Full.Techset || E.SortKey != 7 || E.Rows != 2 || E.Cols != 3)
+            return Got = "HasExtra 2: surface word, constants, techset, sort key or atlas differ", false;
+        ImageList Images;
+        if (!B->Images("*49n_50n", Images) || Images.size() != 1 || Images[0].second != "a_col") return Got = "HasExtra 2: images after the extras differ", false;
+        Extra T;
+        if (!B->Details("plain_techset", T) || T.Techset != "wc_probe" || T.SurfaceBits >= 0 || !T.Constants.empty()) return Got = "HasExtra 1: techset only differs", false;
+        if (!B->Images("plain_techset", Images) || Images.size() != 2) return Got = "HasExtra 1: images differ", false;
+        Extra N;
+        if (B->Details("no_extras", N)) return Got = "no extras: Details should be false", false;
+        size_t Visited = 0;
+        B->Each([&](const std::string&, const Extra&) { Visited++; });
+        if (Visited != 2) return Got = "Each visited " + std::to_string(Visited) + " materials with extras, expected 2", false;
+        Got = "ok";
+        return true;
+    }
 }
+

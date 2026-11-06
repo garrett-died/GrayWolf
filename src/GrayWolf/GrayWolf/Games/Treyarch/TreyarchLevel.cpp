@@ -52,6 +52,7 @@ bool TreyarchLevelZone::ReadLevel(Maps::MapScene& Scene, std::map<std::string, u
             Out.Uv[0] = At<float>(Img, V + 20), Out.Uv[1] = At<float>(Img, V + 24);
             const float Scale = ((float)Img[(size_t)(V + 39)] + 192.0f) / 32385.0f;
             for (int K = 0; K < 3; K++) Out.Normal[K] = ((float)Img[(size_t)(V + 36 + K)] - 127.0f) * Scale;
+            Out.NormalRead = true;
             return true;
         }
         Out.Uv[0] = HuskyMath::HalfToFloat(At<uint16_t>(Img, V + 20));
@@ -66,6 +67,7 @@ bool TreyarchLevelZone::ReadLevel(Maps::MapScene& Scene, std::map<std::string, u
             std::memcpy(&F, &U, 4);
             Out.Normal[K] = (F - 3.0f) * 8208.0312f;
         }
+        Out.NormalRead = true;
         return true;
     };
     const auto MaterialOf = [&](uint64_t Address) { return Off(Address) < 0 ? std::string() : Maps::AddMaterial(Scene, Material(Address)); };

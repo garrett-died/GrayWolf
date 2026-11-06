@@ -275,7 +275,8 @@ GrayWolf.exe disk-export --game bo4 --install <game> --out <dir> --type model,im
   `update-name-db` has that name, and from the slots it fills, so its
   gloss, occlusion and specular maps are not dropped. Entries carry every key the Mod Tools write,
   and Black Ops 4's tints and gloss ranges where the techset's layout is proven. A material matched
-  approximately is listed in `graywolf_approximations.tsv`.
+  approximately is listed in `graywolf_approximations.tsv`. Modern Warfare Remastered gets surface types, techsets from a rule table,
+  unpacked gloss and occlusion, reveal, and lights; its layered blends are first layer only for now.
 - **Images**: packed maps are unpacked per game from the material's own slots (normal/gloss/occlusion
   images, fused colour and specular, roughness to gloss, single channels) and named from the slot
   they fill. Files are `.tif`, as stock.
@@ -286,7 +287,8 @@ GrayWolf.exe disk-export --game bo4 --install <game> --out <dir> --type model,im
   missing.
 - **Nothing is overwritten**: a file GrayWolf did not write is never touched, and what it writes is
   listed in `graywolf\manifest.json`. `--gdt merge` (the default) keeps other entries of a GDT.
-  `--plan` lists the destinations and writes nothing else. A stock GDT never gets a new entry: it
+  `--plan` lists the destinations and a size estimate, and writes nothing else. `--min-free-gb` (default 8) stops
+  image writing before the drive fills. A stock GDT never gets a new entry: it
   goes to `graywolf_<file>.gdt` beside it.
 
 With `--type map --map-radiant on --full-map`, a map also brings what it names (its models, their materials and

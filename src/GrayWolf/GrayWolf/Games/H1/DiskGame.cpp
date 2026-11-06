@@ -5,6 +5,7 @@
 // .ff header, the LOD surfaces the game fills in at load time, the pixels of loaded images inside
 // the zone, and sounds through the aliases.
 
+#include "Games/H1/LayerBits.h"
 #include "CoDAssets.h"
 #include "DiskGame.h"
 #include "DiskGameSizes.h"
@@ -26,6 +27,7 @@
 #include <format>
 #include <map>
 #include <set>
+#include <unordered_map>
 
 namespace fs = std::filesystem;
 
@@ -63,6 +65,21 @@ namespace
         L.Profile = "h1";
         L.ImageCount = 0x120, L.Images = 0x130, L.ImageName = ImageNameAt;
         L.WithSlotsOnly = true;
+        // what a header takes from the zone that defines it: the sort key (u8 at 9), the techset (the pointer at 0x128), the surface word (u64 at 0x20)
+        // and the constant table (u8 count at 0x121, the pointer at 0x138, 0x20 bytes each)
+        L.SortKey = 9, L.Techset = 0x128, L.SurfaceBits = 0x20;
+        L.ConstantCount = 0x121, L.Constants = 0x138, L.ConstantSize = 0x20;
+        return L;
+    }
+
+
+    using H1Layers::LayerBits;
+
+    // the level's blends (the first book), as the layer table wants them
+    std::unique_ptr<LayerBits> MakeLayers(IWMaterialBooks::Lookup& Books)
+    {
+        auto L = std::make_unique<LayerBits>();
+        Books.EachDetails([&](const std::string& Name, const IWMaterialBooks::Extra& E) { L->Add(Name, E.SurfaceBits); });
         return L;
     }
 
@@ -164,6 +181,11 @@ namespace
         {
             ZonekitZone::Measures(T);
             Books.Measure(T, "materials_from_books", "materials_in_no_book");
+            if (Layers)
+            {
+                T.Counters["blend_layer_ids"] += Layers->Ids();
+                T.Counters["blend_layer_ids_one_bit"] += Layers->Resolved();
+            }
         }
 
     protected:
@@ -228,6 +250,8 @@ namespace
         IWMaterialBooks::Lookup Books;
         // the readers' lookup into Books while the zone is served (after Books: it ends first)
         std::optional<CoDAssets::Scoped<decltype(GameModernWarfareRM::ImagesElsewhere)>> ImagesServed;
+        std::optional<GameModernWarfareRM::HooksScope> HooksServed;
+        std::unique_ptr<LayerBits> Layers;   // the level blend ids, read from the first book on the first header that needs them
     };
 
     std::unique_ptr<XImageDDS> MwrZone::DiskImage(const XImage_t& Image)
@@ -270,10 +294,27 @@ namespace
     void MwrZone::Served(bool On)
     {
         ImagesServed.reset();
+        HooksServed.reset();
         if (!On) return;
         ImagesServed.emplace(GameModernWarfareRM::ImagesElsewhere, [this](const std::string& Header, std::vector<std::pair<uint32_t, std::string>>& Out) {
             return Books.Find(!Header.empty() && Header[0] == ',' ? Header.substr(1) : Header, Out);
         });
+        GameModernWarfareRM::Hooks H;
+        H.Details = [this](const std::string& Name, GameModernWarfareRM::Details& Out) {
+            IWMaterialBooks::Extra E;
+            if (!Books.Details(Name, E)) return false;
+            if (!Layers) Layers = MakeLayers(Books);
+            Out.Techset = E.Techset;
+            Out.SortKey = E.SortKey;
+            Out.SurfaceBits = E.SurfaceBits;   // the blend's first layer is resolved once, for headers and defined materials alike (ResolveBlendSurface)
+            Out.Constants = E.Constants;
+            return true;
+        };
+        H.Blend = [this](const std::string& Name, int64_t Word, std::string& Via) {
+            if (!Layers) Layers = MakeLayers(Books);
+            return Layers->Surface(Name, Word, &Via);
+        };
+        HooksServed.emplace(std::move(H));
     }
 
     void MwrZone::Fixups()
@@ -358,6 +399,10 @@ namespace
         M.SurfaceTris = 18, M.SurfaceBaseIndex = 20;
         M.Clip = "col_map_mp", M.DynSize = 0x88;
         M.Lights.Size = 0x90, M.Lights.Color = 8, M.Lights.Dir = 20, M.Lights.Origin = 44, M.Lights.Radius = 80, M.Lights.CosHalfFov = 84;
+        // the compiled record (mwr-materials.md 6.1): the up vector at 32 and the definition name pointer at 0x88; the colour is HDR and intensity premultiplied
+        // (channel / 15500.03 is 0.5..90 on 188 records of four maps: tested, the unit a game constant). Whether that is BO3 stops is not proven: the divided colour
+        // is written under an unresolved key, never as BO3's colour or intensity.
+        M.Lights.Up = 32, M.Lights.Def = 0x88, M.Lights.ColorUnit = 15500.03f, M.Lights.ColorKey = "color_div_15500_03";
         M.ImageNameAt = ImageNameAt;
         M.EntityKeys = H1Keys::EntityKeys;
         M.ClipBrushes = IWZone::AwClipBrushes(), M.Triggers = 0x18;   // Advanced Warfare's shapes; MapEnts' MapTriggers at 0x18

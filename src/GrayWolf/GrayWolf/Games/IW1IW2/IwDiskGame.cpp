@@ -1577,6 +1577,7 @@ namespace
                         Maps::Vertex O;
                         O.Pos[0] = V.Position.X, O.Pos[1] = V.Position.Y, O.Pos[2] = V.Position.Z;
                         O.Normal[0] = V.Normal.X, O.Normal[1] = V.Normal.Y, O.Normal[2] = V.Normal.Z;
+                        O.NormalRead = true;
                         if (!V.UVLayers.empty()) O.Uv[0] = V.UVLayers[0].X, O.Uv[1] = V.UVLayers[0].Y;
                         std::memcpy(O.Color, V.Color, 4);
                         S.Vertices.push_back(O);

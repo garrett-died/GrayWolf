@@ -25,6 +25,8 @@
 
 #include "Languages.h"
 
+namespace ImageRoles { class Book; }
+
 namespace AnimOwners { struct Book; }
 
 namespace DiskGame
@@ -575,6 +577,12 @@ namespace DiskGame
     const IDiskGame* Find(const std::string& IdOrAlias);
     // The game a zone (or the first .ff under a folder) belongs to, by magic and version.
     const IDiskGame* Detect(const std::string& Input);
+
+    class RunMonitor;
+    // The slot every image of a zone's materials is bound to, into the run's roles (ImageRoles::Book), when a pulled dependency of Take
+    // binds images (a material, a model, an effect): the roles of a pulled model's images come from here. Null Roles: a game that
+    // does not rebuild normals, nothing is read.
+    void CollectRolesForDependencies(IDiskZone& Zone, ImageRoles::Book* Roles, const Selection& Take, const Context& Run, Totals& T, RunMonitor& Mon);
 
     // The languages of the install a run reads, as its launcher's files say (Languages::OfInstall):
     // Options.Install, else the install of Zone (IDiskGame::InstallOfZone)

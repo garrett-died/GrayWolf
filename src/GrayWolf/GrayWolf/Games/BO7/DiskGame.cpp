@@ -1205,6 +1205,7 @@ namespace
                 float N[3];
                 IwctxReaders::UnpackNormalQuat(Tan, N);
                 V.Normal[0] = N[0], V.Normal[1] = N[1], V.Normal[2] = N[2];
+                V.NormalRead = true;
             }
             const uint32_t Layers = std::max(At<uint32_t>(Img, D + DtLayers), 1u);
             Read(At<uint32_t>(Img, D + DtUv) + (uint64_t)I * 8 * Layers, V.Uv, 8);

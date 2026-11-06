@@ -109,11 +109,13 @@ bool ParseBsp(const uint8_t* Data, size_t Size, BspFile& Out, std::string& Error
         {
             std::memcpy(O.Uv, V + 12, 8);
             std::memcpy(O.Normal, V + 28, 12);
+            O.NormalRead = true;
             std::memcpy(O.Color, V + 40, 4);
         }
         else   // pos, normal, colour, uv, lightmap uv, tangent, binormal
         {
             std::memcpy(O.Normal, V + 12, 12);
+            O.NormalRead = true;
             std::memcpy(O.Color, V + 24, 4);
             std::memcpy(O.Uv, V + 28, 8);
         }

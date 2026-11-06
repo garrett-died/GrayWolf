@@ -68,6 +68,7 @@ bool Iw32LevelZone::ReadMap(Maps::MapScene& Scene, std::map<std::string, uint64_
         V.Uv[0] = At<float>(Img, P + VertexUv);
         V.Uv[1] = At<float>(Img, P + VertexUv + 4);
         UnpackNormal(At<uint32_t>(Img, P + VertexNormal), V.Normal);
+        V.NormalRead = true;
         return true;
     };
     Maps::WorldLayout L;

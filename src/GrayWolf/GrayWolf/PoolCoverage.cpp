@@ -342,15 +342,39 @@ namespace PoolCoverage
             for (char& C : S) C = static_cast<char>(std::tolower(static_cast<unsigned char>(C)));
             return S;
         };
-        std::set<std::string> A, B;
-        for (const std::string& Z : R.ZoneNames) A.insert(Key(Z));
-        for (const std::string& Z : Walked) B.insert(Key(Z));
-        if (A == B) return true;
+        // a zone is the same zone with or without its .ff / .zone extension (a run asked for mp_crash, its report names mp_crash.ff)
+        const auto Bare = [](std::string S) {
+            for (const char* Ext : { ".ff", ".zone" })
+            {
+                const size_t N = std::strlen(Ext);
+                if (S.size() > N && S.compare(S.size() - N, N, Ext) == 0) return S.substr(0, S.size() - N);
+            }
+            return S;
+        };
+        // bare name -> the exact names (extension kept) given for it. One spelling on each side matches by the bare name (a run asked for mp_crash, its report
+        // names mp_crash.ff); a side that holds both x.ff and x.zone walked them as two zones, so then the exact spellings must be equal
+        std::map<std::string, std::set<std::string>> A, B;
+        for (const std::string& Z : R.ZoneNames) A[Bare(Key(Z))].insert(Key(Z));
+        for (const std::string& Z : Walked) B[Bare(Key(Z))].insert(Key(Z));
+        const auto SameKeys = [](const std::map<std::string, std::set<std::string>>& X, const std::map<std::string, std::set<std::string>>& Y) {
+            if (X.size() != Y.size()) return false;
+            for (const auto& [Name, Spellings] : X)
+            {
+                const auto It = Y.find(Name);
+                if (It == Y.end()) return false;
+                if (Spellings.size() == 1 && It->second.size() == 1) continue;
+                if (Spellings != It->second) return false;
+            }
+            return true;
+        };
+        if (SameKeys(A, B)) return true;
         std::string OnlyReport, OnlyWalk;
-        for (const std::string& Z : A)
-            if (!B.count(Z)) OnlyReport += (OnlyReport.empty() ? "" : ", ") + Z;
-        for (const std::string& Z : B)
-            if (!A.count(Z)) OnlyWalk += (OnlyWalk.empty() ? "" : ", ") + Z;
+        for (const auto& [Bare2, Spellings] : A)
+            for (const std::string& Z : Spellings)
+                if (!B.count(Bare2) || (Spellings.size() != 1 || B.at(Bare2).size() != 1) && !B.at(Bare2).count(Z)) OnlyReport += (OnlyReport.empty() ? "" : ", ") + Z;
+        for (const auto& [Bare2, Spellings] : B)
+            for (const std::string& Z : Spellings)
+                if (!A.count(Bare2) || (Spellings.size() != 1 || A.at(Bare2).size() != 1) && !A.at(Bare2).count(Z)) OnlyWalk += (OnlyWalk.empty() ? "" : ", ") + Z;
         Why = "the export report's zones differ from the zones walked" + (OnlyReport.empty() ? std::string() : "; only in the report: " + OnlyReport) + (OnlyWalk.empty() ? std::string() : "; only walked: " + OnlyWalk);
         return false;
     }
@@ -574,6 +598,12 @@ namespace PoolCoverage
             Check(!ReportMatchesWalk(Other, { "casc:mp_frenetic.ff" }, W) && W.find("only in the report: ") != std::string::npos && W.find("only walked: mp_frenetic.ff") != std::string::npos, "a report from other zones is rejected, both differences named", W);
             ExportReport Same = ParseExportReport("zone_names=casc:MP_Frenetic.ff\n");
             Check(ReportMatchesWalk(Same, { "F:\\bo4\\zone\\mp_frenetic.ff" }, W), "the same zone set matches (file name, no case)", W);
+            Check(ReportMatchesWalk(Same, { "mp_frenetic" }, W) && ReportMatchesWalk(Same, { "MP_FRENETIC.zone" }, W), "a zone named with or without its .ff / .zone extension is the same zone", W);
+            // D9: x.ff and x.zone are two walks: a report that names only x.ff does not match a run that walked both
+            ExportReport XOnly = ParseExportReport("zone_names=x.ff\n");
+            ExportReport XBoth = ParseExportReport("zone_names=x.ff|x.zone\n");
+            Check(!ReportMatchesWalk(XOnly, { "x.ff", "x.zone" }, W) && ReportMatchesWalk(XBoth, { "x.ff", "x.zone" }, W) && !ReportMatchesWalk(XBoth, { "x.ff" }, W),
+                  "D9: x.ff and x.zone stay two zones: a report of x.ff does not match walks {x.ff, x.zone}, a report of both does", W);
             Check(!ReportMatchesWalk(Same, { "mp_frenetic.ff", "mp_extra.ff" }, W) && W.find("only walked: mp_extra.ff") != std::string::npos, "a walked zone the report lacks is rejected", W);
             const GateCounts Gf = ParseGate("gate.run\tscan\tinfo\tmode=listed gdts=2 sha256=ab roots=C:/m\ngate.file\tsource_data/a.gdt\tinfo\troot=0\ngate.file\tb.gdt\tinfo\troot=1\n");
             Check(Gf.Files.size() == 2 && Gf.Files[0].first == 0 && Gf.Files[0].second == "source_data/a.gdt" && Gf.Files[1].first == 1, "gate.file rows are read", std::to_string(Gf.Files.size()));

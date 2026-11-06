@@ -1,5 +1,6 @@
 #include "stdafx.h"
 
+#include "DiskGuard.h"
 #include "ExportWriters.h"
 
 #include "DiskGame.h"
@@ -212,6 +213,7 @@ struct Context::Limited
 
 bool Context::Wants(Kind K, const std::string& Name) const
 {
+    if (DiskGuard::Reached()) return false;   // the free space floor was reached: no new asset is started, what is in flight finishes
     bool Yes = false;
     if (Only) Yes = Only->count({ K, Name }) != 0;
     else if (NameFilter.empty()) Yes = true;
@@ -707,8 +709,7 @@ namespace
                 }
                 // a material pulled writes its images, and so does a model pulled (its materials' images): their roles come with the zone's
                 // materials. A model alone used to leave its images out of the book, so their normals kept the two-component Z of the game.
-                if (Roles != nullptr && std::any_of(Take.begin(), Take.end(), [](const AssetId& A) { return ImageRoles::KindBindsImages(A.K); }))
-                    CollectRoles(*Zone, *Roles, Run, T, Mon);
+                CollectRolesForDependencies(*Zone, Roles, Take, Run, T, Mon);
                 for (Kind K : AllKinds())
                 {
                     auto Only = std::make_shared<Selection>();
@@ -773,6 +774,12 @@ namespace
         const long long Hr = (long long)((Sec + 1800) / 3600);
         return "~" + std::to_string(Hr) + " h left";
     }
+}
+
+void CollectRolesForDependencies(IDiskZone& Zone, ImageRoles::Book* Roles, const Selection& Take, const Context& Run, Totals& T, RunMonitor& Mon)
+{
+    if (Roles != nullptr && std::any_of(Take.begin(), Take.end(), [](const AssetId& A) { return ImageRoles::KindBindsImages(A.K); }))
+        CollectRoles(Zone, *Roles, Run, T, Mon);
 }
 
 void Eta::Observe(const Progress& P)

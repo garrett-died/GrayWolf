@@ -1,0 +1,48 @@
+# Modern Warfare Remastered techset names to Black Ops III material types, read as data by Games/H1/MaterialAdapter.cpp.
+# Rows: rule|id|conditions|bo3 techset|alpha mode|label   (first match wins; conditions are joined by ';'; the techset field SKIP:<code> leaves the material out)
+#
+# The MWR techset name is a grammar (mwr-materials.md section 2.2, sampler sets agree with it on every family checked): tokens split at '_',
+# `l`/`sm`/`lmpb` lit, `ndw` no depth write (decals and transparents), `aat` alpha test, `cltrans` colour-transparent (glass-like), `effect_*`/`particle_*` particles,
+# `2d*` UI, `wc_sky_*` sky, `wc_tools_*`/`tools_*` tools, a prefix m_ mc_ mv_ ml_ wc_ for model and world. The MWR material has no `water`, `glass` or `foliage`
+# techset family: glass is `cltrans` plus the glass surface bit (8), the sort key (material byte 9: 2 opaque, 7..0x1f decals, 0x35 effects, 0x3c UI) tells decals from lit.
+#
+# Conditions: prefix=<text> (the name starts with it), token=<text> (one of the '_' tokens), tokenprefix=<text>, has=<text> (anywhere in the name),
+#   metal / nonmetal (the description's surface type is in the metal_surfaces set below AND a specular map exists), plain (no gloss and no occlusion map),
+#   sort>N / sort<=N (the sort key; false when unread), surface=<BO3 surfaceType> (the description surface after the surface decode), spec / nospec (a specular map),
+#   reveal (a reveal map r1.. or rp is bound), any.
+# Alpha mode: opaque, cutout (the colour alpha is a test), blend (the colour alpha is the opacity), keep (the adapter default).
+# Labels: tested = the family counts in section 2.2 (techset names over 21,222 materials); hypothesis = the BO3 side choice, not run in the Mod Tools.
+rule|ui_2d|prefix=2d|SKIP:ui_2d|opaque|tested: 1,444 of 1,466 UI materials have flags 0x3c00; BO3 has no use for them on map geometry
+rule|sky|prefix=wc_sky|sky_hdr|opaque|tested: 6 materials, one cube image; hypothesis: BO3 sky is an EXR plus an xmodel, the material is the nearest
+rule|tools|prefix=wc_tools|tools_replace|opaque|tested: 10 materials
+rule|tools2|prefix=tools_|tools_replace|opaque|tested: 10 materials
+rule|effect_add|prefix=effect_;token=add|effect_lit_emissive_add|blend|hypothesis: BO3 has no effect_add / effect_blend, these are its nearest
+rule|effect_blend|prefix=effect_|effect_lit_blend|blend|hypothesis
+rule|particle_add|prefix=particle_;token=add|effect_lit_emissive_add|blend|hypothesis
+rule|particle_blend|prefix=particle_|effect_lit_blend|blend|hypothesis
+rule|weapon_effect_add|prefix=m_effect_;token=add|effect_lit_emissive_add|blend|hypothesis
+rule|weapon_effect_blend|prefix=m_effect_|effect_lit_blend|blend|hypothesis
+set|metal_surfaces|metal;metalthin;metalhollow;metalcatwalk;paintedmetal;metalcar
+rule|glass|token=cltrans;surface=glass|glass|blend|hypothesis: cltrans plus the glass surface bit (400 cltrans materials; bit 8 on the glass ones)
+rule|cltrans_adv|token=cltrans;metal|lit_transparent_advanced_fullspec|blend|hypothesis: metals take the advanced family (owner's h1_materials / ww2 gdts, Treyarch Materials.txt)
+rule|cltrans_plain|token=cltrans;plain|lit_transparent|blend|hypothesis: neither gloss nor occlusion
+rule|cltrans|token=cltrans|lit_transparent_plus|blend|hypothesis: non-metals take the plus family (aoMap, glossMap, no specColorMap)
+rule|decal_reveal_adv|token=ndw;token=aat;reveal;metal|lit_decal_reveal_advanced_fullspec|blend|hypothesis
+rule|decal_reveal|token=ndw;token=aat;reveal|lit_decal_reveal_plus|blend|owner's practice: h1_asphalt_rough_01_rvl is lit_decal_reveal_plus with alphaRevealMap i_<stem>_r; needs the bound reveal image
+rule|decal_aat_adv|token=ndw;token=aat;metal|lit_decal_advanced_fullspec|blend|hypothesis
+rule|decal_aat_plain|token=ndw;token=aat;plain|lit_decal|blend|hypothesis
+rule|decal_aat|token=ndw;token=aat|lit_decal_plus|blend|owner's practice: lit_decal_plus for decals (h1_materials.gdt)
+rule|decal_sort_adv|token=ndw;sort>2;metal|lit_decal_advanced_fullspec|blend|tested: ndw with a sort key above 2 are decals
+rule|decal_sort_plain|token=ndw;sort>2;plain|lit_decal|blend|tested
+rule|decal_sort|token=ndw;sort>2|lit_decal_plus|blend|tested for the decal, owner's practice for the family
+rule|ndw_adv|token=ndw;metal|lit_transparent_advanced_fullspec|blend|hypothesis: 130 other ndw materials, unlit blend
+rule|ndw_plain|token=ndw;plain|lit_transparent|blend|hypothesis
+rule|ndw|token=ndw|lit_transparent_plus|blend|hypothesis
+rule|alphatest_adv|token=aat;metal|lit_alphatest_advanced_fullspec|cutout|tested: 58 alpha-tested lit materials; hypothesis for the BO3 side
+rule|alphatest_plain|token=aat;plain|lit_alphatest|cutout|hypothesis
+rule|alphatest|token=aat|lit_alphatest_plus|cutout|hypothesis
+rule|lit_emissive_adv|token=sm;metal;emissive|lit_emissive_advanced_fullspec|opaque|tested: the emissive map (_ems, usage 17, 173 materials) binds to colorMap00 of the emissive techsets (techsets.json: emissiveMap); hypothesis for the BO3 side
+rule|lit_emissive|token=sm;emissive|lit_emissive_plus|opaque|tested for the slot (lit_emissive_plus has aoMap, glossMap, emissiveMap); hypothesis for the BO3 side
+rule|lit_adv|token=sm;metal|lit_advanced_fullspec|opaque|tested: cp np sp (op) is 4,482 of the single-layer materials; metals use Lit Advanced (Treyarch Materials.txt, owner's gdts)
+rule|lit_plain|token=sm;plain|lit|opaque|tested: cp np only, 186 materials
+rule|lit|token=sm|lit_plus|opaque|non-metals use Lit (Treyarch Materials.txt); the plus family carries aoMap and glossMap

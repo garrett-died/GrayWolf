@@ -25,6 +25,7 @@ Maps::WorldBuilder::Fetch WorldVertices(ByteView Img, int64_t Positions, int64_t
         V.Uv[1] = At<float>(Img, D + 8);
         const Vector3 Normal = MeshDecode::UnpackSigned10((int32_t)At<uint32_t>(Img, D + 12));
         V.Normal[0] = Normal.X, V.Normal[1] = Normal.Y, V.Normal[2] = Normal.Z;
+        V.NormalRead = true;
         return true;
     };
 }

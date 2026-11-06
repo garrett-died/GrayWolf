@@ -54,6 +54,7 @@ namespace Bo3Target
         FusedAlphaSpecular,      // specular colour of the same
         FusedMaskColour,         // colour of a colour image with a separate metal mask image
         FusedMaskSpecular,       // specular colour of the same
+        SpecularSqrtF0,          // a specular colour stored as sqrt(F0) as the sRGB-coded F0 (alpha dropped)
     };
 
     struct DeriveRequest

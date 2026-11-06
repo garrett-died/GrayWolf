@@ -394,9 +394,12 @@ std::string LightEntityKeys(const Light& L, const std::string& Prefix)
     S += Pair("PRIMARY_TYPE", L.Kind == Light::Type::Point ? "PRIMARY_OMNI" : "PRIMARY_SPOT");
     S += Pair("name", Prefix + "light_" + Name);
     const std::string Un = Prefix + "unresolved_";
-    S += Pair(Un + "rgb_at_168", Three(L.Color));
-    S += Pair(Un + "float_at_204", RadiantNumber(L.Unresolved204));
-    S += Pair(Un + "float_at_448", RadiantNumber(L.Unresolved448));
+    S += Pair(Un + (L.ColorKey.empty() ? std::string("rgb_at_168") : L.ColorKey), Three(L.Color));
+    if (!L.OnlyColor)
+    {
+        S += Pair(Un + "float_at_204", RadiantNumber(L.Unresolved204));
+        S += Pair(Un + "float_at_448", RadiantNumber(L.Unresolved448));
+    }
     if (!L.Def.empty()) S += Pair(Un + "def", L.Def);
     return S;
 }
@@ -746,6 +749,21 @@ int RadiantRulesSelfTest(std::string& Failures)
         Check(LightEntityKeys(L, "graywolf_").find("\"angles\" \"90 0 0\"") != std::string::npos, "a spot straight down has pitch 90", LightEntityKeys(L, "graywolf_"));
         L.Compiled = false;
         Check(LightEntityKeys(L, "graywolf_").empty(), "a light not read whole is not written");
+        // a game that keeps only the colour among the unresolved fields (Modern Warfare Remastered, colour already divided by its unit): its own key, no BO4 floats
+        Light W;
+        W.Compiled = true;
+        W.Kind = Light::Type::Spot;
+        W.Dir[0] = 1, W.Dir[1] = 0, W.Dir[2] = 0;
+        W.Up[0] = 0, W.Up[1] = 0, W.Up[2] = 1;
+        W.Right[0] = 0, W.Right[1] = -1, W.Right[2] = 0;
+        W.Color[0] = 2, W.Color[1] = 1, W.Color[2] = 0.5f;
+        W.ColorKey = "color_div_15500_03";
+        W.OnlyColor = true;
+        W.Def = "light_cuc_probe";
+        const std::string M = LightEntityKeys(W, "graywolf_");
+        Check(M.find("\"graywolf_unresolved_color_div_15500_03\" \"2 1 0.5\"") != std::string::npos && M.find("float_at_204") == std::string::npos && M.find("rgb_at_168") == std::string::npos &&
+                  M.find("\"graywolf_unresolved_def\" \"light_cuc_probe\"") != std::string::npos,
+              "a compiled light with its own colour key writes that key and no Black Ops 4 floats", M);
     }
 
     // a Black Ops III light: the keys fitted against the stock lights, colour and stops left as the radiance

@@ -203,6 +203,7 @@ bool IWZone::ReadLevel(Maps::MapScene& Scene, std::map<std::string, uint64_t>& M
         V.Uv[0] = At<float>(Bytes, P + 20);
         V.Uv[1] = At<float>(Bytes, P + 24);
         Normal(At<uint32_t>(Bytes, P + 36), V.Normal);
+        V.NormalRead = true;
         return true;
     };
     // the streams, each where its asset has it
@@ -216,7 +217,11 @@ bool IWZone::ReadLevel(Maps::MapScene& Scene, std::map<std::string, uint64_t>& M
         }
         if (Uvs >= 0)
             for (int K = 0; K < 2; K++) V.Uv[K] = At<float>(Img, Uvs + (int64_t)I * 8 + K * 4);
-        if (Normals >= 0) Normal(At<uint32_t>(Img, Normals + (int64_t)I * 4), V.Normal);
+        if (Normals >= 0)
+        {
+            Normal(At<uint32_t>(Img, Normals + (int64_t)I * 4), V.Normal);
+            V.NormalRead = true;
+        }
         return true;
     };
     const Maps::WorldBuilder::Fetch Fetch = Streams ? Maps::WorldBuilder::Fetch(Streamed) : Maps::WorldBuilder::Fetch(Record);
@@ -236,7 +241,13 @@ bool IWZone::ReadLevel(Maps::MapScene& Scene, std::map<std::string, uint64_t>& M
             Counter("map_surfaces_transient_missing")++;
             return 0xF0000000u;   // no zone: its vertices are not read
         };
-    const auto MaterialOf = [&](uint64_t Address) { return Off(Address) < 0 ? std::string() : Maps::AddMaterial(Scene, Material(Address)); };
+    // a surface's material word that names no place in the zone is counted (distinct words): the asset-list references are resolved by the walk's links
+    // (ZonekitZone::ResolveLinks), so this stays 0 where every surface resolves
+    const auto MaterialOf = [&](uint64_t Address) {
+        if (Off(Address) >= 0) return Maps::AddMaterial(Scene, Material(Address));
+        Counter("map_surface_materials_unresolved")++;
+        return std::string();
+    };
     if (const size_t Bad = Maps::AddWorld(Scene, L, Fetch, MaterialOf)) Counter("map_triangles_unread") += Bad;
 
     AddStaticModels(Scene, Models, Off(At<uint64_t>(Img, World + M.SModels)), At<uint32_t>(Img, World + M.SModelCount), M.SModelSize, M.SModelModel);
@@ -340,6 +351,23 @@ void IWZone::AddPrimaryLights(Maps::MapScene& Scene, const LightLayout& L, const
         }
         Out.Radius = At<float>(Img, P + L.Radius);
         Out.CosHalfFovOuter = At<float>(Img, P + L.CosHalfFov);
+        if (L.Up >= 0)
+        {
+            // the compiled light: the basis is the direction, the up vector and their cross product; the guid comes from the origin and the record index (FNV-1a)
+            Out.Compiled = true;
+            for (int J = 0; J < 3; J++) Out.Up[J] = At<float>(Img, P + L.Up + J * 4);
+            Out.Right[0] = Out.Dir[1] * Out.Up[2] - Out.Dir[2] * Out.Up[1];
+            Out.Right[1] = Out.Dir[2] * Out.Up[0] - Out.Dir[0] * Out.Up[2];
+            Out.Right[2] = Out.Dir[0] * Out.Up[1] - Out.Dir[1] * Out.Up[0];
+            Out.Guid = Maps::LightGuid(Out.Origin, K);   // the record index keeps co-located lights apart
+            if (L.Def >= 0) Out.Def = StringAt(At<uint64_t>(Img, P + L.Def));
+            if (L.ColorUnit > 0.0f)
+            {
+                for (int J = 0; J < 3; J++) Out.Color[J] /= L.ColorUnit;
+                Out.ColorKey = L.ColorKey;
+                Out.OnlyColor = true;
+            }
+        }
         if (Dbg)
             std::fprintf(Dbg, "[light] %u type %u color %g %g %g dir %g %g %g origin %g %g %g radius %g cos %g def '%s'\n", K, Type,
                          Out.Color[0], Out.Color[1], Out.Color[2], Out.Dir[0], Out.Dir[1], Out.Dir[2], Out.Origin[0], Out.Origin[1],

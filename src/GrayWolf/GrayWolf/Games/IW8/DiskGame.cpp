@@ -814,6 +814,7 @@ namespace
             {
                 const Vector3 Normal = MeshDecode::UnpackPackedQuat(At<uint32_t>(Img, Aux + N));
                 V.Normal[0] = Normal.X, V.Normal[1] = Normal.Y, V.Normal[2] = Normal.Z;
+                V.NormalRead = true;
             }
             if (Cl >= 0 && Cl + 4 <= AuxSize) std::memcpy(V.Color, Img.data() + Aux + Cl, 4);
             if (Uv >= 0 && Uv + 8 <= AuxSize)

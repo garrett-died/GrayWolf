@@ -39,6 +39,17 @@ Black Ops 4 and Cold War hash their techset names. `update-name-db` fetches cod-
 slot rules still run, and the run writes a `material.techset_names_missing` row. The rule behind each choice is in
 `graywolf_techset_rules.tsv`.
 
+A game's adapter may name the Black Ops III techset itself, from a zonekit rule file, and the Builder takes it as the exact rule
+`name`. Modern Warfare Remastered does so from `zonekit/profiles/h1/techset_rules.txt` (`rule|id|conditions|techset|alpha|label`),
+reading its own techset names. A missing rule file, a malformed row or an unknown condition is a gate failure, not a fallback. Any other
+fallback is a counted warning. Non-metals take the `_plus` family (`aoMap`, `glossMap`, no specular image), metals
+`*_advanced_fullspec`, and plain `lit` only a material with neither gloss nor occlusion. An emissive map takes `lit_emissive_plus` or
+`lit_emissive_advanced_fullspec`. A surface that is ambiguous or unread keeps its specular map, as a metal, with a
+`material.family_surface_unknown_treated_as_metal` row. Metal is decided from the surface type (the
+`metal_surfaces` set): on `mp_shipment` that disagrees with the specular pixels on 143 of 671 materials at a grey p99 of 100. A
+metal surface with a dielectric map is harmless, but a non-metal surface with a metal map (44 of 455) loses its F0 colour. The family split is a
+hypothesis from hand-made GDTs and Treyarch's material notes, not a proof.
+
 ## Image packing
 
 Declared per game on `Materials::Map` in the game's `MaterialAdapter`, never guessed from file names.
@@ -51,8 +62,17 @@ Stock suffixes cannot be trusted: `_m` means three different things in stock dat
 | Fused colour, metal in alpha | Function ready, no game sets it yet | Colour and colour specular |
 | Roughness | Any game whose adapter describes a roughness map | Inverted to gloss |
 | Other channel | Any | Grey image |
+| Specular with gloss in alpha (`spec_gloss_alpha`) | Modern Warfare Remastered | Alpha as a grey gloss image, range stated by the adapter (0..16) |
+| Specular stored as sqrt(F0) (`spec_sqrt_f0`) | Modern Warfare Remastered | F0 written sRGB-coded for `specColorMap`, metals only. A failed conversion leaves the slot empty and fails the gate |
 
-The Black Ops 6/7 and WWII packs are self-tested, not yet proven on real images.
+The Black Ops 6/7 and WWII packs are self-tested, not yet proven on real images. Whether Black Ops III reads `specColorMap` through an
+sRGB format is a hypothesis (80 of 80 stock colour specular images have `coreSemantic sRGB3ch`).
+
+A reveal image binds to `alphaRevealMap` for any game whose adapter states the reveal slot (`Description::RevealSemantic`), as a
+one-channel `_r` made from red. `.dds` output cannot take the channel op, so a reveal stays four channels there and fails
+`image.channels`. A reveal techset is chosen only when a reveal image exists.
+
+An image whose size is not a multiple of 4 is written `compressionMethod uncompressed`.
 
 ## Stock detection
 
@@ -162,9 +182,25 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
 - "Stock" means a GDT saved within a day of the linker, or a row at or below an id bound computed from those GDTs. The owner's
   own content does not teach placement, but it still blocks a name. A new file aimed at any GDT this tool does not own goes to
   a `graywolf_` file in the same folder. `bo3-gdtdb-info` prints the numbers.
-- `surfaceType` comes from the material flags in Black Ops III, Black Ops 4 and Cold War. Cold War rests on measurement only
-  (165 of 173 stock names on one map). Other games write `<none>` and a `material.surface_unknown` row: GrayWolf does not read
-  their flag word yet.
+- `surfaceType` comes from the material flags in Black Ops III, Black Ops 4, Cold War and Modern Warfare Remastered. Cold War rests on
+  measurement only (165 of 173 stock names on one map). Other games write `<none>` and a `material.surface_unknown` row: GrayWolf does
+  not read their flag word yet. A `flag_names.txt` may declare `surface_bits` and `surface_bit|name|bit|BO3 name` for a surface word that is a
+  bit set.
+- Modern Warfare Remastered's layered blends (`*145n_123n`) are written as their first layer only, listed as `material.layers_dropped`.
+  A blend's surface word is the union of its layers, so the first layer's bit is found by intersecting other blends of that layer,
+  listed as `material.surface_from_layer_id`, with the blends that prove it. The rule is a hypothesis. A blend still holding two bits stays
+  a `material.surface_type` failure: 25 on `mp_shipment`, 116 on `mp_crash`.
+- `layerSortDecal` stays `Debris (top)` on every Modern Warfare Remastered decal: neither the game's sort key nor the hand-made GDTs give
+  a table. Lights are read from the world's records, 32 of 33 on `mp_crash`; `Right` handedness is not checked against a stock light.
+- Modern Warfare Remastered textures with no Black Ops III use yet (detail, parallax, decal layers, a few unnamed semantics) are listed as
+  `material.texture_unbound` warnings: 345 on `mp_bog`.
+- Occlusion, reveal and gloss images match a hand-made port of the same art (correlation +1.000, +1.000, +0.999), which compares
+  pixels only: that port uses gloss range 0..13, ours 0..16. No same-source normal pair exists, so the blue channel is unconfirmed. `.dds` output
+  keeps two-channel normals, so `image.normal_z` fails there; use PNG for a publishable run.
+- `disk-export` stops starting new work when free space falls under `--min-free-gb` (default 8, 0 turns it off), finishes its reports, writes
+  `graywolf_disk_floor.tsv` and exits 75. Up to 63 writes can pass after the drive crosses the floor. This guards image writes only: a full map's
+  publish step can take many gigabytes of page file. The GUI and the other export commands have no floor. `--plan` gives a size estimate that leaves
+  out derived images. A PNG full map of a Modern Warfare Remastered map took 10 GB (`mp_shipment`) and 21 GB (`mp_bog`).
 - Black Ops 4 decals come from the techset `renderFlags`. A material whose techset record could not be read gets no class and a
   `material.render_class_unread` row: 335 of 2,209 materials on `mp_frenetic`. Cold War has no decal class yet.
 - Materials only models use stay `<not in editor>`, so Radiant lists a map's geometry and not a model's materials.
@@ -178,7 +214,8 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
   stock Z against the Z its own X and Y imply); Black Ops III, 476 normals, Z 36.1 dB against 33.6 dB. `.dds`
   output keeps the game's two channels (BC5 has no third), counted `normals_left_dds`. 5 Cold War images with
   no material role stay unconverted.
-- Radiant geometry: no Black Ops 4 terrain yet; patches are 2x2; collision triangles are written as thin brushes.
+- Radiant geometry: no Black Ops 4 terrain yet; patches are 2x2; collision triangles are written as thin brushes. On `mp_crash` that is
+  865,926 one-triangle meshes and 143,184 thin brushes, so that map is not yet a practical Radiant map.
 - Constants exist for Black Ops 4 techsets with a proven layout only. Others keep stock defaults and
   are listed as `material.constants_defaulted`.
 - A colour specular map on a scalar slot is read as a mask, which loses colour. It is counted.

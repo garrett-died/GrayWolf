@@ -1677,29 +1677,53 @@ struct AWPrimedSound
 #pragma region Modern Warfare RM
 
 #pragma pack(push, 1)
+// Material, 0x250 bytes (docs/hydrax-port/mwr-materials.md section 1.1; measured on 21,222 materials)
 struct MWRXMaterial
 {
-    uint64_t NamePtr;
+    uint64_t NamePtr;             // 0x00
 
-    uint8_t Padding[0x118];
+    uint8_t FlagsLow;             // 0x08 low byte of a u16: 0x52 / 0x50 / 0x92 opaque lit, 0x13 decal, 0x80 / 0x00 effect (tested)
+    uint8_t SortKey;              // 0x09 draw-order class: 2 opaque, 0x3c UI, 0x35 effect, 0x07..0x1f decals (hypothesis: the name is by analogy with IW6)
+    uint8_t Padding0[0x16];       // 0x0a..0x1f: two small counts (unknown), zeros
 
-    uint8_t ImageCount;
+    uint64_t SurfaceTypeBits;     // 0x20 a bit set of surface types (flag_names.txt of the h1 profile)
 
-    uint8_t Padding2[15];
+    uint8_t Padding1[0xf8];       // 0x28..0x11f: zeros and the per-technique index bytes
 
-    uint64_t ImageTablePtr;
+    uint8_t ImageCount;           // 0x120 textures
+    uint8_t ConstantCount;        // 0x121
+    uint8_t StateBitsCount;       // 0x122
 
-    uint8_t Padding3[0x118];
+    uint8_t Padding2[5];          // 0x123..0x127
+
+    uint64_t TechsetPtr;          // 0x128 a back reference to the techset asset (its name is a string at techset + 0x790)
+    uint64_t ImageTablePtr;       // 0x130 textures: 0x10 each
+    uint64_t ConstantTablePtr;    // 0x138 constants: 0x20 each
+
+    uint8_t Padding3[0x110];      // 0x140..0x24f
 };
 #pragma pack(pop)
+static_assert(sizeof(MWRXMaterial) == 0x250, "Material is 0x250 bytes");
 
 #pragma pack(push, 1)
+// A texture of a material (0x10): the semantic's hash, the first and last characters of its name, the sampler state, the usage byte
+// (2 colour, 5 normal, 8 specular, 16 occlusion, 15 environment BRDF LUT, 3 detail colour, 13 decal layer, 14 parallax, 17 emissive, 0 UI; proven) and the image
 struct MWRXMaterialImage
 {
     uint32_t SemanticHash;
-    uint8_t Padding[4];
+    uint8_t NameFirstChar, NameLastChar, SamplerState, Usage;
     uint64_t ImagePtr;
 };
+static_assert(sizeof(MWRXMaterialImage) == 0x10, "a texture is 0x10 bytes");
+
+// A constant of a material (0x20): the hash of its lower-cased name (h = h * 33 ^ c), its first 11 characters, four floats
+struct MWRXMaterialConstant
+{
+    uint32_t NameHash;
+    char Name[12];
+    float Value[4];
+};
+static_assert(sizeof(MWRXMaterialConstant) == 0x20, "a constant is 0x20 bytes");
 #pragma pack(pop)
 
 #pragma pack(push, 1)

@@ -8,6 +8,7 @@
 #include "CliSupport.h"
 #include "DiskGame.h"
 #include "DiskGameCli.h"
+#include "PoolWalkRetry.h"
 #include "GameCommand.h"
 #include "Bo3Target.Verify.h"
 #include "PoolCoverage.h"
@@ -198,9 +199,10 @@ namespace
                 Z.Name = Zone;
                 Z.Error = Opened ? "not a zonekit zone" : OpenError;
                 Walks.push_back(std::move(Z));
-                return;
+                return false;
             }
             Walks.push_back(Summarize(Zone, Zk->FullWalk()));
+            return true;
         };
         size_t ZonesInGame = 0;     // set only by --all-zones: the zones the install lists
         if (Options.PoolAllZones)
@@ -234,7 +236,13 @@ namespace
                     continue;
                 }
             }
-            for (const std::string& Zone : Zones) WalkZone(Zone);
+            // the zones of this input, with the install-list retry (PoolWalkRetry.h: once per input, only the failed entry dropped, no zone walked twice)
+            PoolWalkRetry::WalkInput(Walks, Zones, !O.Install.empty(), [&](const std::string& Zone) { return WalkZone(Zone); },
+                                     [&](std::vector<std::string>& Resolved) {
+                                         std::string ResolveWhy;
+                                         return Game->ResolveZones(O.Install, { Input }, O, Resolved, ResolveWhy);
+                                     },
+                                     [&](const std::string& Zone) { Missing.push_back("zone " + Zone + " was named more than once for " + Input + " (or by the install list after a retry): walked once"); });
         }
 
         // every zone together

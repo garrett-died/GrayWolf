@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <cstring>
+#include <span>
 #include <vector>
 
 namespace Maps
@@ -17,9 +19,24 @@ namespace Maps
     {
         float Pos[3] = { 0, 0, 0 };
         float Normal[3] = { 0, 0, 1 };
+        bool NormalRead = false;   // set by the reader that read Normal; unset = unknown (the default (0, 0, 1) is also a real flat-up normal)
         float Uv[2] = { 0, 0 };
         uint8_t Color[4] = { 255, 255, 255, 255 };
     };
+
+    // The guid of a light record that has none: FNV-1a of the origin's bits and the record's index (two lights at one origin differ by their index)
+    inline uint32_t LightGuid(const float Origin[3], uint32_t Index)
+    {
+        uint32_t Guid = 2166136261u;
+        for (const float Component : std::span<const float, 3>(Origin, 3))
+        {
+            uint32_t Bits;
+            std::memcpy(&Bits, &Component, 4);
+            for (int B = 0; B < 4; B++) Guid = (Guid ^ ((Bits >> (8 * B)) & 0xff)) * 16777619u;
+        }
+        for (int B = 0; B < 4; B++) Guid = (Guid ^ ((Index >> (8 * B)) & 0xff)) * 16777619u;
+        return Guid;
+    }
 
     // Triangles of one material.
     struct Surface
@@ -68,6 +85,10 @@ namespace Maps
         uint32_t Guid = 0;
         std::string Def;
         float Unresolved204 = 0.0f, Unresolved448 = 0.0f;
+        // A game whose compiled record has only the colour among the unresolved fields (Modern Warfare Remastered) names the key it is written under
+        // and leaves the two Black Ops 4 floats out
+        std::string ColorKey;
+        bool OnlyColor = false;
         // A Black Ops III compiled primary light read whole (564 bytes): the fields the stock light keys were
         // fitted against (docs/LIGHT-CONVERSION.md). Color is then the linear radiance
         // srgb2lin(_color) * 2^stops, which the compiled light keeps and not the two keys apart.
@@ -93,6 +114,7 @@ namespace Maps
         std::vector<std::vector<uint8_t>> Constants;   // the game's constant blocks (the adapter's tint, layers)
         int SortKey = -1;                               // the game's sort key, -1 when unknown
         int64_t SurfaceFlags = -1, RenderFlags = -1;    // the game's flag words (XMaterial_t), -1 when unknown
+        std::string SurfaceVia;                         // the evidence when SurfaceFlags came from an inference (XMaterial_t::SurfaceVia)
     };
 
     // An image's pixels: PNG bytes embedded in the .glb, or files (absolute paths, which may be

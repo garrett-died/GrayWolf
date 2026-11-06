@@ -1475,7 +1475,7 @@ void ZonekitZone::ExportMap(const DiskGame::Context& C, DiskGame::Totals& T)
                 if (!Mat.Textures.empty()) continue;
                 XMaterial_t X(0);
                 X.MaterialName = MatName, X.TechsetName = Mat.Techset, X.Constants = Mat.Constants, X.SortKey = Mat.SortKey;
-                X.SurfaceFlags = Mat.SurfaceFlags, X.RenderFlags = Mat.RenderFlags;
+                X.SurfaceFlags = Mat.SurfaceFlags, X.RenderFlags = Mat.RenderFlags, X.SurfaceVia = Mat.SurfaceVia;
                 Fill(X);
                 if (!X.Images.empty()) Filled.push_back(std::move(X));
             }
