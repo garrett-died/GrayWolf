@@ -51,6 +51,7 @@
 #include "Bo3Target.MaterialImages.h"
 #include "ImageRoles.h"
 #include "MaterialGdt.h"
+#include "MapMesh.h"
 #include "MapRadiantRules.h"
 #include "MapRadiantWriter.h"
 #include "MaterialDescription.h"
@@ -1021,6 +1022,9 @@ static int SelfTest(std::string& Failures)
     // The Radiant source export's stand-alone rules (hulls, limits, tiny faces, contents, lights, angles, usage)
     Failed += Maps::RadiantRulesSelfTest(Failures);
     Failed += Maps::RadiantWriterSelfTest(Failures);
+
+    // The map mesh module (weld, overlap, mesher, coverage, texture fits): HydraX parity cases and the scale checks
+    Failed += Maps::MeshSelfTest(Failures);
 
     return Failed;
 }

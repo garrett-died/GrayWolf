@@ -248,6 +248,8 @@
     <ClCompile Include="MapRadiantTextures.cpp" />
     <ClCompile Include="MapFullExport.cpp" />
     <ClCompile Include="MapRadiantRules.cpp" />
+    <ClCompile Include="MapMesh.cpp" />
+    <ClCompile Include="MapMeshSelfTest.cpp" />
     <ClCompile Include="SoundAliasCsv.cpp" />
     <ClCompile Include="MapCollisionWriter.cpp" />
     <ClCompile Include="MapMaterials.cpp" />
@@ -423,6 +425,7 @@
     <ClInclude Include="MapRadiantTextures.h" />
     <ClInclude Include="MapFullExport.h" />
     <ClInclude Include="MapRadiantRules.h" />
+    <ClInclude Include="MapMesh.h" />
     <ClInclude Include="MapRadiantGeometry.h" />
     <ClInclude Include="SoundAliasCsv.h" />
     <ClInclude Include="MapCollisionWriter.h" />
