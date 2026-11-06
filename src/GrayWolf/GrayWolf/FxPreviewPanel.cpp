@@ -4,6 +4,7 @@
 
 #include "FxPreviewRender.h"
 #include "AppLog.h"
+#include "ImGuiTheme.h"   // the speed chips
 
 #include "imgui.h"
 
@@ -13,6 +14,8 @@
 #include <future>
 #include <list>
 #include <map>
+#include <set>
+#include <unordered_map>
 
 struct FxPreviewPanel::Impl
 {
@@ -32,6 +35,9 @@ struct FxPreviewPanel::Impl
     bool Playing = true, Loop = true, Grid = true, ForwardUp = false;
     double TimeMs = 0;
     float Speed = 1.0f;
+    // the root effect's elements switched off in the Elements menu (by their index in Elements)
+    std::set<size_t> Off;
+    const FxPreview::Scene* OffFor = nullptr;   // the scene they belong to
     uint32_t Seed = 1;
     // camera
     float Yaw = 0.9f, Pitch = 0.32f, DistScale = 1.0f, Pan[3] = {};
@@ -204,6 +210,14 @@ void FxPreviewPanel::Draw()
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Restart after %.2fs (the effect's length)", Duration / 1000.0);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
+    for (const float Chip : { 0.25f, 0.5f, 1.0f })   // the usual speeds in one click (HydraX's chips)
+    {
+        char Label[16];
+        std::snprintf(Label, sizeof(Label), "%gx##speedchip", Chip);
+        if (Theme::Pill(Label, std::fabs(I.Speed - Chip) < 0.001f)) I.Speed = Chip;
+        ImGui::SameLine(0, 2);
+    }
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
     ImGui::SliderFloat("##speed", &I.Speed, 0.05f, 4.0f, "Speed %.2fx", ImGuiSliderFlags_Logarithmic);
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) I.Speed = 1.0f;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback speed (right-click: 1x)");
@@ -220,6 +234,30 @@ void FxPreviewPanel::Draw()
                                                   "Off: as authored, Z up.");
     ImGui::SameLine();
     ImGui::Checkbox("Grid", &I.Grid);
+    ImGui::SameLine();
+    {
+        // the Elements menu: switch the root effect's elements off and on to see what each one draws
+        if (I.OffFor != &S) { I.Off.clear(); I.OffFor = &S; }
+        const auto& Elements = S.Sim->Root().Elements;
+        char Title[48];
+        std::snprintf(Title, sizeof(Title), I.Off.empty() ? "Elements" : "Elements (%zu hidden)", I.Off.size());
+        if (ImGui::Button((std::string(Title) + "###elements").c_str())) ImGui::OpenPopup("##fxelements");
+        if (ImGui::BeginPopup("##fxelements"))
+        {
+            if (ImGui::SmallButton("Show all")) I.Off.clear();
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Hide all")) for (size_t k = 0; k < Elements.size(); k++) I.Off.insert(k);
+            for (size_t k = 0; k < Elements.size(); k++)
+            {
+                bool On = I.Off.count(k) == 0;
+                const std::string Label = "#" + std::to_string(k + 1) + "  " + Elements[k].TypeName + "###el" + std::to_string(k);
+                if (ImGui::Checkbox(Label.c_str(), &On)) { if (On) I.Off.erase(k); else I.Off.insert(k); }
+            }
+            if (Elements.empty()) ImGui::TextDisabled("This effect has no elements of its own.");
+            ImGui::EndPopup();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide an element to see what the others draw. Effects those elements start are not hidden.");
+    }
 
     float Sec = (float)(I.TimeMs / 1000.0);
     ImGui::SetNextItemWidth(-ImGui::GetFontSize() * 14.0f);
@@ -251,6 +289,16 @@ void FxPreviewPanel::Draw()
     I.Renderer.SetTextures(S.Textures);
     FxPreview::Frame F;
     S.Sim->Evaluate(I.TimeMs, F);
+    if (!I.Off.empty())   // the particles of the elements switched off
+    {
+        std::unordered_map<const FxPreview::Element*, size_t> Index;
+        const auto& Elements = S.Sim->Root().Elements;
+        for (size_t k = 0; k < Elements.size(); k++) Index[&Elements[k]] = k;
+        std::erase_if(F.Particles, [&](const FxPreview::Particle& Pt) {
+            const auto It = Index.find(Pt.El);
+            return It != Index.end() && I.Off.count(It->second) != 0;
+        });
+    }
     I.Particles = F.Particles.size() + F.Trails.size();
     I.Effects = F.Effects;
     I.Capped = F.Capped;
