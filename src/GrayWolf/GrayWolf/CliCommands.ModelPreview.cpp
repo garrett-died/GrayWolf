@@ -34,6 +34,8 @@
 #include "UiRecord.h"             // ui-record
 #include "ImGuiShell.h"
 #include "ModelPreviewGPU.h"
+#include "SkyLighting.h"
+#include "SettingsManager.h"
 #include "CerberusCrypto.h"
 #include "OatInProcess.h"
 #include "GltfSceneWriter.h"
@@ -85,6 +87,7 @@ int RunExportMapGlb(const CliOptions& Options)
 // Verifies the ported Cerberus script crypto (CRC32 + Salsa20) against known-answer vectors.
 int RunUiSelfTest(const CliOptions& Options)
 {
+    SetEnvironmentVariableA("GRAYWOLF_SETTINGS_READONLY", "1");   // the tests set settings in memory only
     std::string Report;
     const bool Ok = UiSelfTest(Report);
     CliReport(Options, std::format("result={}\n{}", Ok ? "ok" : "error", Report));
@@ -860,6 +863,11 @@ int RunUiRecord(const CliOptions& Options)
 int RunUiShot(const CliOptions& Options)
 {
     SetEnvironmentVariableA("GRAYWOLF_SETTINGS_READONLY", "1");   // before the shell sets anything
+    SkyLighting::SetShotModeDefault(true);   // no Mod Tools search of the machine; the script names a folder or uses the made-up skies
+    SettingsManager::SetRunSetting(SkyLighting::kStateKey, "");   // nor the lighting the machine remembered
+    SettingsManager::SetRunSetting(SkyLighting::kFullbrightKey, "false");
+    SettingsManager::SetRunSetting(SkyLighting::kBackgroundKey, "");
+    SettingsManager::SetRunSetting(SkyLighting::kFolderKey, "");
     WraithX::InitializeAPI(); // WIC, for the PNGs
     UiRecordOptions Record;
     Record.Shots = true;

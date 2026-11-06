@@ -1,0 +1,13 @@
+{
+  "steps": [
+    { "theme": "graywolf", "demo": 240, "view": "list", "select_first": "model", "label": "loaded", "shot": "lighting-none" },
+    { "lighting_menu": true, "label": "no-mod-tools-menu", "wait": 0.2, "shot": "lighting-menu" },
+    { "demo_sky": "", "lighting_menu": false, "label": "morning", "lighting": "morning", "wait": 0.3, "shot": "lighting-morning" },
+    { "lighting": "day", "label": "day", "wait": 0.3, "shot": "lighting-day" },
+    { "lighting": "sunset", "label": "sunset", "wait": 0.3, "shot": "lighting-sunset" },
+    { "lighting": "night", "label": "night", "wait": 0.3, "shot": "lighting-night" },
+    { "lighting": "fullbright", "label": "fullbright", "wait": 0.3, "shot": "lighting-fullbright" },
+    { "lighting": "off", "lighting_menu": true, "label": "menu-with-skies", "wait": 0.3, "shot": "lighting-menu-skies" },
+    { "lighting": "day", "lighting_menu": false, "sky": false, "background": "#2a3440", "label": "sky-off", "wait": 0.3, "shot": "lighting-sky-off" }
+  ]
+}

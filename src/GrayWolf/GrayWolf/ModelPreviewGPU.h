@@ -7,6 +7,7 @@
 #include "PreviewShadows.h"   // PreviewShadowSettings
 
 #include <memory>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -154,6 +155,18 @@ struct PreviewLighting
     bool Backdrop = true;
     float BackdropBlur = 0.5f;
     // ---- end environment and bloom
+    // Fullbright: no light at all, every surface shows its texture colour (shadows, emission and transmission off). A flag
+    // beside the other values, which it leaves as they are: switched off, the same look comes back.
+    bool Fullbright = false;
+    // A sun that replaces the three camera-riding lights (the BO3 sky states: SkyLighting.h): the world direction towards
+    // it (Z up) and its radiance, linear. Off: the three lights.
+    struct SunLight
+    {
+        bool On = false;
+        std::array<float, 3> Toward{ 0.0f, 0.0f, 1.0f };
+        std::array<float, 3> Radiance{ 1.0f, 1.0f, 1.0f };
+        bool operator==(const SunLight&) const = default;
+    } Sun;
     PreviewShadowSettings Shadow;   // the key light's shadow and the ground (PreviewShadows.h)
     bool operator==(const PreviewLighting&) const = default;
 

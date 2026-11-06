@@ -7,6 +7,7 @@
 
 #include "ModelPreview.h"      // PreviewGeometry
 #include "ModelPreviewGPU.h"   // PreviewGpuMesh, PreviewRenderer, PreviewTarget, PreviewLighting
+#include "SkyLighting.h"      // the Lighting menu's logic and its bakes
 #include "PreviewLoader.h"     // models built off the UI thread
 #include "SeAnimReader.h"      // SeAnimClip
 #include "AudioPlayer.h"       // real audio playback (miniaudio) with cursor + waveform
@@ -222,6 +223,9 @@ namespace ShellUi
         const std::shared_ptr<ShotResult> LastShot = std::make_shared<ShotResult>();
         // The 3D view's lighting controls, kept in the settings (the defaults are the renderer's own).
         PreviewLighting Lighting;
+        // the Lighting menu: the BO3 skies of the Mod Tools, Fullbright; the background colour seen where the sky is off (kept in the settings)
+        SkyLighting::Service Sky;
+        float Background[3] = { kPreviewBackground[0], kPreviewBackground[1], kPreviewBackground[2] };
         PreviewQuality Quality = LoadPreviewQuality();   // ambient occlusion, anti-aliasing, still frames (PreviewPost.h)
     };
 

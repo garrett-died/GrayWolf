@@ -3,6 +3,7 @@
 // ui-record (UiRecord.h): a script played on the shell, one fixed time step a frame, every frame
 // written as a PNG, the audio player's sound pulled at the same pace into audio.wav.
 #include "ImGuiShell.Internal.h"
+#include "PreviewEnvironmentUi.h"   // RequestLightingMenu
 #include "ModelPreview.h"   // SavePreviewPng
 
 #include "DirectXTex.h"     // CaptureTexture
@@ -134,7 +135,7 @@ namespace ShellUi
         bool Loading(const ShellState& S) const
         {
             const ViewportState& V = S.Viewport;
-            if (S.Catalog.Walking() || S.SelectFirstModel || V.Loader.Busy() || V.AnimRigLoading) return true;
+            if (S.Catalog.Walking() || S.SelectFirstModel || V.Loader.Busy() || V.AnimRigLoading || V.Sky.Busy()) return true;
             if (S.LoadGameWorking || !S.SelectWhenListed.empty() || !S.LoadGameScript.empty()) return true;
             if (S.Assets.GridView && S.Assets.Grid && !S.Assets.Grid->Settled()) return true;
             const int Kind = S.Selected >= 0 && S.Selected < (int)S.Catalog.Models.size() ? S.Catalog.Models[S.Selected].Kind : -1;
@@ -189,6 +190,29 @@ namespace ShellUi
                 if (St.contains("size"))    // the main window made this size (WxH)
                     if (int W = 0, H = 0; sscanf_s(St["size"].get<std::string>().c_str(), "%dx%d", &W, &H) == 2) { S.RequestW = W; S.RequestH = H; }
                 if (St.contains("demo")) AddDemoRows(S, St["demo"].get<int>());
+                // the Lighting menu: made-up skies ("demo_sky": a cache folder, "" for the run's own) or the Mod Tools of a folder
+                // ("modtools"), then "lighting": morning, day, sunset, night, fullbright, off (Fullbright off) or an environment id; "sky": the chip;
+                // "backdrop_blur": 0..1; "background": "#rrggbb"; "lighting_menu": the menu shown open
+                if (St.contains("demo_sky"))
+                {
+                    const std::string Cache = St["demo_sky"].get<std::string>();
+                    V.Sky.Configure(true, Cache.empty() ? (std::filesystem::path(O.OutDir) / "sky-cache").string() : Cache);
+                }
+                if (St.contains("sky_cache")) V.Sky.Configure(false, St["sky_cache"].get<std::string>());
+                if (St.contains("modtools")) V.Sky.SetFolder(St["modtools"].get<std::string>());
+                if (St.contains("lighting"))
+                {
+                    const std::string Want = St["lighting"].get<std::string>();
+                    ModToolsSky::LightState State;
+                    if (SkyLighting::ParseState(Want, State)) V.Sky.PickState(State, V.Lighting);
+                    else if (Want == "fullbright") V.Sky.SetFullbright(true, V.Lighting);
+                    else if (Want == "off") V.Sky.SetFullbright(false, V.Lighting);
+                    else V.Sky.PickEnvironment(Want, V.Lighting);
+                }
+                if (St.contains("sky")) V.Lighting.Backdrop = St["sky"].get<bool>();
+                if (St.contains("backdrop_blur")) V.Lighting.BackdropBlur = std::clamp(St["backdrop_blur"].get<float>(), 0.0f, 1.0f);   // 0: the sky sharp
+                if (St.contains("background") && !SkyLighting::ParseColor(St["background"].get<std::string>(), V.Background)) Fail("not a colour: " + St["background"].get<std::string>());
+                if (St.contains("lighting_menu")) RequestLightingMenu(St["lighting_menu"].get<bool>());
                 if (St.contains("label"))
                     Timeline += std::to_string(Written) + "\t" + St["label"].get<std::string>() + "\n";
                 if (St.contains("type")) SetTypeFilter(S.Assets, TypeIndex(St["type"].get<std::string>()));

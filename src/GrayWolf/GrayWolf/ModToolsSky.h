@@ -93,6 +93,7 @@ namespace ModToolsSky
         std::vector<std::string> Faces;   // CubeFaces: six absolute paths, ft bk lf rt up dn
         std::string LatLong;              // LatLong: the file
         bool Fallback = false;            // the planner's cube-face paths, a link of the chain was missing
+        bool Demo = false;                // a made-up gradient sky with a sun disc at the preset's sun (DemoCatalog), no file behind it
         std::string SkyboxModel, Material, Image;
         std::vector<std::string> Notes;   // what each link found
         std::vector<std::string> Files() const;
@@ -111,6 +112,9 @@ namespace ModToolsSky
     Catalog Discover(const LocateInput& Input, const std::atomic<bool>* Cancel = nullptr);
     // The same for a known root
     Catalog Resolve(const Location& Where, const std::atomic<bool>* Cancel = nullptr);
+
+    // The four states as made-up skies (ui-shot's lighting script, the self-tests): no Mod Tools and no file needed
+    Catalog DemoCatalog();
 
     // One GDT entry, and the scanner the chain uses (public for the self-test)
     struct GdtEntry

@@ -261,12 +261,12 @@ float4 PSMain(PSIn i, out uint Coverage : SV_Coverage) : SV_Target0
             cSpec = lerp(0.04, albedo.rgb, MetalValue);
         }
         if (NoSpecular > 0.5) { cDiff = albedo.rgb; cSpec = 0.04; }
-        color = LightSurface(V, N, cDiff, cSpec, rough, ao);
+        color = (NoSpecular > 1.5) ? albedo.rgb : LightSurface(V, N, cDiff, cSpec, rough, ao);   // NoSpecular 2: fullbright
     }
-    if (Flags & 64) color += EmissiveMap.Sample(Surface, uv).rgb * EmissiveColor.rgb;
+    if ((Flags & 64) && NoSpecular < 1.5) color += EmissiveMap.Sample(Surface, uv).rgb * EmissiveColor.rgb;
     // Transmission: the light reaching the far side (the lights behind the surface, the sky along
     // -N) comes through, times the colour and the transmission map.
-    if (Flags & 16384)
+    if ((Flags & 16384) && NoSpecular < 1.5)
     {
         float t = dot(TransmissionMap.Sample(Surface, uv), TransmissionMask);
         if (TransmissionColor.w > 0.5) t = 1 - t;
@@ -1042,14 +1042,32 @@ void PreviewRenderer::Render(ID3D11DeviceContext* Ctx, const PreviewGpuMesh* Mes
             return XMVector3Normalize(XMVectorNegate(XMVectorAdd(XMVectorAdd(XMVectorScale(Fwd, F), XMVectorScale(Right, R)), XMVectorScale(CamUp, U))));
         };
         const float K = L.Lights;
-        const XMVECTOR KeyDir = From(-1.0f, -0.8f, 0.9f);
-        P->Effect->SetLightDirection(0, KeyDir);
-        P->Effect->SetLightDiffuseColor(0, XMVectorSet(1.30f * K, 1.24f * K, 1.15f * K, 0));
-        P->Effect->SetLightDirection(1, From(-1.0f, 1.0f, -0.1f));
-        P->Effect->SetLightDiffuseColor(1, XMVectorSet(0.22f * K, 0.25f * K, 0.30f * K, 0));
-        P->Effect->SetLightDirection(2, From(1.0f, 0.4f, 0.8f));
-        P->Effect->SetLightDiffuseColor(2, XMVectorSet(0.8f * K, 0.8f * K, 0.85f * K, 0));
-        P->Shadows->RenderMaps(Ctx, *Mesh, KeyDir, L.Shadow, K);   // the key light's depth map (sets its own targets)
+        XMVECTOR KeyDir = From(-1.0f, -0.8f, 0.9f);
+        if (L.Sun.On)
+        {
+            // a sky state's sun: the key light, fixed in the world, at the sun's radiance (the Lights slider's 0.5 is one times);
+            // the sky's cubes are the fill, so the other two lights are off
+            const float Rel = K / 0.5f;
+            KeyDir = XMVector3Normalize(XMVectorSet(-L.Sun.Toward[0], -L.Sun.Toward[1], -L.Sun.Toward[2], 0));
+            P->Effect->SetLightDirection(0, KeyDir);
+            P->Effect->SetLightDiffuseColor(0, XMVectorSet(L.Sun.Radiance[0] * Rel, L.Sun.Radiance[1] * Rel, L.Sun.Radiance[2] * Rel, 0));
+            P->Effect->SetLightDirection(1, From(-1.0f, 1.0f, -0.1f));
+            P->Effect->SetLightDiffuseColor(1, XMVectorZero());
+            P->Effect->SetLightDirection(2, From(1.0f, 0.4f, 0.8f));
+            P->Effect->SetLightDiffuseColor(2, XMVectorZero());
+        }
+        else
+        {
+            P->Effect->SetLightDirection(0, KeyDir);
+            P->Effect->SetLightDiffuseColor(0, XMVectorSet(1.30f * K, 1.24f * K, 1.15f * K, 0));
+            P->Effect->SetLightDirection(1, From(-1.0f, 1.0f, -0.1f));
+            P->Effect->SetLightDiffuseColor(1, XMVectorSet(0.22f * K, 0.25f * K, 0.30f * K, 0));
+            P->Effect->SetLightDirection(2, From(1.0f, 0.4f, 0.8f));
+            P->Effect->SetLightDiffuseColor(2, XMVectorSet(0.8f * K, 0.8f * K, 0.85f * K, 0));
+        }
+        PreviewShadowSettings Shadow = L.Shadow;
+        if (L.Fullbright) Shadow.Shadows = Shadow.Ground = false;   // no light, no shadow
+        P->Shadows->RenderMaps(Ctx, *Mesh, KeyDir, Shadow, K);   // the key light's depth map (sets its own targets)
         // PreviewPost hook 3: depth/normal prepass and XeGTAO, the occlusion bound for the pass below (t40, b6)
         P->Post->Occlusion(Ctx, Frame, *Mesh, View, Cam, T, *P->Effect, P->Layout.Get(), P->MaterialCB.Get(), *P->States);
 
@@ -1069,7 +1087,7 @@ void PreviewRenderer::Render(ID3D11DeviceContext* Ctx, const PreviewGpuMesh* Mes
         Ctx->IASetIndexBuffer(Mesh->IB.Get(), DXGI_FORMAT_R32_UINT, 0);
         Ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        const SceneConstants Scene{ kIblScale * L.EnvIntensity, (float)T.Samples, 0.0f, L.Specular ? 0.0f : 1.0f };   // environment: intensity
+        const SceneConstants Scene{ kIblScale * L.EnvIntensity, (float)T.Samples, 0.0f, L.Fullbright ? 2.0f : (L.Specular ? 0.0f : 1.0f) };   // environment: intensity
         Ctx->UpdateSubresource(P->SceneCB.Get(), 0, nullptr, &Scene, 0, 0);
         ID3D11Buffer* Cbs[] = { P->MaterialCB.Get(), P->SceneCB.Get() };
         Ctx->PSSetConstantBuffers(1, 2, Cbs);

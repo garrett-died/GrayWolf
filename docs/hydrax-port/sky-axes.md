@@ -73,3 +73,24 @@ and that is what the self-test compares.
 - The sun disc: texels above 1000 are cut before the bake (HydraX's exposure cutoff), so the disc does not light the model a
   second time on top of the preset's sun. **Hypothesis** that this looks right.
 - Night is baked at 0.06 / 0.18 of the others' strength (HydraX's per-state target grey, calibrated by eye there, not the game's value).
+
+## Looked at in the previewer (U9, owner's install, read only; numbers only, no pixels kept)
+
+The four states shown on the demo sphere with the viewport's own Lighting menu (the sun is the key light at the preset's direction, the
+sky is the environment and the backdrop). Labels as above.
+
+- **Tested, by eye:** the Day, Morning and Night skies are the right way up (sky above, ground below), the horizon is level and sits at the
+  screen's middle for a level camera, and the preset sun lights the sphere from the side the ground shadow says (the shadow falls away from it).
+- **Tested, by decoding the EXRs** (brightest texels of each sky against the preset's sun, in the world axes of this file): Morning's disc is at
+  azimuth -97.9 and elevation 7.1 degrees, the preset's sun at -97.0 and 15.0: the azimuth agrees, the elevation is 8 degrees lower in the
+  image. Day's and Sunset's lat-longs hold **no sun disc** (brightest texel 2.1 and 4.1), so there is nothing to compare, and Night's brightest
+  texel is about 0.001. **Unknown** whether the game puts the preset sun at the image's disc or at the preset's number; HydraX keeps its per-state
+  yaw offset at 0 for the same reason.
+- **The 1000 cut is a no-op on this install** (tested): no texel of any of the four skies is above 14, so nothing is cut. Morning's disc
+  (13.6) stays in the baked light and lights the model a second time next to the preset's sun. A cut that does anything here would have to be
+  near 5. The hypothesis "the cut keeps the disc from lighting twice" does **not hold** for these files.
+- **Night at 0.06 / 0.18 looks too bright** (judged by eye): the sky's own mean is about 0.001 against Day's 0.16, yet each state is baked
+  to the same mean first and Night then multiplied by one third, so Night reads as dusk (a clearly lit teal sphere), not night. Hypothesis
+  stays a hypothesis; the source's real ratio is about 160 to 1.
+- **Sunset's sky is a blue-sky mountain scene** in the image the chain resolves (not a fallback), with the preset's orange sun on the
+  model: sun and sky do not match in colour. Unknown whether that is the game's own asset or a wrong link of the chain.

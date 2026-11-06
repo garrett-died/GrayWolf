@@ -309,6 +309,7 @@ void ScanGdt(const fs::path& File, std::vector<GdtKey>& Wanted, std::map<GdtKey,
 
 std::vector<std::string> SkySource::Files() const
 {
+    if (Demo) return {};
     return Kind == SourceKind::CubeFaces ? Faces : std::vector<std::string>{ LatLong };
 }
 
@@ -575,8 +576,72 @@ Catalog Discover(const LocateInput& Input, const std::atomic<bool>* Cancel)
 
 // ======== decode, cache, bake
 
+namespace
+{
+    // A made-up lat-long: a gradient (zenith, horizon, ground) per state and a sun disc far above 1000 where the preset's sun is,
+    // so the cutoff is exercised as well. Nothing of the Mod Tools in it.
+    void DemoSky(LightState State, EnvironmentImage& Out)
+    {
+        struct Grade { float Zenith[3], Horizon[3], Ground[3]; };
+        static const Grade kGrades[kStateCount] = {
+            { { 0.30f, 0.45f, 0.80f }, { 1.00f, 0.72f, 0.50f }, { 0.20f, 0.17f, 0.15f } },
+            { { 0.20f, 0.40f, 1.00f }, { 0.75f, 0.85f, 1.00f }, { 0.25f, 0.24f, 0.22f } },
+            { { 0.25f, 0.20f, 0.45f }, { 1.00f, 0.40f, 0.18f }, { 0.15f, 0.10f, 0.09f } },
+            { { 0.02f, 0.03f, 0.10f }, { 0.08f, 0.10f, 0.20f }, { 0.01f, 0.01f, 0.02f } },
+        };
+        const Grade& G = kGrades[static_cast<int>(State)];
+        float Sun[3];
+        PresetOf(State).SunDirection(Sun);
+        const int W = 256, H = 128;
+        Out.Kind = EnvironmentImage::Layout::LatLong;
+        Out.Width = W;
+        Out.Height = H;
+        Out.Rgba.assign((size_t)W * H * 4, 1.0f);
+        const double Pi = 3.14159265358979323846;
+        for (int Y = 0; Y < H; Y++)
+            for (int X = 0; X < W; X++)
+            {
+                const double U = (X + 0.5) / W, V = (Y + 0.5) / H;
+                const double Phi = (0.5 - U) * 2 * Pi, Theta = V * Pi;   // the lat-long of sky-axes.md: u = 0.5 - atan2(y, x) / 2pi, v = acos(z) / pi
+                const float Dx = (float)(std::sin(Theta) * std::cos(Phi)), Dy = (float)(std::sin(Theta) * std::sin(Phi)), Dz = (float)std::cos(Theta);
+                const size_t At = ((size_t)Y * W + X) * 4;
+                for (int C = 0; C < 3; C++)
+                {
+                    const float Up = std::pow(std::max(Dz, 0.0f), 0.5f);
+                    Out.Rgba[At + (size_t)C] = Dz >= 0 ? G.Horizon[C] + (G.Zenith[C] - G.Horizon[C]) * Up : G.Ground[C];
+                }
+                const float Cos = Dx * Sun[0] + Dy * Sun[1] + Dz * Sun[2];
+                if (Cos > 0.9995f) for (size_t C = 0; C < 3; C++) Out.Rgba[At + C] = 4000.0f;   // the disc
+            }
+    }
+}
+
+Catalog DemoCatalog()
+{
+    Catalog C;
+    C.Found = true;
+    C.Where.Root = "(demo)";
+    C.Where.Source = "demo";
+    for (LightState S : kStates)
+    {
+        SkySource Src;
+        Src.State = S;
+        Src.Kind = SourceKind::LatLong;
+        Src.Demo = true;
+        Src.Notes.push_back("a made-up sky");
+        C.Sources[S] = Src;
+    }
+    return C;
+}
+
 bool LoadSkyImage(const SkySource& Source, int MaxFace, EnvironmentImage& Out, std::string& Error, const std::atomic<bool>* Cancel)
 {
+    if (Source.Demo)
+    {
+        (void)MaxFace; (void)Error; (void)Cancel;
+        DemoSky(Source.State, Out);
+        return true;
+    }
     const Exr::ReadOptions Options{ false, true };
     const auto ReadOne = [&](const std::string& Path, int MaxW, int MaxH, Exr::Pixels& Px) {
         std::vector<uint8_t> Bytes;
@@ -653,6 +718,7 @@ std::string CacheId(const SkySource& Source, const BakeSettings& Settings)
     H = Fnv(H, std::to_string(Settings.Size));
     H = Fnv(H, std::to_string(Settings.MaxFace));
     H = Fnv(H, Source.Kind == SourceKind::CubeFaces ? "cube" : "latlong");
+    if (Source.Demo) H = Fnv(H, "demo");
     for (const std::string& File : Source.Files())
     {
         std::error_code Ec;

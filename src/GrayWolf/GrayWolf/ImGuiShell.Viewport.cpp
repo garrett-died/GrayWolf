@@ -445,6 +445,8 @@ namespace ShellUi
         Lighting.Lights = SettingsManager::GetSettingFloat("preview_lights", Lighting.Lights, 0.0f, 3.0f);
         Lighting.Specular = SettingsManager::GetSetting("preview_specular", "true") != "false";
         LoadPreviewEnvironmentSettings(Lighting);
+        SkyLighting::ParseColor(SettingsManager::GetSetting(SkyLighting::kBackgroundKey, ""), Background);
+        Sky.Init(Lighting);   // the remembered Fullbright and sky state
         Lighting.Shadow = LoadPreviewShadowSettings();
         ShowDetails = SettingsManager::GetSetting("viewport_details", "false") == "true";
     }

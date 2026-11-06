@@ -186,6 +186,13 @@ namespace ShellUi
                 E.push_back(PathOf(Tools, "Helper programs", "cod_lua_decompiler_exe", "Lua decompiler",
                     "The same for compiled plain Lua files. Leave empty to look for it on your PATH."));
 
+                E.push_back(Custom(Tools, "Black Ops III Mod Tools", "@modtools", "Mod Tools folder",
+                    "The folder where the Black Ops III Mod Tools are installed. GrayWolf uses it to show the game's own skies (Morning, Day, "
+                    "Sunset, Night) behind and around a model in the 3D view, under Lighting. You do not need to set it: GrayWolf finds the Mod "
+                    "Tools by itself when it can (this setting, then the TA_TOOLS_PATH environment variable, then your Steam libraries). Set it "
+                    "only if the line under the box says they were not found. GrayWolf only reads this folder: it never writes, changes or deletes "
+                    "anything in it. The prepared skies are kept in GrayWolf's own cache folder."));
+
                 E.push_back(Custom(Prev, "Screenshots", "@screenshots", "Screenshots folder",
                     "Where the camera button on the 3D view (or Ctrl+Shift+S) saves pictures. Left empty, GrayWolf uses the folder the screenshots "
                     "were last saved to, and Pictures\\GrayWolf when there is none yet. Spaces and quotes around a pasted path are removed."));
@@ -348,6 +355,25 @@ namespace ShellUi
                 ImGui::EndDisabled();
             }
 
+            // The Mod Tools folder: the box, Browse, Clear, and where the Mod Tools were found (or that they were not)
+            void DrawModToolsSettings(ShellState& S)
+            {
+                static char Buf[1024] = {};
+                if (std::string Picked; UiAsync::Picked("settings.modtools", Picked)) SettingsManager::SetSetting(SkyLighting::kFolderKey, Picked);
+                if (!ImGui::IsAnyItemActive()) SetBuf(Buf, sizeof(Buf), SettingsManager::GetSetting(SkyLighting::kFolderKey, ""));
+                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 30.0f);
+                ImGui::InputTextWithHint("##modtools", "Looked for by itself", Buf, sizeof(Buf));
+                if (ImGui::IsItemDeactivatedAfterEdit()) SettingsManager::SetSetting(SkyLighting::kFolderKey, TrimPath(Buf));
+                ImGui::SameLine();
+                if (ImGui::Button("Browse\xE2\x80\xA6##modtools"))
+                    UiAsync::PickFolder("settings.modtools", "Select the Black Ops III Mod Tools folder", SettingsManager::GetSetting(SkyLighting::kFolderKey, ""));
+                ImGui::SameLine();
+                ImGui::BeginDisabled(Buf[0] == 0);
+                if (ImGui::Button("Clear##modtools")) SettingsManager::SetSetting(SkyLighting::kFolderKey, "");
+                ImGui::EndDisabled();
+                ImGui::TextDisabled("%s", S.Viewport.Sky.FoundLine().c_str());
+            }
+
             void DrawGameSettings(LoadGamePanel& LoadGame, float Width)
             {
                 const auto& Games = DiskGame::Games();
@@ -425,6 +451,7 @@ namespace ShellUi
                     ImGui::TextDisabled("%s", Images.string().c_str());
                 }
                 else if (K == "@gamesettings") DrawGameSettings(LoadGame, Width);
+                else if (K == "@modtools") DrawModToolsSettings(S);
                 else if (K == "@blender") DrawBlenderSettings();
                 else if (K == "@screenshots") DrawScreenshotSettings();
                 else if (K == "@updates") DrawUpdatesSettings();
@@ -603,5 +630,6 @@ bool UiSelfTest(std::string& Report)
         if (ShellUi::TypeMaskOf(A.Filter) != 0 || A.Filter[0] != 0) { Types = false; Report += "FAIL All types clears the terms\n"; }
     }
     const bool Text = ShellUi::TextViewer::SelfTest(Report);
-    return Settings && Search && Windows && Text && Types;
+    const bool Sky = SkyLighting::SelfTest(Report);
+    return Settings && Search && Windows && Text && Types && Sky;
 }

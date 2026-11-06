@@ -82,7 +82,7 @@ namespace ShellUi
         if (!V.Vrt.Resize(Dev, W, H)) return;
         V.Renderer.SetLighting(V.Lighting);
         V.Renderer.SetQuality(V.Quality);
-        const float* const Bg = kPreviewBackground;   // under the backdrop, or the background without it
+        const float Bg[4] = { V.Background[0], V.Background[1], V.Background[2], 1.0f };   // under the backdrop, or the background without it
         const PreviewCamera Cam = OrbitPreviewCamera(V.Mesh, V.Yaw, V.Pitch, V.DistScale, V.Pan);
         V.Renderer.Render(Ctx, V.Mesh.Valid ? &V.Mesh : nullptr, Cam, V.Vrt, Bg);
         if (!V.PendingShot.Wanted || !V.Mesh.Valid) return;
@@ -181,7 +181,7 @@ namespace ShellUi
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Specular highlights (off: plain matte surfaces, to judge a material's colour)");
         ImGui::SameLine(0, ImGui::GetFontSize() * 0.4f);
-        DrawPreviewEnvironmentControls(Lighting);   // the environment, its turn and strength, bloom
+        DrawPreviewEnvironmentControls(Lighting, V.Sky, V.Background);   // the Lighting menu, the sky chip, the environment's turn and strength, bloom
         if (DrawPreviewShadowControls(Lighting.Shadow)) SavePreviewShadowSettings(Lighting.Shadow);
         // ambient occlusion, anti-aliasing, still frames (PreviewPost.h), in a popup
         ImGui::SameLine(0, ImGui::GetFontSize() * 0.4f);

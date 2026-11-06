@@ -197,6 +197,7 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         if (S.Recorder) S.Recorder->FrameBegin(S);
+        S.Viewport.Sky.Tick(S.Viewport.Lighting);   // a sky bake finished, the Mod Tools folder changed
         ImGui::NewFrame();
 
         bool OpenHelp = false, OpenSettings = LoadGame.ConsumeSettingsRequest();
