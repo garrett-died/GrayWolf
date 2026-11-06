@@ -2,6 +2,7 @@
 
 #include "ImGuiShell.TextView.h"
 #include "ImGuiTheme.h"
+#include "Strings.h"
 
 #include "imgui.h"
 
@@ -11,6 +12,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 #include <set>
 #include <string_view>
@@ -27,13 +30,13 @@ namespace ShellUi
 
         const std::set<std::string_view>& Keywords(TextViewer::Lang L)
         {
-            static const std::set<std::string_view> Gsc = { "if", "else", "for", "foreach", "while", "switch", "case", "default", "break", "continue",
+            static const std::set<std::string_view>& Gsc = *new std::set<std::string_view> { "if", "else", "for", "foreach", "while", "switch", "case", "default", "break", "continue",
                 "return", "wait", "thread", "function", "class", "self", "level", "game", "anim", "true", "false", "undefined", "in", "do", "waittill",
                 "endon", "notify", "waitframe", "new", "var", "const", "private", "autoexec", "event_handler", "namespace" };
-            static const std::set<std::string_view> Lua = { "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in",
+            static const std::set<std::string_view>& Lua = *new std::set<std::string_view> { "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in",
                 "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while" };
-            static const std::set<std::string_view> Json = { "true", "false", "null" };
-            static const std::set<std::string_view> None;
+            static const std::set<std::string_view>& Json = *new std::set<std::string_view> { "true", "false", "null" };
+            static const std::set<std::string_view>& None = *new std::set<std::string_view>;   // never destroyed: the worker may still read them at exit
             switch (L)
             {
             case TextViewer::Lang::Gsc: return Gsc;
@@ -497,26 +500,99 @@ namespace ShellUi
         Cur = Kept;   // shown at once while the file's size and time are looked at
         auto P = std::make_shared<Pending>();
         Wait = P;
-        std::thread([P, Path, Extension, Kept] {
-            std::error_code Ec;
-            const auto Size = std::filesystem::file_size(Path, Ec);
-            const auto Time = Ec ? std::filesystem::file_time_type{} : std::filesystem::last_write_time(Path, Ec);
-            if (Ec) { P->Done = true; return; }
-            if (Kept && Kept->Size == Size && Kept->Time == Time) { P->Result = Kept; P->Done = true; return; }
-            std::ifstream In(Path, std::ios::binary);
-            if (!In) { P->Done = true; return; }
-            std::string Data(MaxBytes + 1, '\0');
-            In.read(Data.data(), (std::streamsize)Data.size());
-            Data.resize((size_t)In.gcount());
-            const bool Cut = Data.size() > MaxBytes;
-            if (Cut) Data.resize(MaxBytes);
-            if (P->Cancel.load()) { P->Done = true; return; }
-            auto D = std::const_pointer_cast<Doc>(Build(Extension, std::move(Data), (size_t)Size, Cut));
-            D->Size = Size;
-            D->Time = Time;
-            P->Result = D;
-            P->Done = true;
-        }).detach();
+        Submit({ Path, Extension, Kept, P });
+    }
+
+    // ---- the one reading worker. Its state is shared with the thread, so it lives as long as either holds it; Shutdown waits a little and lets it go.
+    struct TextViewer::WorkerState
+    {
+        std::mutex M;
+        std::condition_variable Cv;
+        bool Has = false, Stop = false;
+        Job Latest;
+        std::atomic<bool> Started{ false }, Done{ false };
+        std::thread T;
+        ~WorkerState()
+        {
+            // the last holder may be the worker itself: it cannot join itself
+            if (!T.joinable()) return;
+            if (T.get_id() != std::this_thread::get_id() && Done.load()) T.join();
+            else T.detach();
+        }
+    };
+
+    std::shared_ptr<TextViewer::WorkerState> TextViewer::Worker()
+    {
+        static const std::shared_ptr<WorkerState> W = std::make_shared<WorkerState>();
+        return W;
+    }
+
+    void TextViewer::RunJob(const Job& J)
+    {
+        const std::shared_ptr<Pending>& P = J.P;
+        const std::filesystem::path W(Strings::ToUnicodeString(J.Path));   // wide: a folder with non-ANSI letters opens
+        std::error_code Ec;
+        const auto Size = std::filesystem::file_size(W, Ec);
+        const auto Time = Ec ? std::filesystem::file_time_type{} : std::filesystem::last_write_time(W, Ec);
+        if (Ec) { P->Done = true; return; }
+        if (J.Kept && J.Kept->Size == Size && J.Kept->Time == Time) { P->Result = J.Kept; P->Done = true; return; }
+        std::ifstream In(W, std::ios::binary);
+        if (!In) { P->Done = true; return; }
+        std::string Data(MaxBytes + 1, '\0');
+        In.read(Data.data(), (std::streamsize)Data.size());
+        Data.resize((size_t)In.gcount());
+        const bool Cut = Data.size() > MaxBytes;
+        if (Cut) Data.resize(MaxBytes);
+        if (P->Cancel.load()) { P->Done = true; return; }
+        auto D = std::const_pointer_cast<Doc>(Build(J.Extension, std::move(Data), (size_t)Size, Cut));
+        D->Size = Size;
+        D->Time = Time;
+        P->Result = D;
+        P->Done = true;
+    }
+
+    void TextViewer::Submit(Job J)
+    {
+        const std::shared_ptr<WorkerState> S = Worker();
+        std::lock_guard<std::mutex> Lock(S->M);
+        if (S->Stop) { J.P->Done = true; return; }
+        if (S->Has) S->Latest.P->Done = true;   // replaced before it was started: nobody waits for it (its viewer asked again)
+        S->Latest = std::move(J);
+        S->Has = true;
+        if (!S->Started.exchange(true))
+            S->T = std::thread([S] {
+                for (;;)
+                {
+                    Job Mine;
+                    {
+                        std::unique_lock<std::mutex> Lk(S->M);
+                        S->Cv.wait(Lk, [&] { return S->Stop || S->Has; });
+                        if (S->Stop) break;
+                        Mine = std::move(S->Latest);
+                        S->Has = false;
+                    }
+                    try { RunJob(Mine); }
+                    catch (...) { Mine.P->Done = true; }   // a bad file or no memory: the viewer says it could not read it
+                }
+                S->Done = true;
+            });
+        S->Cv.notify_one();
+    }
+
+    void TextViewer::Shutdown()
+    {
+        const std::shared_ptr<WorkerState> S = Worker();
+        {
+            std::lock_guard<std::mutex> Lock(S->M);
+            S->Stop = true;
+            if (S->Has) S->Latest.P->Done = true;
+            S->Has = false;
+        }
+        S->Cv.notify_all();
+        if (!S->Started.load()) return;
+        for (int Waited = 0; Waited < 100 && !S->Done.load(); Waited++) Sleep(20);
+        if (S->Done.load() && S->T.joinable()) S->T.join();
+        else if (S->T.joinable()) S->T.detach();
     }
 
     void TextViewer::Poll() const
@@ -771,6 +847,24 @@ namespace ShellUi
         TextViewer V;
         V.LoadText("gsc", "one\ntwo\r\nthree");
         Check(V.Summary().find("3 lines") == 0, "line count without a final newline (viewer)");
+        {
+            // the one worker: a file in a folder with non-ANSI letters opens, and requests made one after the other end with the last one shown
+            const std::filesystem::path Dir = std::filesystem::temp_directory_path() / std::filesystem::path(L"graywolf-textview-тест-é");
+            std::error_code Ec;
+            std::filesystem::create_directories(Dir, Ec);
+            for (int N = 0; N < 3; N++) { std::ofstream(Dir / (L"f" + std::to_wstring(N) + L".gsc")) << "// file " << N << "\nmain() {}\n"; }
+            TextViewer V;
+            for (int N = 0; N < 3; N++)
+            {
+                const std::u8string U8 = (Dir / (L"f" + std::to_wstring(N) + L".gsc")).u8string();   // UTF-8: .string() cannot hold these letters
+                V.Request(std::string(reinterpret_cast<const char*>(U8.data()), U8.size()), "gsc");
+            }
+            for (int I = 0; I < 300 && (V.Reading() || !V.Loaded()); I++) Sleep(10);
+            Check(V.Loaded() && V.Summary().find("2 lines") != std::string::npos, "the text worker reads the last request in a folder with non-ANSI letters");
+            V.Unload();
+            std::filesystem::remove_all(Dir, Ec);
+            Shutdown();   // the worker ends here, as the shell ends it
+        }
         return Ok;
     }
 }

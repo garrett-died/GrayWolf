@@ -378,8 +378,17 @@ void LoadGamePanel::Draw(ID3D11Device* Dev, bool Visible)
 {
     JoinIfDone();
     std::string Picked;
-    if (UiAsync::Picked("loadgame.folder", Picked)) { SetBuf(GameBuf, sizeof(GameBuf), Picked); Persist(); }
-    if (UiAsync::Picked("loadgame.output", Picked)) { SetBuf(DiskOutBuf, sizeof(DiskOutBuf), Picked); Persist(); }
+    // a dialog that ends while a run reads these is dropped with a notice (the run was started with its own copy)
+    if (UiAsync::Picked("loadgame.folder", Picked))
+    {
+        if (WorkerRuns()) UiAsync::Notify("The game folder was not changed: an export or a load is running", true);
+        else { SetBuf(GameBuf, sizeof(GameBuf), Picked); Persist(); }
+    }
+    if (UiAsync::Picked("loadgame.output", Picked))
+    {
+        if (WorkerRuns()) UiAsync::Notify("The export folder was not changed: an export or a load is running", true);
+        else { SetBuf(DiskOutBuf, sizeof(DiskOutBuf), Picked); Persist(); }
+    }
 
     // One automatic scan on the first frame, on the worker so the window still paints: the sweep
     // takes about two seconds.

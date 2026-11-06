@@ -238,7 +238,7 @@ void SavePreviewShadowSettings(const PreviewShadowSettings& S)
 bool DrawPreviewShadowControls(PreviewShadowSettings& S)
 {
     bool Changed = false;
-    PreviewToolbar::SameLine(ImGui::GetFontSize() * 0.4f, ImGui::GetFontSize() * 5.5f);
+    PreviewToolbar::SameLine(ImGui::GetFontSize() * 0.4f, PreviewToolbar::ButtonWidth("Shadows"));
     if (Theme::Pill("Shadows", S.Shadows)) { S.Shadows = !S.Shadows; Changed = true; }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("The key light's soft shadow, on the model and on the ground");
     if (S.Shadows)
@@ -250,7 +250,7 @@ bool DrawPreviewShadowControls(PreviewShadowSettings& S)
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The key light's size: sharp shadows at 0, wide soft ones at 1 (right-click resets)");
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { S.Softness = kDefaultSoftness; Changed = true; }
     }
-    PreviewToolbar::SameLine(-1.0f, ImGui::GetFontSize() * 4.5f);
+    PreviewToolbar::SameLine(-1.0f, PreviewToolbar::ButtonWidth("Ground"));
     if (Theme::Pill("Ground", S.Ground)) { S.Ground = !S.Ground; Changed = true; }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("A ground under the model that shows only its shadow and where it touches");
     return Changed;

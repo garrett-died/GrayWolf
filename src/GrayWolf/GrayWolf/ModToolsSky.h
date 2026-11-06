@@ -172,7 +172,9 @@ namespace ModToolsSky
     BakeOutcome BakeState(const SkySource& Source, const BakeSettings& Settings, const std::atomic<bool>* Cancel,
                           const std::function<void(float)>& Progress);
 
-    // A bake on a thread of its own: Cancel() stops it at the next row, the destructor cancels and joins.
+    // A bake on a thread of its own: Cancel() stops it at the next row. Its state is shared with the thread, so it stays alive for as long as the
+    // thread runs. The destructor waits for a cancelled bake a little (0.5 s, at once after Abandon()), joins when it is over and otherwise lets the
+    // thread finish alone (it only fills its own state). A thrown exception becomes a failed outcome.
     class SkyBakeJob
     {
     public:
@@ -180,18 +182,26 @@ namespace ModToolsSky
         ~SkyBakeJob();
         SkyBakeJob(const SkyBakeJob&) = delete;
         SkyBakeJob& operator=(const SkyBakeJob&) = delete;
-        void Cancel() { CancelFlag = true; }
-        float Progress() const { return ProgressValue.load(); }
-        bool Finished() const { return Done.load(); }
-        const BakeOutcome& Outcome() const { return Result; }   // read after Finished()
+        void Cancel() { Sh->Cancel = true; }
+        void Abandon() { Sh->Cancel = true; Sh->Abandoned = true; }   // at the end of the program: do not wait in the destructor
+        float Progress() const { return Sh->Progress.load(); }
+        bool Finished() const { return Sh->Done.load(); }
+        const BakeOutcome& Outcome() const { return Sh->Result; }   // read after Finished()
 
     private:
-        std::atomic<bool> CancelFlag{ false };
-        std::atomic<float> ProgressValue{ 0.0f };
-        std::atomic<bool> Done{ false };
-        BakeOutcome Result;
+        struct Shared
+        {
+            std::atomic<bool> Cancel{ false }, Abandoned{ false }, Done{ false };
+            std::atomic<float> Progress{ 0.0f };
+            BakeOutcome Result;
+        };
+        std::shared_ptr<Shared> Sh = std::make_shared<Shared>();
         std::thread Worker;
     };
+
+    // The cache folder's own entries are named sky-<state>-<16 hex> and skylight-<state>-v<n>, and only a folder GrayWolf stamped
+    // (.graywolf-sky-cache) is ever pruned: a foreign file beside them is never deleted.
+    bool IsCacheEntryId(const std::string& Id);
 
     // sky-bake-selftest
     int SelfTest(std::string& Failures);

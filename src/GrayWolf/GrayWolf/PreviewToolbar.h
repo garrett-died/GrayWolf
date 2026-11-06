@@ -16,6 +16,10 @@ namespace PreviewToolbar
 
     inline void Begin(float Width) { MaxWidth() = Width; }
 
+    // What an ImGui::Button / Theme::Pill with this label is wide, and an icon button
+    inline float ButtonWidth(const char* Label) { return ImGui::CalcTextSize(Label, nullptr, true).x + 2.0f * ImGui::GetStyle().FramePadding.x; }
+    inline float IconWidth() { return ImGui::GetFrameHeight(); }
+
     // The next item (NextWidth wide, Spacing after the last one) on this row when it fits, else it starts a new row.
     // Spacing below 0: ImGui's own.
     inline void SameLine(float Spacing, float NextWidth)

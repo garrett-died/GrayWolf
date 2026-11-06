@@ -139,23 +139,34 @@ namespace SkyLighting
     }
     void SetShotModeDefault(bool On) { g_ShotMode = On; }
 
+    // The search for the Mod Tools, on a thread of its own. Its state is shared with the thread (it lives as long as the thread runs); the destructor
+    // joins a finished search and lets a running one end alone, so neither a slow drive nor a new folder setting blocks the UI. Exceptions end it as
+    // "found nothing".
     struct Service::Discovery
     {
-        std::atomic<bool> Cancel{ false };
-        std::atomic<bool> Done{ false };
-        ModToolsSky::Catalog Result;
+        struct Shared
+        {
+            std::atomic<bool> Cancel{ false }, Done{ false };
+            ModToolsSky::Catalog Result;
+        };
+        std::shared_ptr<Shared> Sh = std::make_shared<Shared>();
         std::thread Worker;
+        std::atomic<bool>& Done = Sh->Done;
+        ModToolsSky::Catalog& Result = Sh->Result;
         explicit Discovery(ModToolsSky::LocateInput Input)
         {
-            Worker = std::thread([this, Input = std::move(Input)] {
-                Result = ModToolsSky::Discover(Input, &Cancel);
-                Done = true;
+            Worker = std::thread([Sh = Sh, Input = std::move(Input)] {
+                try { Sh->Result = ModToolsSky::Discover(Input, &Sh->Cancel); }
+                catch (...) { Sh->Result = ModToolsSky::Catalog(); }
+                Sh->Done = true;
             });
         }
         ~Discovery()
         {
-            Cancel = true;
-            if (Worker.joinable()) Worker.join();
+            Sh->Cancel = true;
+            if (!Worker.joinable()) return;
+            if (Sh->Done.load()) Worker.join();
+            else Worker.detach();
         }
     };
 
@@ -163,10 +174,18 @@ namespace SkyLighting
 
     Service::~Service()
     {
-        if (Disc) Disc->Cancel = true;
+        // at exit: everything is asked to stop, waited for 2 s in all, then the rest is let go (each thread owns its state)
         if (Job) Job->Cancel();
         for (auto& R : Retired) R->Cancel();
-        // the destructors join
+        for (int Waited = 0; Waited < 100; Waited++)
+        {
+            bool Running = Job && !Job->Finished();
+            for (const auto& R : Retired) Running = Running || !R->Finished();
+            if (!Running) break;
+            Sleep(20);
+        }
+        if (Job && !Job->Finished()) Job->Abandon();
+        for (auto& R : Retired) if (!R->Finished()) R->Abandon();
     }
 
     std::string Service::CacheDirOrDefault() const { return CacheDir.empty() ? ModToolsSky::SkyCacheDir() : CacheDir; }
@@ -191,6 +210,7 @@ namespace SkyLighting
         if (g_ShotMode) ShotMode = true;
         ModToolsSky::UseCacheForEnvironments(CacheDirOrDefault());
         Chosen.Env = L.Environment;
+        Applied = Chosen;
         Chosen.Fullbright = SettingsManager::GetSetting(kFullbrightKey, "false") == "true";
         ApplyFullbright(L, Chosen.Fullbright);
         LightState S;
@@ -221,8 +241,7 @@ namespace SkyLighting
 
     void Service::StartBake(LightState S)
     {
-        RetireBake();
-        Retired.clear();   // joined: a cancelled bake of the same sky shares its temporary folder, so it must be gone first (it stops at the next row)
+        RetireBake();   // the cancelled one ends on its own (its temporary folder is its own); the UI never waits for it
         const auto Src = St.Catalog.Sources.find(S);
         if (Src == St.Catalog.Sources.end()) return;
         ModToolsSky::BakeSettings Settings;
@@ -265,12 +284,24 @@ namespace SkyLighting
             if (Job->Finished())
             {
                 const ModToolsSky::BakeOutcome& Out = Job->Outcome();
-                if (Out.Ok && Chosen.Sky && Chosen.State == JobState) ApplyBakedSky(L, JobState, Out.Id, Out.LightId);
+                if (Out.Ok && Chosen.Sky && Chosen.State == JobState)
+                {
+                    ApplyBakedSky(L, JobState, Out.Id, Out.LightId);
+                    Applied = Chosen;
+                    SettingsManager::SetSetting(kStateKey, StateKey(JobState));   // remembered once it works, not when asked
+                }
                 else if (!Out.Ok && Out.Message != "cancelled")
                 {
+                    // the look on screen stays, the menu goes back to it, the state is greyed with the reason and is not remembered
                     St.Failed[JobState] = Out.Message;
                     HasRemembered = false;
-                    if (Chosen.Sky && Chosen.State == JobState) Chosen.Sky = false;   // the look it had stays
+                    if (Chosen.Sky && Chosen.State == JobState)
+                    {
+                        const bool Fullbright = Chosen.Fullbright;
+                        Chosen = Applied;
+                        Chosen.Fullbright = Fullbright;
+                    }
+                    SettingsManager::SetSetting(kStateKey, Applied.Sky ? StateKey(Applied.State) : "");
                 }
                 Job.reset();
                 St.Baking = false;
@@ -289,7 +320,6 @@ namespace SkyLighting
         Chosen.State = S;
         Chosen.Fullbright = false;
         ApplyFullbright(L, false);
-        SettingsManager::SetSetting(kStateKey, StateKey(S));
         SettingsManager::SetSetting(kFullbrightKey, "false");
         St.Failed.erase(S);
         if (Job && JobState == S) return;   // already being prepared
@@ -303,6 +333,7 @@ namespace SkyLighting
         Chosen.Sky = false;
         Chosen.Env = Id;
         Chosen.Fullbright = false;
+        Applied = Chosen;
         ApplyEnvironment(L, Id);
         ApplyFullbright(L, false);
         SettingsManager::SetSetting(kStateKey, "");
@@ -326,7 +357,8 @@ namespace SkyLighting
         if (Chosen.Sky) return ModToolsSky::StateName(Chosen.State);
         for (const auto& E : PreviewEnvironments())
             if (E.Id == L.Environment) return E.Name;
-        return L.Environment;
+        if (Applied.Sky) return ModToolsSky::StateName(Applied.State);   // a sky's gradient id is not a name
+        return L.Environment == kStudioEnvironment ? std::string("Studio sky") : L.Environment;
     }
 
     std::string Service::FoundLine() const
@@ -434,10 +466,11 @@ namespace SkyLighting
                 S.Configure(true, Cache.string());
                 S.Init(L);
                 S.PickState(LightState::Sunset, L);
-                if (SettingsManager::GetSetting(kStateKey, "") != "sunset") Fail("a picked state is remembered");
+                if (SettingsManager::GetSetting(kStateKey, "x") == "sunset") Fail("a state is remembered once it works, not when it is asked for");
                 if (L.Environment != StartEnv) Fail("the look stays until the bake is ready");
                 for (int I = 0; I < 3000 && S.Busy(); I++) { Sleep(10); S.Tick(L); }
                 S.Tick(L);
+                if (SettingsManager::GetSetting(kStateKey, "") != "sunset") Fail("a picked state is remembered");
                 if (L.BackdropEnvironment.rfind("sky-sunset-", 0) != 0 || L.Environment != ModToolsSky::LightId(LightState::Sunset) || !L.Sun.On) Fail("a finished bake sets the sky behind, the state's light and the sun");
                 else
                 {
@@ -509,6 +542,53 @@ namespace SkyLighting
             if (std::fabs(Q[1] + 1.0f) > 1e-5f || !Near(Q[2], 0.5f)) Fail("a turned sun: -Y, height kept");
             const auto Z = TurnedSunDirection(Sun, 0.0f);
             if (!Near(Z[0], 1.0f) || !Near(Z[1], 0.0f)) Fail("no turn keeps the sun");
+        }
+        {
+            // a bake that fails: the look stays, the menu goes back to what is on screen, the state is greyed with why and is not remembered
+            const fs::path Cache = fs::temp_directory_path() / "graywolf-ui-selftest-sky-fail";
+            std::error_code Ec;
+            fs::remove_all(Cache, Ec);
+            SettingsManager::SetSetting(kStateKey, "");
+            ModToolsSky::Catalog Broken = ModToolsSky::DemoCatalog();
+            ModToolsSky::SkySource Bad;
+            Bad.State = LightState::Day;
+            Bad.Kind = ModToolsSky::SourceKind::CubeFaces;
+            for (int F = 0; F < 6; F++) Bad.Faces.push_back((Cache / ("no-such-" + std::to_string(F) + ".exr")).string());
+            Broken.Sources[LightState::Day] = Bad;
+            PreviewLighting L;
+            {
+                Service S;
+                S.SetShotMode();
+                S.Configure(true, Cache.string());
+                S.Init(L);
+                S.InjectCatalogForTest(Broken);
+                S.PickState(LightState::Sunset, L);
+                for (int I = 0; I < 3000 && S.Busy(); I++) { Sleep(10); S.Tick(L); }
+                S.Tick(L);
+                const std::string Shown = L.BackdropEnvironment;
+                S.PickState(LightState::Day, L);
+                for (int I = 0; I < 3000 && S.Busy(); I++) { Sleep(10); S.Tick(L); }
+                S.Tick(L);
+                const Menu M = S.GetMenu();
+                if (L.BackdropEnvironment != Shown || Shown.empty()) Fail("a failed bake keeps the look on screen");
+                if (!S.Current().Sky || S.Current().State != LightState::Sunset || !M.States[2].Checked || M.States[1].Checked) Fail("a failed bake: the menu goes back to what is shown");
+                if (M.States[1].Enabled || M.States[1].Reason.find("could not be prepared") == std::string::npos) Fail("a failed bake: the state is greyed with the reason");
+                if (S.Label(L) != "Sunset") Fail(std::string("a failed bake: the label is the sky shown, not a cache id: ") + S.Label(L));
+                if (SettingsManager::GetSetting(kStateKey, "") != "sunset") Fail("a failed state is not remembered");
+            }
+            SettingsManager::SetSetting(kStateKey, "day");   // a remembered state that now fails: forgotten at that start
+            {
+                PreviewLighting L2;
+                Service S;
+                S.SetShotMode();
+                S.Configure(true, Cache.string());
+                S.Init(L2);
+                S.InjectCatalogForTest(Broken);
+                for (int I = 0; I < 3000 && (I < 2 || S.Busy()); I++) { Sleep(10); S.Tick(L2); }
+                S.Tick(L2);
+                if (SettingsManager::GetSetting(kStateKey, "x") != "") Fail("a remembered state that fails is forgotten, not retried at every start");
+            }
+            fs::remove_all(Cache, Ec);
         }
         char Line[96];
         std::snprintf(Line, sizeof(Line), "sky lighting menu ok=%d\n", Ok ? 1 : 0);

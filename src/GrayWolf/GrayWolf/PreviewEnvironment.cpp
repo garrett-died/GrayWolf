@@ -525,7 +525,7 @@ bool BakeProceduralEnvironment(const ProceduralSky& Sky, float Scale, const std:
                 }
             }
         std::error_code Ec;
-        const fs::path Temp = File.string() + ".tmp";   // written beside and renamed: never a half file under the real name
+        const fs::path Temp = File.string() + "." + std::to_string(GetCurrentProcessId()) + ".tmp";   // written beside, under this process's name, and renamed: never a half file under the real name, and two GrayWolfs cannot fail each other
         if (FAILED(SaveToDDSFile(Img.GetImages(), Img.GetImageCount(), Img.GetMetadata(), DDS_FLAGS_NONE, Temp.c_str()))) return false;
         fs::rename(Temp, File, Ec);
         return !Ec;

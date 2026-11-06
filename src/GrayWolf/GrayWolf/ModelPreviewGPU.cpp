@@ -1031,7 +1031,9 @@ void PreviewRenderer::Render(ID3D11DeviceContext* Ctx, const PreviewGpuMesh* Mes
     Ctx->ClearRenderTargetView(T.HdrRTV.Get(), Clear);
     Ctx->ClearDepthStencilView(T.DSV.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
     // the environment behind the model, over an opaque background only (a transparent capture keeps its alpha)
-    if (L.Backdrop && Background[3] >= 1.0f) P->DrawBackdrop(Ctx, Cam, T, L);
+    // Fullbright as HydraX draws it (Mesh.hlsl:565, :573): a Mod Tools sky stays, as it is; with no sky the background is the flat colour
+    const bool Opaque = std::span<const float, 4>(Background, 4)[3] >= 1.0f;
+    if (L.Backdrop && Opaque && (!L.Fullbright || !L.BackdropEnvironment.empty())) P->DrawBackdrop(Ctx, Cam, T, L);
 
     if (Mesh && Mesh->Valid)
     {

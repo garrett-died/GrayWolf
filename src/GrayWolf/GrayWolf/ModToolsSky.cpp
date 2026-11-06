@@ -3,6 +3,7 @@
 #include "ModToolsSky.h"
 
 #include "ExrReader.h"
+#include "DirectXTex.h"
 #include "Strings.h"
 
 #include <algorithm>
@@ -458,6 +459,21 @@ namespace
         return S.size() >= Suffix.size() && EqualsNoCase(S.substr(S.size() - Suffix.size()), Suffix);
     }
 
+    // Absolute stays under Root (both canonical, case-insensitive) and is not a UNC or device path
+    bool InsideRoot(const std::string& Root, const fs::path& Absolute)
+    {
+        const std::string Text = Absolute.string();
+        if (Text.rfind("\\\\", 0) == 0 || Text.rfind("//", 0) == 0) return false;   // \\server\share, \\?\ and \\.\ forms
+        std::error_code Ec;
+        const fs::path R = fs::weakly_canonical(fs::path(Strings::ToUnicodeString(Root)), Ec);
+        if (Ec) return false;
+        const fs::path A = fs::weakly_canonical(Absolute, Ec);
+        if (Ec) return false;
+        std::string Rs = Lower(R.lexically_normal().generic_string()), As = Lower(A.lexically_normal().generic_string());
+        while (!Rs.empty() && Rs.back() == '/') Rs.pop_back();
+        return !Rs.empty() && (As == Rs || As.rfind(Rs + "/", 0) == 0);
+    }
+
     // The files of one state; false with Failure when nothing exists
     bool ResolveFiles(const std::string& Root, LightState State, const std::string& Model, const std::string& Material, const std::string& Image,
                       const std::string& BaseImage, std::vector<std::string>& Notes, SkySource& Out, std::string& Failure)
@@ -470,7 +486,21 @@ namespace
         Out.Material = Material;
         Out.Image = Image;
 
+        bool Rejected = false;
         if (!Trim(BaseImage).empty())
+        {
+            std::string Norm = BaseImage;
+            std::replace(Norm.begin(), Norm.end(), '/', '\\');
+            const bool Rooted = Norm.size() > 1 && (Norm[1] == ':' || Norm[0] == '\\');
+            const fs::path Absolute = Rooted ? fs::path(Norm) : fs::path(Strings::ToUnicodeString(Root)) / Norm;
+            // a link of the GDT is data from the Mod Tools folder, not a license to read elsewhere: no UNC, and the canonical path stays under the root
+            if (!InsideRoot(Root, Absolute))
+            {
+                Rejected = true;
+                Notes.push_back("baseImage " + BaseImage + " is outside the Mod Tools folder: not used");
+            }
+        }
+        if (!Trim(BaseImage).empty() && !Rejected)
         {
             std::string Norm = BaseImage;
             std::replace(Norm.begin(), Norm.end(), '/', '\\');
@@ -524,7 +554,8 @@ namespace
             Out.Notes = Notes;
             return true;
         }
-        Failure = std::string("the ") + StateName(State) + " sky is missing the file " + (FirstMissing.empty() ? *Missing : FirstMissing);
+        Failure = Rejected ? std::string("the ") + StateName(State) + " sky's image points outside the Mod Tools folder (" + BaseImage + "), so it was not used"
+                           : std::string("the ") + StateName(State) + " sky is missing the file " + (FirstMissing.empty() ? *Missing : FirstMissing);
         return false;
     }
 }
@@ -788,9 +819,39 @@ namespace
 {
     struct CacheEntry { std::string Id; int64_t Bytes = 0; fs::file_time_type Time{}; };
 
+    constexpr const char* kStampName = ".graywolf-sky-cache";
+
+    // A folder GrayWolf made (or stamped) for its sky cache: nothing is ever deleted from any other
+    bool Stamped(const fs::path& Dir)
+    {
+        std::error_code Ec;
+        return fs::exists(Dir / kStampName, Ec);
+    }
+
+    void EnsureStamp(const fs::path& Dir)
+    {
+        std::error_code Ec;
+        fs::create_directories(Dir, Ec);
+        if (Stamped(Dir)) return;
+        std::ofstream(Dir / kStampName) << "GrayWolf's BO3 sky cache: baked skies only; entries here may be deleted to keep the folder small.\n";
+    }
+
+    // The gradient light of a state, as BakeProceduralEnvironment writes it: both files, cubes of the sizes and format it makes
+    bool LightCubesValid(const fs::path& Dir, const std::string& Id)
+    {
+        const auto Ok = [&](const char* Kind, size_t Size, size_t Mips) {
+            DirectX::TexMetadata Meta{};
+            const fs::path File = Dir / (Id + Kind);
+            return SUCCEEDED(DirectX::GetMetadataFromDDSFile(File.c_str(), DirectX::DDS_FLAGS_NONE, Meta)) && Meta.IsCubemap() && Meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+                   Meta.width == Size && Meta.height == Size && Meta.mipLevels == Mips;
+        };
+        return Ok("_radiance.dds", 64, 7) && Ok("_irradiance.dds", 32, 1);
+    }
+
     std::vector<CacheEntry> Entries(const fs::path& Dir)
     {
         std::map<std::string, CacheEntry> ById;
+        if (!Stamped(Dir)) return {};
         std::error_code Ec;
         for (auto It = fs::directory_iterator(Dir, Ec); !Ec && It != fs::directory_iterator(); It.increment(Ec))
         {
@@ -801,6 +862,7 @@ namespace
             {
                 const std::string S = Suffix;
                 if (Name.size() <= S.size() || Name.compare(Name.size() - S.size(), S.size(), S) != 0) continue;
+                if (!IsCacheEntryId(Name.substr(0, Name.size() - S.size()))) continue;   // not ours: never listed, so never deleted
                 CacheEntry& E = ById[Name.substr(0, Name.size() - S.size())];
                 E.Id = Name.substr(0, Name.size() - S.size());
                 E.Bytes += (int64_t)It->file_size(E2);
@@ -812,6 +874,24 @@ namespace
         for (auto& [Id, E] : ById) Out.push_back(E);
         return Out;
     }
+}
+
+bool IsCacheEntryId(const std::string& Id)
+{
+    const auto Digits = [](const std::string& S, size_t From, size_t Count, bool Hex) {
+        if (From + Count > S.size()) return false;
+        for (size_t I = From; I < From + Count; I++)
+            if (!(std::isdigit((unsigned char)S[I]) || (Hex && S[I] >= 'a' && S[I] <= 'f'))) return false;
+        return true;
+    };
+    for (LightState S : kStates)
+    {
+        const std::string State = Lower(StateName(S));
+        const std::string Sky = "sky-" + State + "-", Light = "skylight-" + State + "-v";
+        if (Id.rfind(Sky, 0) == 0 && Id.size() == Sky.size() + 16 && Digits(Id, Sky.size(), 16, true)) return true;
+        if (Id.rfind(Light, 0) == 0 && Id.size() > Light.size() && Digits(Id, Light.size(), Id.size() - Light.size(), false)) return true;
+    }
+    return false;
 }
 
 int64_t PruneCache(const std::string& CacheDir, int64_t CapBytes, const std::string& KeepId, const std::string& AlsoKeepId)
@@ -833,6 +913,8 @@ int64_t PruneCache(const std::string& CacheDir, int64_t CapBytes, const std::str
     return Total;
 }
 
+namespace { std::atomic<unsigned> g_TempCounter{ 0 }; }   // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): numbers a bake's temporary folder
+
 BakeOutcome BakeState(const SkySource& Source, const BakeSettings& Settings, const std::atomic<bool>* Cancel, const std::function<void(float)>& Progress)
 {
     BakeOutcome Out;
@@ -847,11 +929,14 @@ BakeOutcome BakeState(const SkySource& Source, const BakeSettings& Settings, con
     }
 
     std::error_code Ec;
+    EnsureStamp(Cache);   // the folder is ours from here: only entries of our own names are ever deleted from it
     // the model's light for the state: an analytic gradient, beside the sky (HydraX lights the model from it, not from the sky image)
     Out.LightId = LightId(Source.State);
     const fs::path LightRad = Cache / (Out.LightId + "_radiance.dds"), LightIrr = Cache / (Out.LightId + "_irradiance.dds");
-    if (!fs::exists(LightRad, Ec) || !fs::exists(LightIrr, Ec))
+    if (!LightCubesValid(Cache, Out.LightId))   // missing, cut short or foreign: made again
     {
+        fs::remove(LightRad, Ec);
+        fs::remove(LightIrr, Ec);
         std::string LightReport;
         if (!BakeProceduralEnvironment(ProceduralSkyOf(Source.State), 1.0f / kPreviewIblScale, Dir, Out.LightId, LightReport))
         {
@@ -886,7 +971,7 @@ BakeOutcome BakeState(const SkySource& Source, const BakeSettings& Settings, con
     Report(0.3f);
 
     // baked beside the cache and moved in, so a crash or a cancel leaves no half entry
-    const fs::path Temp = Cache / ("tmp-" + Out.Id);
+    const fs::path Temp = Cache / ("tmp-" + Out.Id + "-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(++g_TempCounter));   // its own: no other bake or GrayWolf shares it
     fs::create_directories(Temp, Ec);
     EnvironmentBakeControl Control;
     Control.Cancel = Cancel;
@@ -932,17 +1017,33 @@ BakeOutcome BakeState(const SkySource& Source, const BakeSettings& Settings, con
 
 SkyBakeJob::SkyBakeJob(const SkySource& Source, const BakeSettings& Settings)
 {
-    Worker = std::thread([this, Source, Settings] {
-        Result = BakeState(Source, Settings, &CancelFlag, [this](float V) { ProgressValue = V; });
-        ProgressValue = 1.0f;
-        Done = true;
+    Worker = std::thread([Sh = Sh, Source, Settings] {
+        try
+        {
+            Sh->Result = BakeState(Source, Settings, &Sh->Cancel, [Sh](float V) { Sh->Progress = V; });
+        }
+        catch (const std::exception& E)
+        {
+            Sh->Result = BakeOutcome();
+            Sh->Result.Message = std::string("the bake failed: ") + E.what();
+        }
+        catch (...)
+        {
+            Sh->Result = BakeOutcome();
+            Sh->Result.Message = "the bake failed";
+        }
+        Sh->Progress = 1.0f;
+        Sh->Done = true;
     });
 }
 
 SkyBakeJob::~SkyBakeJob()
 {
-    CancelFlag = true;
-    if (Worker.joinable()) Worker.join();
+    Sh->Cancel = true;
+    if (!Worker.joinable()) return;
+    for (int Waited = 0; Waited < 25 && !Sh->Abandoned.load() && !Sh->Done.load(); Waited++) Sleep(20);
+    if (Sh->Done.load()) Worker.join();
+    else Worker.detach();   // it holds the shared state and fills only that
 }
 }
 

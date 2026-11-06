@@ -88,7 +88,7 @@ namespace Exr
         int64_t MaxPixels = int64_t(1) << 27;
         int MaxHeaderBytes = 1 << 20;
         int MaxChannels = 64;
-        int64_t MaxFileBytes = int64_t(1) << 30; // LoadFile only
+        int64_t MaxFileBytes = int64_t(384) << 20; // LoadFile only: the largest stock sky is 340 MB (infection_fold_skybox_01_ll.exr)
     };
 
     struct ReadOptions

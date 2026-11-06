@@ -120,6 +120,8 @@ namespace SkyLighting
         Status Snapshot() const;
         // ui-shot: the folder setting set in memory
         void SetFolder(const std::string& Folder);
+        // The self-test's catalogue in place of the discovered one
+        void InjectCatalogForTest(const ModToolsSky::Catalog& C) { St.Catalog = C; St.Looking = false; }
 
     private:
         struct Discovery;
@@ -140,7 +142,8 @@ namespace SkyLighting
         std::unique_ptr<Discovery> Disc;
         std::unique_ptr<ModToolsSky::SkyBakeJob> Job;
         ModToolsSky::LightState JobState = ModToolsSky::LightState::Day;
-        std::vector<std::unique_ptr<ModToolsSky::SkyBakeJob>> Retired;   // cancelled, finishing
+        std::vector<std::unique_ptr<ModToolsSky::SkyBakeJob>> Retired;   // cancelled, finishing: collected as they end, never waited for
+        Choice Applied;   // the look on screen (a pick pending or failed is not it)
     };
 
     // ui-selftest

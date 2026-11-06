@@ -37,7 +37,8 @@ struct FxPreviewPanel::Impl
     float Speed = 1.0f;
     // the root effect's elements switched off in the Elements menu (by their index in Elements)
     std::set<size_t> Off;
-    uint64_t OffFor = ~0ull;   // the load (Wanted: counted up, never repeated) they belong to; a new scene may reuse an address, not this
+    uint64_t SceneId = 0;       // the load (Wanted when it was asked: counted up, never repeated) of the scene shown, set when that scene arrives
+    uint64_t OffFor = ~0ull;    // the scene (SceneId) they belong to; a new scene may reuse an address, not this
     uint32_t Seed = 1;
     // camera
     float Yaw = 0.9f, Pitch = 0.32f, DistScale = 1.0f, Pan[3] = {};
@@ -81,6 +82,7 @@ struct FxPreviewPanel::Impl
             if (It->first == Wanted)
             {
                 Scene = L.Scene;
+                SceneId = It->first;
                 Error = L.Error;
                 Yaw = 0.9f, Pitch = 0.32f, DistScale = 1.0f, Pan[0] = Pan[1] = Pan[2] = 0;
                 Restart();
@@ -237,7 +239,7 @@ void FxPreviewPanel::Draw()
     ImGui::SameLine();
     {
         // the Elements menu: switch the root effect's elements off and on to see what each one draws
-        if (I.OffFor != I.Wanted) { I.Off.clear(); I.OffFor = I.Wanted; }
+        if (I.OffFor != I.SceneId) { I.Off.clear(); I.OffFor = I.SceneId; }
         const auto& Elements = S.Sim->Root().Elements;
         char Title[48];
         std::snprintf(Title, sizeof(Title), I.Off.empty() ? "Elements" : "Elements (%zu hidden)", I.Off.size());

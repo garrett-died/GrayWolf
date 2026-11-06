@@ -68,9 +68,10 @@ and that is what the self-test compares.
 
 - Whether the Mod Tools' own faces and lat-longs follow this table in the game: **unknown** until compared with Apex or the game by
   eye (a mirrored or turned sky would show against the sun's direction: the preset sun is at the pitch and yaw of `LightingPreset`).
-- The preset's sun direction versus the sky's visible sun: HydraX has a per-state yaw offset, 0 for all four, for that comparison.
-  Not ported (not needed until the sky is drawn behind a model).
-- The sun disc and Night's strength: see "U9b" below; the 1000 cut and the 0.06 / 0.18 factors are gone.
+- The preset's sun direction versus the sky's visible sun: HydraX has a per-state yaw offset, 0 for all four, and none for pitch; GrayWolf
+  has neither (see "U9b": Morning's disc is 8 degrees lower than the preset's sun, an asset difference).
+- The sun disc and Night: see "U9b" below. HydraX's rules are ported there: the backdrop at TargetMid 0.18 (Night 0.06) over the exposure estimate with
+  the 1000 cut only in that estimate, the model lit by the probe-colour gradient.
 
 ## Looked at in the previewer (U9, with the first bake; the Night and 1000-cut remarks are superseded by U9b below)
 

@@ -335,12 +335,16 @@ namespace ShellUi
                 }
             }
 
-            void DrawPath(const Entry& E)
+            void DrawPath(const Entry& E, bool Locked)
             {
                 static std::map<std::string, std::array<char, 1024>> Buffers;
                 auto& Buf = Buffers[E.Key];
                 const std::string Id = std::string("settings.") + E.Key;
-                if (std::string Picked; UiAsync::Picked(Id, Picked)) SettingsManager::SetSetting(E.Key, Picked);
+                if (std::string Picked; UiAsync::Picked(Id, Picked))   // a dialog that ends during a run is not allowed to change what the run reads
+                {
+                    if (Locked) UiAsync::Notify(std::string("The ") + E.Label + " was not changed: an export or a load is running", true);
+                    else SettingsManager::SetSetting(E.Key, Picked);
+                }
                 if (!ImGui::IsAnyItemActive()) SetBuf(Buf.data(), Buf.size(), SettingsManager::GetSetting(E.Key, ""));
                 ImGui::TextUnformatted(E.Label);
                 ImGui::SetNextItemWidth(ImGui::GetFontSize() * 30.0f);
@@ -554,7 +558,7 @@ namespace ShellUi
                     break;
                 }
                 case Kind::Choice: DrawChoice(E); break;
-                case Kind::Path: DrawPath(E); break;
+                case Kind::Path: DrawPath(E, Lock); break;
                 case Kind::Custom:
                     if (std::string(E.Key) != "@languages")   // the languages control carries its own caption
                     {

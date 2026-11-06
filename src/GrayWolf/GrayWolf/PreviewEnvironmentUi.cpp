@@ -118,7 +118,7 @@ void DrawPreviewEnvironmentControls(PreviewLighting& L, SkyLighting::Service& Sk
         }
 
     // ---- the sky chip: the sky behind the model, or a background colour
-    PreviewToolbar::SameLine(Em * 0.3f, Em * 3.0f);
+    PreviewToolbar::SameLine(Em * 0.3f, PreviewToolbar::ButtonWidth("Sky"));
     if (Theme::Pill("Sky", L.Backdrop)) { L.Backdrop = !L.Backdrop; Save(L); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("The sky seen behind the model. Off: a plain background colour (screenshots stay transparent either way)");
     if (!L.Backdrop)
@@ -147,7 +147,7 @@ void DrawPreviewEnvironmentControls(PreviewLighting& L, SkyLighting::Service& Sk
         }
     }
 
-    PreviewToolbar::SameLine(ImGui::GetFontSize() * 0.2f, ImGui::GetFontSize() * 2.2f);
+    PreviewToolbar::SameLine(ImGui::GetFontSize() * 0.2f, PreviewToolbar::IconWidth());
     if (Theme::IconButton("envsettings", Theme::Icon::Sliders, "Environment turn and strength, backdrop, bloom", L.Bloom))
         ImGui::OpenPopup("envpopup");
     if (ImGui::BeginPopup("envpopup"))

@@ -162,21 +162,21 @@ namespace ShellUi
             SettingsManager::SetSetting("preview_specular", Lighting.Specular ? "true" : "false");
         };
         const auto Glyph = [](const char* G) { ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("%s", G); ImGui::SameLine(); };
-        PreviewToolbar::SameLine(Em * 0.6f, Em * 6.2f);
+        PreviewToolbar::SameLine(Em * 0.6f, ImGui::CalcTextSize(Theme::Icon::Exposure).x + ImGui::GetStyle().ItemSpacing.x + Em * 4.5f);
         Glyph(Theme::Icon::Exposure);
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.5f);
         ImGui::SliderFloat("##exposure", &Lighting.Exposure, -4.0f, 4.0f, "%+.1f");
         if (ImGui::IsItemDeactivatedAfterEdit()) SaveLighting();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exposure in stops (double-click to type, right-click resets)");
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { Lighting.Exposure = 0.0f; SaveLighting(); }
-        PreviewToolbar::SameLine(-1.0f, Em * 6.2f);
+        PreviewToolbar::SameLine(-1.0f, ImGui::CalcTextSize(Theme::Icon::Lights).x + ImGui::GetStyle().ItemSpacing.x + Em * 4.5f);
         Glyph(Theme::Icon::Lights);
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.5f);
         ImGui::SliderFloat("##lights", &Lighting.Lights, 0.0f, 3.0f, "%.2fx");
         if (ImGui::IsItemDeactivatedAfterEdit()) SaveLighting();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Strength of the three lights; the environment light stays (right-click resets)");
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { Lighting.Lights = PreviewLighting{}.Lights; SaveLighting(); }
-        PreviewToolbar::SameLine(Em * 0.4f, Em * 5.0f);
+        PreviewToolbar::SameLine(Em * 0.4f, PreviewToolbar::ButtonWidth("Specular"));
         // no icon says "specular" plainly: the word, as a toggle
         if (Theme::Pill("Specular", Lighting.Specular))
         {
@@ -188,7 +188,7 @@ namespace ShellUi
         DrawPreviewEnvironmentControls(Lighting, V.Sky, V.Background);   // the Lighting menu, the sky chip, the environment's turn and strength, bloom
         if (DrawPreviewShadowControls(Lighting.Shadow)) SavePreviewShadowSettings(Lighting.Shadow);
         // ambient occlusion, anti-aliasing, still frames (PreviewPost.h), in a popup
-        PreviewToolbar::SameLine(Em * 0.4f, Em * 2.2f);
+        PreviewToolbar::SameLine(Em * 0.4f, PreviewToolbar::IconWidth());
         if (Theme::IconButton("quality", Theme::Icon::Sliders, "Quality: ambient occlusion, anti-aliasing, still frames")) ImGui::OpenPopup("##quality");
         if (ImGui::BeginPopup("##quality"))
         {
@@ -206,7 +206,7 @@ namespace ShellUi
             ImGui::TextDisabled("%s", Status.c_str());
             if (!File.empty())
             {
-                PreviewToolbar::SameLine(-1.0f, Em * 8.0f);
+                PreviewToolbar::SameLine(-1.0f, PreviewToolbar::ButtonWidth("Show in folder"));
                 if (ImGui::SmallButton("Show in folder")) UiAsync::OpenInShell(File, true);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open its folder with the file selected");
             }

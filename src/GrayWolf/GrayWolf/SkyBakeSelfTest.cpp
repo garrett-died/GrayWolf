@@ -374,6 +374,84 @@ namespace
         T.Check(Found.Found && Found.Sources.size() == 3, "Discover finds the setting's root and resolves it");
     }
 
+    // A baseImage that is rooted outside the Mod Tools, UNC, or climbs out with .. is not used (a note on the state); one inside is
+    void ImageLinkSafety(Harness& T, const fs::path& Tmp)
+    {
+        const fs::path Outside = Tmp / "outside-sky";
+        Touch(Outside / "out_ll.exr");
+        const auto Resolved = [&](const std::string& BaseImage, const std::string& Tag) {
+            std::string Escaped;   // the GDT writes a backslash as two
+            for (const char Ch : BaseImage) { if (Ch == '\\') Escaped += '\\'; Escaped += Ch; }
+            const fs::path Root = Tmp / ("link-tools-" + Tag);
+            Touch(Root / "source_data" / "ssi.gdt", Gdt("default_day", "ssi.gdf", "skyboxmodel", "link_sky"));
+            Touch(Root / "model_export" / "t7_skybox.gdt", Gdt("link_sky", "xmodel.gdf", "skinOverride", "mtl_x mtl_link") + Gdt("mtl_link", "material.gdf", "colorMap", "img_link") +
+                                                           Gdt("img_link", "image.gdf", "baseImage", Escaped));
+            Touch(Root / "model_export" / "t7_skybox" / "inside" / "in_ll.exr");
+            Location Where;
+            Where.Root = Root.string();
+            Where.Source = "setting";
+            return Resolve(Where);
+        };
+        std::string Esc = Outside.string();
+        for (char& C : Esc) if (C == '\\') C = '/';
+        const struct { const char* Tag; std::string Value; bool Allowed; } Cases[] = {
+            { "inside", "model_export/t7_skybox/inside/in_ll.exr", true },
+            { "rooted", Esc + "/out_ll.exr", false },
+            { "unc", "\\\\server\\share\\out_ll.exr", false },
+            { "dotdot", "model_export/../../outside-sky/out_ll.exr", false },
+            { "devicepath", "\\\\?\\" + Outside.string() + "\\out_ll.exr", false },
+        };
+        for (const auto& C : Cases)
+        {
+            const Catalog Cat = Resolved(C.Value, C.Tag);
+            const auto Day = Cat.Sources.find(LightState::Day);
+            if (C.Allowed)
+                T.Check(Day != Cat.Sources.end() && Day->second.Kind == SourceKind::LatLong, std::string("link safety: a baseImage inside the Mod Tools is used (") + C.Tag + ")");
+            else
+            {
+                const bool Used = Day != Cat.Sources.end() && Day->second.Kind == SourceKind::LatLong && Day->second.LatLong.find("outside-sky") != std::string::npos;
+                const auto Why = Cat.Missing.find(LightState::Day);
+                T.Check(!Used && Why != Cat.Missing.end() && Why->second.find("outside the Mod Tools folder") != std::string::npos,
+                        std::string("link safety: a ") + C.Tag + " baseImage is not used and the state says why", Why != Cat.Missing.end() ? Why->second : "(used or no note)");
+            }
+        }
+    }
+
+    // Only entries of our own names, in a folder we stamped, are ever deleted
+    void CacheOwnership(Harness& T, const fs::path& Tmp)
+    {
+        const fs::path Dir = Tmp / "owned-cache";
+        std::error_code Ec;
+        fs::create_directories(Dir, Ec);
+        Touch(Dir / "foreign_radiance.dds", "not ours");
+        Touch(Dir / "sky-day-0123456789abcdef_radiance.dds", "looks like ours, but the folder is not stamped");
+        PruneCache(Dir.string(), 0, "");
+        T.Check(fs::exists(Dir / "foreign_radiance.dds", Ec) && fs::exists(Dir / "sky-day-0123456789abcdef_radiance.dds", Ec), "cache: nothing is deleted from a folder GrayWolf did not stamp");
+        SkySource A;
+        A.State = LightState::Day;
+        A.Demo = true;
+        A.Kind = SourceKind::LatLong;
+        BakeSettings S;
+        S.CacheDir = Dir.string();
+        S.Size = 16;
+        S.MaxFace = 16;
+        const BakeOutcome Out = BakeState(A, S, nullptr, nullptr);
+        T.Check(Out.Ok && fs::exists(Dir / ".graywolf-sky-cache", Ec), "cache: a baked folder is stamped", Out.Message);
+        Touch(Dir / "other-tool_radiance.dds", "foreign");
+        Touch(Dir / "sky-bogus-0123_radiance.dds", "a name that is not ours");
+        PruneCache(Dir.string(), 0, "");
+        T.Check(fs::exists(Dir / "other-tool_radiance.dds", Ec) && fs::exists(Dir / "sky-bogus-0123_radiance.dds", Ec) && fs::exists(Dir / "foreign_radiance.dds", Ec),
+                "cache: a stamped folder's foreign files are never deleted, even over a cap of 0");
+        T.Check(IsCacheEntryId("sky-night-0123456789abcdef") && IsCacheEntryId("skylight-day-v1") && !IsCacheEntryId("sky-night-0123") && !IsCacheEntryId("skylight-day-vx") &&
+                    !IsCacheEntryId("foreign") && !IsCacheEntryId("sky-day-0123456789ABCDEF"),
+                "cache: only our own names are entries");
+        // a cut-short light cube is made again
+        const fs::path Light = Dir / (LightId(LightState::Day) + "_radiance.dds");
+        { std::ofstream(Light, std::ios::binary | std::ios::trunc) << "cut"; }
+        const BakeOutcome Again = BakeState(A, S, nullptr, nullptr);
+        T.Check(Again.Ok && fs::file_size(Light, Ec) > 1000, "cache: a bad light cube is baked again", Again.Message);
+    }
+
     void Axes(Harness& T)
     {
         // One distinct colour per Mod Tools face: each Direct3D face must show the face that looks along its axis
@@ -471,7 +549,7 @@ namespace
         T.Check(!Seen.empty() && std::is_sorted(Seen.begin(), Seen.end()) && Seen.back() == 1.0f, "bake: progress runs up to 1");
         size_t Strangers = 0;
         for (auto It = fs::directory_iterator(Cache, Ec); !Ec && It != fs::directory_iterator(); It.increment(Ec))
-            if (It->path().extension() != ".dds") Strangers++;
+            if (It->path().extension() != ".dds" && It->path().filename() != ".graywolf-sky-cache") Strangers++;   // the stamp is ours
         T.Check(Strangers == 0, "bake: the cache holds only the baked cubes (no temp folder, no source pixels)", std::to_string(Strangers));
 
         const BakeOutcome Second = BakeState(A, S, nullptr, nullptr);
@@ -517,7 +595,7 @@ namespace
         const BakeOutcome Stopped = BakeState(A, S2, &Cancel, nullptr);
         size_t Left2 = 0;
         for (auto It = fs::recursive_directory_iterator(Cache2, Ec); !Ec && It != fs::recursive_directory_iterator(); It.increment(Ec))
-            if (It->is_regular_file(Ec) && It->path().filename().string().rfind("skylight-", 0) != 0) Left2++;   // the state's gradient light is whole or absent, it is not the sky
+            if (It->is_regular_file(Ec) && It->path().filename().string().rfind("skylight-", 0) != 0 && It->path().filename() != ".graywolf-sky-cache") Left2++;   // the state's gradient light is whole or absent, it is not the sky
         T.Check(!Stopped.Ok && Stopped.Message == "cancelled" && Left2 == 0, "bake: a cancelled bake reports it and leaves no sky file", Stopped.Message + " files=" + std::to_string(Left2));
 
         // A job on its own thread, cancelled by its destructor before it finishes, then one allowed to finish
@@ -565,6 +643,8 @@ int SelfTest(std::string& Failures)
     Chain(T, Tmp);
     Axes(T);
     BakeAndCache(T, Tmp);
+    ImageLinkSafety(T, Tmp);
+    CacheOwnership(T, Tmp);
 
     fs::remove_all(Tmp, Ec);
     return T.Failed;

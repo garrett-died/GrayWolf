@@ -55,6 +55,8 @@ namespace ShellUi
         // record, outside quotes. Stats (optional) says what was cut.
         static std::vector<std::vector<std::string>> ParseDelimited(const std::string& Text, char& Delimiter, size_t MaxRows = 50000, ParseStats* Stats = nullptr);
         static bool SelfTest(std::string& Report);
+        // At the end of the shell: the one reading worker is asked to stop and waited for a little (2 s), then let go to finish alone
+        static void Shutdown();
 
     private:
         // One built document: immutable once shown, shared with the cache
@@ -81,6 +83,12 @@ namespace ShellUi
             std::shared_ptr<const Doc> Result;
         };
         struct Kept { std::string Path; std::shared_ptr<const Doc> D; };
+        // One file to read; the worker keeps only the latest request, a newer one replaces an older that was not started
+        struct Job { std::string Path, Extension; std::shared_ptr<const Doc> Kept; std::shared_ptr<Pending> P; };
+        struct WorkerState;
+        static std::shared_ptr<WorkerState> Worker();
+        static void Submit(Job J);
+        static void RunJob(const Job& J);
         static std::shared_ptr<const Doc> Build(const std::string& Extension, std::string Bytes, size_t FileBytes, bool FileCut);
         void Poll() const;
 

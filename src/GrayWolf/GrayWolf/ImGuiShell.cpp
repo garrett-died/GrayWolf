@@ -280,6 +280,7 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
 
     S.Catalog.Stop();
     UiAsync::Shutdown();
+    ShellUi::TextViewer::Shutdown();   // its reading worker: waited for a little, then let go
     GameBadges::Shutdown();   // its install lookup is joined, not left to run into the exit
 
     S.Assets.Grid.reset();   // its workers stop before the device goes

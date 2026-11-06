@@ -266,7 +266,7 @@
     <ClCompile Include="ImGuiShell*.cpp" />
   </ItemGroup>
   <ItemGroup Condition="'$(Configuration)'=='Dev'">
-    <!-- test hooks (environment variables the exit and window tests set) exist in Dev and DevAsan builds only -->
+    <!-- test hooks (environment variables the exit and window tests set) exist in the Dev configuration only (DevAsan is Dev with AddressSanitizer), never in Release -->
     <ClCompile Update="ImGuiShell.GameBadges.cpp;ImGuiShell.Windows.cpp">
       <PreprocessorDefinitions>GW_TEST_HOOKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
