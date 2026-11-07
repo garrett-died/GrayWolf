@@ -1029,6 +1029,7 @@ static int SelfTest(std::string& Failures)
     Failed += Maps::MeshSelfTest(Failures);
     Failed += Maps::RenderMeshesSelfTest(Failures);
     Failed += Maps::CollisionMeshesSelfTest(Failures);
+    Failed += Maps::RadiantTexturesSelfTest(Failures);
 
     return Failed;
 }

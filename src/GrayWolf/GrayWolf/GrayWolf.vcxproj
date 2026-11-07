@@ -254,6 +254,7 @@
     <ClCompile Include="MapRenderMeshesSelfTest.cpp" />
     <ClCompile Include="MapCollisionMeshes.cpp" />
     <ClCompile Include="MapCollisionMeshesSelfTest.cpp" />
+    <ClCompile Include="MapRadiantTexturesSelfTest.cpp" />
     <ClCompile Include="SoundAliasCsv.cpp" />
     <ClCompile Include="MapCollisionWriter.cpp" />
     <ClCompile Include="MapMaterials.cpp" />

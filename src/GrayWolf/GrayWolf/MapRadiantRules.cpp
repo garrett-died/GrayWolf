@@ -27,6 +27,17 @@ std::string RadiantNumber(double V)
     return S == "-0" ? "0" : S;
 }
 
+std::string RadiantNumber7(double V)
+{
+    if (std::fabs(V) < 9e18 && std::fabs(V - std::round(V)) < 1e-9) return std::to_string((long long)std::llround(V));
+    char Buf[64];
+    std::snprintf(Buf, sizeof(Buf), "%.7f", V);
+    std::string S = Buf;
+    while (!S.empty() && S.back() == '0') S.pop_back();
+    if (!S.empty() && S.back() == '.') S.pop_back();
+    return S == "-0" ? "0" : S;
+}
+
 size_t ReportCounter(double V)
 {
     if (!(V >= 0)) return 0;

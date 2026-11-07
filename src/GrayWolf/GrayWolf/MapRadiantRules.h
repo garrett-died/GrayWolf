@@ -22,6 +22,9 @@ namespace Maps
     // A number as the .map writes it: four decimals, trailing zeros dropped, no "-0"
     std::string RadiantNumber(double V);
 
+    // A brush face number as the .map writes it: seven decimals, trailing zeros dropped, no "-0" (HydraX r43; four decimals cost UV precision, docs/hydrax-port/m2d.md)
+    std::string RadiantNumber7(double V);
+
     // A statistic as a report counter: rounded; 0 for a negative number or NaN; at most 2^53 (llround of a number beyond a long long is undefined)
     size_t ReportCounter(double V);
 

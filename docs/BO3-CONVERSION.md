@@ -221,6 +221,10 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
   tree, and bullet-and-missile clip becomes `clip_weapon`, since Black Ops III has no tool for exactly that. A tool mesh keeps the outward winding
   the reader gives it, unconfirmed. Radiant has not opened these meshes, so how it loads them, and which diagonal it picks for a cell that is not
   flat, is unknown.
+- Radiant brush sides: a side the first texture fit leaves a tool gets a second fit from the drawn triangles lying on it, and face numbers keep
+  seven decimals. Against the stock `zm_giant` source, unique faces textured right rose from 4,557 to 5,130 and missed fell from 2,670 to 2,094,
+  while wrong real materials rose from 19 to 22. Some second fits carry a shear, which the writer records but no test has proven in Radiant. On
+  `mp_crash`, 11,977 sides stay tools because nothing drawn covers them, probably blend layers; that is not proven.
 - Constants exist for Black Ops 4 techsets with a proven layout only. Others keep stock defaults and
   are listed as `material.constants_defaulted`.
 - A colour specular map on a scalar slot is read as a mask, which loses colour. It is counted.

@@ -195,6 +195,9 @@
     <ClCompile Include="MapCollisionMeshesSelfTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MapRadiantTexturesSelfTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="MapRenderMeshesSelfTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

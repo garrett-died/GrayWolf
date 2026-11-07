@@ -342,6 +342,7 @@ namespace
         uint32_t Owner = 0;
         RadiantTextureStats* Stats = nullptr;
         const DrawnWorld::HiddenTest* Hidden = nullptr;   // inside another brush (the world's)
+        bool Strict = true;                               // the game's StrictMaterials
     };
 
     // The world's solid brushes, to tell a point inside one (what hides a side's face): each
@@ -613,7 +614,7 @@ namespace
                         for (int C = 0; C < 3; C++) Read[J][C] = std::strtod(Num(Points[K][J][C]).c_str(), nullptr);
                     V3 Back = Cross(Sub(Read[0], Read[1]), Sub(Read[2], Read[1]));
                     Back = Mul(Back, 1.0 / (std::max)(Length(Back), 1e-12));
-                    if (Tex.Drawn->Texture(Faces[K].Points, N, Faces[K].Dist, Back, Tex.Owner, Tex.Hidden, Textures[K], TS)) Textured[K] = 1, Any = true;
+                    if (Tex.Drawn->Texture(Faces[K].Points, N, Faces[K].Dist, Back, Tex.Owner, Tex.Hidden, Textures[K], TS, Tex.Strict)) Textured[K] = 1, Any = true;
                 }
                 if (Any)
                 {
@@ -632,8 +633,7 @@ namespace
                 if (Textured[K])
                 {
                     const SideTexture& T = Textures[K];
-                    Out += MaterialName(T.Material, Tex.Gdt) + " " + Num(T.Width) + " " + Num(T.Height) + " " + Num(T.ShiftX) + " " + Num(T.ShiftY) + " " + Num(T.Rotation) +
-                           " 0 lightmap_gray 16384 16384 0 0 0 0\n";
+                    Out += MaterialName(T.Material, Tex.Gdt) + RadiantSideNumbers(T) + " lightmap_gray 16384 16384 0 0 0 0\n";
                 }
                 else
                     Out += Names[K] + " 64 64 0 0 0 0 lightmap_gray 16384 16384 0 0 0 0\n";
@@ -1248,6 +1248,7 @@ namespace
             for (const auto& [Key, N] : std::initializer_list<std::pair<const char*, size_t>>{
                      { "sides_solid", T->Sides }, { "sides_textured", T->SidesTextured }, { "sides_split", T->SidesSplit },
                      { "sides_no_fit", T->SidesNoFit }, { "sides_mixed_maps", T->SidesMixedMaps }, { "sides_uv_missed", T->SidesUvMissed }, { "sides_undrawn", T->SidesUndrawn }, { "brushes_textured", T->BrushesTextured },
+                     { "refit_tried", T->RefitTried }, { "refit_textured", T->RefitTextured }, { "refit_none", T->RefitNone }, { "refit_ambiguous", T->RefitAmbiguous }, { "refit_no_solve", T->RefitNoSolve }, { "refit_mixed", T->RefitMixed }, { "refit_degenerate", T->RefitDegenerate }, { "refit_undrawn", T->RefitUndrawn }, { "refit_no_whole", T->RefitNoWhole }, { "refit_gate_between", T->RefitGateBetween }, { "refit_sheared", T->RefitSheared },
                      { "uv_error_below_1e4", T->UvExact }, { "uv_error_below_1e3", T->UvBelow1e3 },
                      { "uv_error_below_1e2", T->UvBelow1e2 }, { "uv_error_below_1e1", T->UvBelow1e1 }, { "uv_error_above_1e1", T->UvAbove },
                      { "uv_error_mean_1e6", T->SidesTextured + T->SidesUvMissed ? ReportCounter(1e6 * T->UvErrorSum / (double)(T->SidesTextured + T->SidesUvMissed)) : 0 },
@@ -1757,7 +1758,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
     Stats.Textures.TrianglesDrawn = Drawn.Count();
     const Solids SolidBrushes(Scene.Collision);
     const DrawnWorld::HiddenTest Hidden = [&SolidBrushes](const V3& P) { return SolidBrushes.Inside(P); };
-    const Texturing Tex{ &Drawn, ForGdt, 0, &Stats.Textures, &Hidden };
+    const Texturing Tex{ &Drawn, ForGdt, 0, &Stats.Textures, &Hidden, StrictMaterials(Scene.Game) };
     // the brush models a mesh draws
     std::set<uint32_t> Owners;
     for (const Mesh& M : Scene.Objects)
@@ -1831,7 +1832,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
             const bool Trigger = Kind == '?' || (Class != E.end() && Class->second.rfind("trigger", 0) == 0);
             size_t Number = 0;
             // a brush model's brushes take the materials its drawn triangles give them, the others patches
-            const Texturing Own{ Kind == '*' ? Tex.Drawn : nullptr, ForGdt, (uint32_t)N, &Stats.EntityTextures, &Hidden };
+            const Texturing Own{ Kind == '*' ? Tex.Drawn : nullptr, ForGdt, (uint32_t)N, &Stats.EntityTextures, &Hidden, Tex.Strict };
             if (N < From.size())
                 for (const Brush& B : From[N])
                     if (WriteBrush(Out, B, Number, Origin, Axis, Tools, Trigger ? "trigger" : "", Stats, Own))
@@ -2171,6 +2172,37 @@ int RadiantWriterSelfTest(std::string& Failures)
         Check(Stats.BrushesHull == 1 && Stats.HullFacesMatched == 3 && Stats.HullFacesUnmatched == 3, "three hull faces on a side, three on none",
               std::to_string(Stats.BrushesHull) + "/" + std::to_string(Stats.HullFacesMatched) + "/" + std::to_string(Stats.HullFacesUnmatched));
         Check(Count(Text, " clip_full 64 64") == 6 || Count(Text, " caulk 64 64") == 6, "every face has the brush's material", Text);
+    }
+    // M2d: a drawn quad on the top of a box, sheared, is a refit side: the writer's face line carries the solved numbers (seven decimals, the shear in the sixth place)
+    {
+        MapScene Scene;
+        Scene.Game = "bo3";
+        Scene.Collision.ContentsKeywords = true;
+        Scene.Collision.Brushes.push_back(Box(0, 0, 0, 128, 96, 64));
+        Mesh M;
+        M.Name = "world";
+        Surface S;
+        S.Material = "mat_top";
+        const float C[4][2] = { { 0, 0 }, { 128, 0 }, { 128, 96 }, { 0, 96 } };
+        for (const auto& P : C)
+        {
+            Vertex V;
+            V.Pos[0] = P[0], V.Pos[1] = P[1], V.Pos[2] = 64;
+            V.Normal[2] = 1, V.NormalRead = true;
+            // u = x / 32 - 0.25 - 0.25 * y / 64, v = -y / 64 - 0.25: dyadic, so exact in a float (numbers 32 64 8 16 0 0.25)
+            V.Uv[0] = P[0] / 32.0f - 0.25f - 0.25f * P[1] / 64.0f, V.Uv[1] = -P[1] / 64.0f - 0.25f;
+            S.Vertices.push_back(V);
+        }
+        S.Indices = { 0, 1, 2, 0, 2, 3 };
+        M.Surfaces.push_back(S);
+        Scene.Objects.push_back(M);
+        RadiantStats Stats;
+        std::string Error;
+        const fs::path Map = Dir / "bo3_refit.map";
+        const bool Ok = WriteRadiant(Scene, Map.string(), Stats, Error);
+        const std::string Text = Read(Map);
+        Check(Ok, "writes a BO3 scene with a drawn top", Error);
+        Check(Text.find(" mat_top 32 64 8 16 0 0.25 lightmap_gray 16384 16384 0 0 0 0\n") != std::string::npos, "the refit side's line carries the solved numbers and the shear", Text);
     }
     // BO4: no contents line, a light entity, rattleEfx and an unresolved hash moved, a polar placement
     {

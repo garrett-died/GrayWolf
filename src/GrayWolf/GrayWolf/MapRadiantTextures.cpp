@@ -3,12 +3,15 @@
 #include "MapRadiantTextures.h"
 
 #include "ExportNaming.h"
+#include "MapMesh.h"
 #include "MapRadiantGeometry.h"
+#include "MapRadiantRules.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <map>
+#include <span>
 
 namespace Maps
 {
@@ -21,7 +24,7 @@ namespace
     constexpr double Aligned = 0.9995;    // a drawn triangle's normal this close to the side's (cosine)
     constexpr double Cell = 256.0;        // the grid's cell (units)
     constexpr double Whole = 0.999;       // a triangle this much inside a face is covered whole
-    constexpr double Split = 0.05;        // a second material over this share of the drawn area: a split face
+    constexpr double SplitShare = 0.05;        // a second material over this share of the drawn area: a split face
     constexpr double MaxUvError = 1.0 / 2048;  // a fit missing a drawn UV by more (repeats: half a texel of a 1024 image) leaves the side a tool
 
     // a cell of the grid for the triangles facing along Facing (0..5: +x, -x, +y, -y, +z, -z)
@@ -39,10 +42,11 @@ namespace
         return A * 2 + (N[A] < 0 ? 1 : 0);
     }
 
+    constexpr double SnapNumber = 1e-3;   // a fitted angle or size this close to a whole number is that number (compiled texture coordinates are floats: a fit lands within about 1e-3 of the author's number)
     constexpr double OnEdge = 1e-6;       // a point this close to a face's edge is on it, when a triangle is clipped to the face
 
-    // as the .map writes a number (four decimals)
-    double Written(double V) { return std::round(V * 1e4) / 1e4; }
+    // as the .map writes a face number (seven decimals, RadiantNumber7: HydraX r43; four decimals cost UV precision, M2d)
+    double Written(double V) { return std::round(V * 1e7) / 1e7; }
 
     // how far a UV is from another, whole repeats aside
     double Off(double A, double B)
@@ -181,8 +185,14 @@ bool DrawnWorld::Removed(size_t Object, size_t Surf, size_t K) const
     return Object < Gone.size() && Surf < Gone[Object].size() && K < Gone[Object][Surf].size() && Gone[Object][Surf][K];
 }
 
-bool DrawnWorld::Texture(const std::vector<V3>& Face, const V3& N, double D, const V3& WrittenN, uint32_t Whose, const HiddenTest* Hidden,
-                         SideTexture& Out, RadiantTextureStats& Stats)
+bool DrawnWorld::Texture(const std::vector<V3>& Face, const V3& N, double D, const V3& WrittenN, uint32_t Whose, const HiddenTest* Hidden, SideTexture& Out, RadiantTextureStats& Stats, bool Strict)
+{
+    if (TextureFirst(Face, N, D, WrittenN, Whose, Hidden, Out, Stats)) return true;
+    return RefitSide(Face, N, D, WrittenN, Whose, Strict, Hidden, Out, Stats);
+}
+
+bool DrawnWorld::TextureFirst(const std::vector<V3>& Face, const V3& N, double D, const V3& WrittenN, uint32_t Whose, const HiddenTest* Hidden,
+                              SideTexture& Out, RadiantTextureStats& Stats)
 {
     if (Face.size() < 3 || Tris.empty()) return false;
     // the triangles on the face's plane overlapping it: their area inside it, whole or not
@@ -361,9 +371,9 @@ bool DrawnWorld::Texture(const std::vector<V3>& Face, const V3& N, double D, con
     // the angle within (-90, 90], a half turn being both sizes negated
     if (Angle > 90) Angle -= 180, W = -W, Hh = -Hh;
     else if (Angle <= -90) Angle += 180, W = -W, Hh = -Hh;
-    if (std::fabs(Angle - std::round(Angle)) < 1e-3) Angle = std::round(Angle);
-    if (std::fabs(W - std::round(W)) < 1e-3) W = std::round(W);
-    if (std::fabs(Hh - std::round(Hh)) < 1e-3) Hh = std::round(Hh);
+    if (std::fabs(Angle - std::round(Angle)) < SnapNumber) Angle = std::round(Angle);
+    if (std::fabs(W - std::round(W)) < SnapNumber) W = std::round(W);
+    if (std::fabs(Hh - std::round(Hh)) < SnapNumber) Hh = std::round(Hh);
     Angle = Written(Angle), W = Written(W), Hh = Written(Hh);
     if (Angle == 0) Angle = 0;   // no -0
     SinCos(Angle, Sn, Cs);
@@ -474,13 +484,261 @@ bool DrawnWorld::Texture(const std::vector<V3>& Face, const V3& N, double D, con
         if (!G) Stats.TrianglesRemoved++;
         G = 1;
     }
-    if (MaterialArea - Groups[Main].Area > Split * MaterialArea) Stats.SidesMixedMaps++;
+    if (MaterialArea - Groups[Main].Area > SplitShare * MaterialArea) Stats.SidesMixedMaps++;
     Out.Material = Names[Material];
-    Out.Width = W, Out.Height = Hh, Out.ShiftX = Sx, Out.ShiftY = Sy, Out.Rotation = Angle, Out.UvError = Error;
+    Out.Width = W, Out.Height = Hh, Out.ShiftX = Sx, Out.ShiftY = Sy, Out.Rotation = Angle, Out.Shear = 0, Out.UvError = Error;
     Stats.SidesTextured++;
     const double Covered = Groups[Main].Area / FaceArea;
     Stats.Coverage[Covered < 0.1 ? 0 : Covered < 0.5 ? 1 : Covered < 0.9 ? 2 : 3]++;
-    if (Second > Split * Drawn) Stats.SidesSplit++;
+    if (Second > SplitShare * Drawn) Stats.SidesSplit++;
     return true;
+}
+bool DrawnWorld::RefitSide(const std::vector<V3>& Face, const V3& N, double D, const V3& WrittenN, uint32_t Whose, bool Strict, const HiddenTest* Hidden, SideTexture& Out, RadiantTextureStats& Stats)
+{
+    // HydraX RenderFit.Refine, after the first fit left the side a tool: on-plane 0.1, parallel 0.98, the material covering at least half the face, two materials at 90% ambiguous, 48 sample
+    // triangles. Differences, all measured on zm_giant against its stock source (docs/hydrax-port/m2d.md): only triangles facing the same way as the side (HydraX counts the back
+    // faces too: 139 of its 157 wrong materials), the area counted is the part inside the face (not the whole triangle), the numbers come from BrushFaceUv::Solve.
+    constexpr double Parallel = 0.98, OnPlane = 0.1, Half = 0.5, Ambiguous = 0.9, Match = 1e-3;
+    constexpr size_t MaxSamples = 48;
+    if (Face.size() < 3 || Tris.empty()) return false;
+    std::vector<std::pair<V3, double>> Edges;
+    for (size_t K = 0; K < Face.size(); K++)
+    {
+        V3 Outward = Cross(Sub(Face[(K + 1) % Face.size()], Face[K]), N);
+        const double L = Length(Outward);
+        if (L < 1e-9) continue;
+        Outward = Mul(Outward, 1.0 / L);
+        Edges.emplace_back(Outward, Dot(Outward, Face[K]));
+    }
+    const double FaceArea = Area(Face);
+    if (FaceArea <= 0) return false;
+    Stats.RefitTried++;
+    struct Hit
+    {
+        uint32_t Tri;
+        double Inside;
+        bool Whole;
+    };
+    std::vector<Hit> Hits;
+    if (++Query == 0)
+    {
+        std::fill(Stamp.begin(), Stamp.end(), 0);
+        Query = 1;
+    }
+    int64_t Lo[3], Hi[3];
+    for (int A = 0; A < 3; A++)
+    {
+        double Min = Face[0][A], Max = Face[0][A];
+        for (const V3& P : Face) Min = (std::min)(Min, P[A]), Max = (std::max)(Max, P[A]);
+        Lo[A] = CellOf(Min - OnPlane - Tolerance), Hi[A] = CellOf(Max + OnPlane + Tolerance);
+    }
+    const auto Look = [&](uint32_t I) {
+        if (Stamp[I] == Query) return;
+        Stamp[I] = Query;
+        const Tri& T = Tris[I];
+        if (T.Owner != Whose || Dot(T.N, N) < Parallel || Gone[T.Object][T.Surf][T.K]) return;   // a triangle another side took is not claimed again
+        for (const V3& P : T.P)
+            if (std::fabs(Dot(N, P) - D) > OnPlane) return;
+        std::vector<V3> W;
+        for (const V3& P : T.P) W.push_back(Sub(P, Mul(N, Dot(N, P) - D)));
+        const double Full = Area(W);
+        for (const auto& [En, Ed] : Edges)
+            if ((W = Clip(W, En, Ed, OnEdge)).size() < 3) return;
+        const double In = Area(W);
+        if (In <= 1e-3 * Full || In <= 1e-4) return;
+        Hits.push_back({ I, In, In >= Whole * Full });
+    };
+    // the facings a triangle within Parallel of N may have: an axis N is nearly as close to as its closest (two unit normals 0.98 apart differ by at most 0.2 per component)
+    const double Closest = (std::max)({ std::fabs(N[0]), std::fabs(N[1]), std::fabs(N[2]) });
+    for (int A = 0; A < 3; A++)
+    {
+        if (std::fabs(N[A]) < Closest - 0.25) continue;
+        for (int Sign = 0; Sign < 2; Sign++)
+        {
+            const int Facing = A * 2 + Sign;
+            for (int64_t X = Lo[0]; X <= Hi[0]; X++)
+                for (int64_t Y = Lo[1]; Y <= Hi[1]; Y++)
+                    for (int64_t Z = Lo[2]; Z <= Hi[2]; Z++)
+                    {
+                        const auto It = Cells.find(Key(Facing, X, Y, Z));
+                        if (It == Cells.end()) continue;
+                        for (uint32_t G = It->second.first; G < It->second.second; G++) Look(Grid[G].second);
+                    }
+        }
+    }
+    std::map<uint32_t, double> ByMaterial;
+    for (const Hit& H : Hits) ByMaterial[Tris[H.Tri].Material] += H.Inside;
+    if (ByMaterial.empty())
+    {
+        Stats.RefitNone++;
+        return false;
+    }
+    uint32_t Material = 0;
+    double Most = -1;
+    for (const auto& [M, A] : ByMaterial)
+        if (A > Most) Most = A, Material = M;
+    if (Most < Half * FaceArea)
+    {
+        Stats.RefitNone++;
+        return false;
+    }
+    for (const auto& [M, A] : ByMaterial)
+        if (M != Material && A >= Ambiguous * FaceArea)
+        {
+            Stats.RefitAmbiguous++;   // counted for every game; only a strict one leaves the side a tool
+            if (Strict) return false;
+            break;
+        }
+    // the samples: the material's biggest triangles on the face, three corners each
+    std::vector<size_t> Order;
+    for (size_t I = 0; I < Hits.size(); I++)
+        if (Tris[Hits[I].Tri].Material == Material) Order.push_back(I);
+    std::stable_sort(Order.begin(), Order.end(), [&](size_t X, size_t Y) { return Hits[X].Inside > Hits[Y].Inside; });
+    std::vector<FaceSample> Samples;
+    for (size_t K = 0; K < Order.size() && K < MaxSamples; K++)
+    {
+        const Tri& T = Tris[Hits[Order[K]].Tri];
+        for (int J = 0; J < 3; J++) Samples.push_back({ T.P[J], T.Uv[J][0], T.Uv[J][1] });
+    }
+    // three points that give BrushFaceUv the plane Radiant reads: (P3 - P1) x (P2 - P1) = WrittenN
+    V3 Axis = { 1, 0, 0 };
+    if (std::fabs(WrittenN[0]) > 0.6) Axis = { 0, 1, 0 };
+    V3 E1 = Cross(WrittenN, Axis);
+    E1 = Mul(E1, 1.0 / Length(E1));
+    const V3 E2 = Cross(WrittenN, E1);
+    const V3 P1 = Face[0], P2 = Add(P1, E2), P3 = Add(P1, E1);
+    const std::optional<BrushFaceNumbers> Numbers = BrushFaceUv::Solve(P1, P2, P3, Samples);
+    if (!Numbers)
+    {
+        Stats.RefitNoSolve++;
+        return false;
+    }
+    BrushFaceNumbers Rounded = *Numbers;
+    for (double* Number : { &Rounded.ScaleX, &Rounded.ScaleY, &Rounded.ShiftX, &Rounded.ShiftY, &Rounded.Rotation, &Rounded.Shear }) *Number = Written(*Number);
+    // a scale that rounds to 0 reads as "default" in Radiant and gives no texture coordinate (HydraX does not write it either); nothing non-finite is written
+    if (!std::isfinite(Rounded.ScaleX) || !std::isfinite(Rounded.ScaleY) || !std::isfinite(Rounded.ShiftX) || !std::isfinite(Rounded.ShiftY) || !std::isfinite(Rounded.Rotation) ||
+        !std::isfinite(Rounded.Shear) || Rounded.ScaleX == 0 || Rounded.ScaleY == 0)
+    {
+        Stats.RefitDegenerate++;
+        return false;
+    }
+    // the numbers against the material's triangles on the face, by area: those whose three corners they reproduce draw the side. A NaN is a miss, never a match.
+    double Error = 0, TotalArea = 0, MatchedArea = 0;
+    std::vector<size_t> Drawn;
+    size_t WholeCount = 0;
+    std::vector<size_t> Matched;
+    for (size_t I = 0; I < Hits.size(); I++)
+    {
+        const Tri& T = Tris[Hits[I].Tri];
+        if (T.Material != Material) continue;
+        double Worst = 0;
+        for (int J = 0; J < 3; J++)
+        {
+            const auto [U, V] = BrushFaceUv::Forward(P1, P2, P3, Rounded, T.P[J]);
+            const double Eu = Off(U, T.Uv[J][0]), Ev = Off(V, T.Uv[J][1]);
+            // std::max keeps the finite one of a finite and a NaN: each is tested on its own
+            const double E = std::isfinite(Eu) && std::isfinite(Ev) ? (std::max)(Eu, Ev) : 1e300;
+            Worst = (std::max)(Worst, E);
+        }
+        TotalArea += Hits[I].Inside;
+        const bool Hit = Worst <= Match;
+        if (Hit)
+        {
+            MatchedArea += Hits[I].Inside;
+            Matched.push_back(I);
+        }
+        if (Hits[I].Whole)
+        {
+            WholeCount++;
+            if (Hit) Drawn.push_back(I);
+            Error = (std::max)(Error, Worst);
+        }
+    }
+    // no whole triangle to verify against: the numbers are unchecked, and a mesh left drawn beside a brush side that draws it too would show twice
+    if (WholeCount == 0 || Drawn.empty())
+    {
+        Stats.RefitNoWhole++;
+        return false;
+    }
+    // numbers that leave more than a tenth of the material's area on the face drawn another way are not this face's (a face mapped two ways): the side stays a tool
+    if (MatchedArea < 0.9 * TotalArea)
+    {
+        Stats.RefitMixed++;
+        return false;
+    }
+    // the first fit's test: the part of the face the matched triangles do not cover must be hidden by other brushes, or the side draws something the game does not there
+    if (Hidden)   // by sample points, never by summed area: coincident triangles add up to the face and cover half of it
+    {
+        const V3 U = Mul(Sub(Face[1], Face[0]), 1.0 / Length(Sub(Face[1], Face[0])));
+        const V3 Vv = Cross(N, U);
+        double Lo2[2] = { 1e300, 1e300 }, Hi2[2] = { -1e300, -1e300 };
+        for (const V3& P : Face)
+        {
+            const double C[2] = { Dot(Sub(P, Face[0]), U), Dot(Sub(P, Face[0]), Vv) };
+            for (int A = 0; A < 2; A++) Lo2[A] = (std::min)(Lo2[A], C[A]), Hi2[A] = (std::max)(Hi2[A], C[A]);
+        }
+        // samples per axis from that axis' own extent: at least 3, so a face 100 by 0.1 is sampled across too
+        const double Step = (std::max)(std::sqrt(FaceArea) / 12.0, 0.5);
+        const auto Per = [&](int Axis) { return (std::max)(3, static_cast<int>(std::ceil((Hi2[Axis] - Lo2[Axis]) / Step))); };
+        const int Na = Per(0), Nb = Per(1);
+        const auto Inside = [&](const V3& P, std::span<const V3> W) {
+            int Sign = 0;
+            const size_t Count = W.size();
+            for (size_t K = 0; K < Count; K++)
+            {
+                const double S = Dot(Cross(Sub(W[(K + 1) % Count], W[K]), Sub(P, W[K])), N);
+                if (std::fabs(S) < 1e-9) continue;
+                if (Sign == 0) Sign = S > 0 ? 1 : -1;
+                else if ((S > 0) != (Sign > 0)) return false;
+            }
+            return true;
+        };
+        size_t Count = 0, Undrawn = 0;
+        for (int Ia = 0; Ia < Na; Ia++)
+            for (int Ib = 0; Ib < Nb; Ib++)
+            {
+                const double A = Lo2[0] + (Hi2[0] - Lo2[0]) * (Ia + 0.5) / Na, B = Lo2[1] + (Hi2[1] - Lo2[1]) * (Ib + 0.5) / Nb;
+                const V3 P = { Face[0][0] + U[0] * A + Vv[0] * B, Face[0][1] + U[1] * A + Vv[1] * B, Face[0][2] + U[2] * A + Vv[2] * B };
+                if (!Inside(P, std::span<const V3>(Face))) continue;
+                Count++;
+                bool Covered = false;
+                for (size_t K = 0; K < Matched.size() && !Covered; K++)
+                {
+                    const Tri& T = Tris[Hits[Matched[K]].Tri];
+                    std::array<V3, 3> W;
+                    for (int J = 0; J < 3; J++) W[J] = Sub(T.P[J], Mul(N, Dot(N, T.P[J]) - D));
+                    Covered = Inside(P, std::span<const V3>(W));
+                }
+                if (!Covered && !(*Hidden)(V3{ P[0] + N[0] * 0.5, P[1] + N[1] * 0.5, P[2] + N[2] * 0.5 })) Undrawn++;
+            }
+        if (Count == 0 || Undrawn > 0.05 * static_cast<double>(Count))   // no sample inside the face is a refusal, not a pass
+        {
+            Stats.RefitUndrawn++;
+            return false;
+        }
+    }
+    for (const size_t I : Drawn)
+    {
+        const Tri& T = Tris[Hits[I].Tri];
+        char& G = Gone[T.Object][T.Surf][T.K];
+        if (!G) Stats.TrianglesRemoved++;
+        G = 1;
+    }
+    if (MatchedArea < 0.99 * TotalArea) Stats.RefitGateBetween++;
+    if (std::fabs(Rounded.Shear) > 1e-3) Stats.RefitSheared++;
+    Out.Material = Names[Material];
+    Out.Width = Rounded.ScaleX, Out.Height = Rounded.ScaleY, Out.ShiftX = Rounded.ShiftX, Out.ShiftY = Rounded.ShiftY, Out.Rotation = Rounded.Rotation, Out.Shear = Rounded.Shear, Out.UvError = Error;
+    Stats.RefitTextured++;
+    Stats.SidesTextured++;
+    const double Covered = Most / FaceArea;
+    Stats.Coverage[Covered < 0.1 ? 0 : Covered < 0.5 ? 1 : Covered < 0.9 ? 2 : 3]++;
+    (Error < 1e-4 ? Stats.UvExact : Error < 1e-3 ? Stats.UvBelow1e3 : Error < 1e-2 ? Stats.UvBelow1e2 : Error < 1e-1 ? Stats.UvBelow1e1 : Stats.UvAbove)++;
+    Stats.UvErrorSum += Error;
+    return true;
+}
+
+std::string RadiantSideNumbers(const SideTexture& T)
+{
+    return " " + RadiantNumber7(T.Width) + " " + RadiantNumber7(T.Height) + " " + RadiantNumber7(T.ShiftX) + " " + RadiantNumber7(T.ShiftY) + " " + RadiantNumber7(T.Rotation) + " " + RadiantNumber7(T.Shear);
 }
 }

@@ -66,9 +66,14 @@ namespace Maps
     // (6,337 of 6,346 triangles, HydraX map-export-bo4 section 21) and Black Ops III -1 ((p2 - p0) x (p1 - p0) is the vertex normal). Other
     // games: +1 is NOT measured (their readers either give normals, which are used, or this is a hypothesis).
     int WindingOf(const std::string& Game);
-    // Whether the game numbers a mesh's vertices in the patch compiler's order, so the mesher's pair and border models apply (M2e measures it per game). Black Ops III
-    // true, as HydraX has it; every other game false until measured.
+    // Whether the game numbers a mesh's vertices in the patch compiler's order, so the mesher's pair and border models apply. Black Ops III true, as HydraX has it (its stock
+    // source is the evidence there). Measured by M2e (docs/hydrax-port/m2d.md): the render meshes of zm_white with the models on (instead of off) are 3.6% more grids and
+    // 1.4% more lone triangles, those of mp_crash 6.6% more grids and 7.5% more lone triangles, so neither reproduces the greedy result and both stay false.
     bool VertexOrderIsPatchOrder(const std::string& Game);
+    // Whether a brush side two materials cover alike stays a tool (HydraX StrictMaterials): Black Ops 4 true, Black Ops III false, as HydraX has them; Modern Warfare Remastered true
+    // (measured, docs/hydrax-port/m2d.md: strict and not strict differ on 0.1% of the sides). The not-strict arm of HydraX that gives caulk faces the brush's dominant material is NOT
+    // ported for any game: on zm_giant it is right for 24% of the faces it changes and the stock source has caulk on 63%.
+    bool StrictMaterials(const std::string& Game);
 
     // The lower-case GDT asset names a map material goes by: its asset name and the name shortened to 63 characters
     std::vector<std::string> DrawnAssetKeys(const std::string& Name);
