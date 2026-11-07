@@ -39,12 +39,34 @@ namespace Maps
         return Guid;
     }
 
+    // The layers a game blends a surface of (Modern Warfare Remastered): per vertex the weight of each layer above the base (0..255, kept apart from Color: the
+    // vertex colour of such a surface is not a tint) and the layer's own texture coordinates. At most MaxBlendLayers.
+    constexpr uint32_t MaxBlendLayers = 6;
+    struct BlendVertex
+    {
+        int16_t Weight[MaxBlendLayers] = { -1, -1, -1, -1, -1, -1 };   // -1: not read (never 0, which is a read weight)
+        float Uv[MaxBlendLayers][2] = {};
+        // the worst of the vertex's rotation words (a 2x2 matrix the game applies to a layer's normal): 0 none or identity, 1 a flip (a diagonal of +-1, the rest 0), 2 anything else
+        uint8_t Rot = 0;
+        uint8_t BadUv = 0;   // bit L: the layer's texture coordinates were not finite (its weight is then -1)
+    };
+    struct BlendData
+    {
+        uint32_t Layers = 0;                // the layers above the base this surface's material has; 0: the surface is not blended
+        std::vector<int16_t> Weight;        // Layers per vertex: 0..255, or -1 where the data was not read
+        std::vector<float> Uv;              // two per layer per vertex
+        bool Present() const { return Layers != 0; }
+        // the weight of layer K (0 = the first above the base) of vertex V, -1 when not read
+        int Of(size_t V, uint32_t K) const { return (V * Layers + K) < Weight.size() ? Weight[V * Layers + K] : -1; }
+    };
+
     // Triangles of one material.
     struct Surface
     {
         std::string Material;
         std::vector<Vertex> Vertices;
         std::vector<uint32_t> Indices;   // three per triangle, into Vertices
+        BlendData Blend;                 // empty unless the game blends this surface's material in layers
         // the UV sets after each vertex's Uv (a blended surface's other layers: WWII), UvSets - 1
         // pairs per vertex in a row; empty when the surface has one set
         uint32_t UvSets = 1;
@@ -114,10 +136,23 @@ namespace Maps
         std::string Techset;
         std::string ColorMap;   // the image drawn as the base colour ("" when none)
         std::vector<Texture> Textures;
+        // the semantics of textures whose image the reader could not name (left out of Textures): a blended material's shape needs them
+        std::vector<uint32_t> UnnamedSemantics;
+        // blended surfaces of this material whose layer weights were not read (set by MarkUnreadBlends)
+        uint32_t SurfacesUnread = 0;
         std::vector<std::vector<uint8_t>> Constants;   // the game's constant blocks (the adapter's tint, layers)
         int SortKey = -1;                               // the game's sort key, -1 when unknown
         int64_t SurfaceFlags = -1, RenderFlags = -1;    // the game's flag words (XMaterial_t), -1 when unknown
         std::string SurfaceVia;                         // the evidence when SurfaceFlags came from an inference (XMaterial_t::SurfaceVia)
+        // The layers a blended material has above its base, bottom to top (a game's reader makes one scene material per distinct layer art, Games/<game>): the material that
+        // draws the layer, whether the layer has a reveal map, and the reveal's sharpness K (< 0: not read)
+        struct BlendLayer
+        {
+            std::string Material;
+            bool Reveal = false;
+            float Sharpness = -1.0f;
+        };
+        std::vector<BlendLayer> Layers;
     };
 
     // An image's pixels: PNG bytes embedded in the .glb, or files (absolute paths, which may be

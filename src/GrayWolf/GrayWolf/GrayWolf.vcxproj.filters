@@ -186,6 +186,9 @@
     <ClCompile Include="MapMesh.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MapBlend.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="MapRenderMeshes.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

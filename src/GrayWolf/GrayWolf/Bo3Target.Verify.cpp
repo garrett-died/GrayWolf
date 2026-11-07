@@ -138,6 +138,7 @@ namespace Bo3Target::Verify
             std::map<std::string, std::string> FamilyAssumed;   // asset (lower case) -> what a material.family_* row says was assumed
             std::map<std::string, std::string> F0Failed;        // asset (lower case) -> detail of a material.f0_conversion_failed row
             std::map<std::string, std::string> GlossFailed, RevealFailed;   // likewise for material.gloss_conversion_failed and material.reveal_conversion_failed
+            std::map<std::string, std::string> LayersDroppedWhy;  // asset -> detail of a material.layers_dropped row: a blend whose layers are not (all) carried, or whose weights were not read
             std::map<std::string, std::string> FallbackWhy;     // asset (lower case) -> detail of a material.techset_fallback row: the techset was not the game's rule choice
             std::map<std::string, std::string> SkippedWhy;      // asset (lower case) -> "code detail" of a material.skipped_* row: the exporter left this material out on purpose
             bool HaveApproximations = false;
@@ -199,6 +200,13 @@ namespace Bo3Target::Verify
                         std::string Asset = Cells[1];
                         for (char& Ch : Asset) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
                         F0Failed[Asset] = Cells[2];
+                        continue;
+                    }
+                    if (Cells.size() >= 3 && Cells[0] == "material.layers_dropped")
+                    {
+                        std::string Asset = Cells[1];
+                        for (char& Ch : Asset) Ch = static_cast<char>(std::tolower(static_cast<unsigned char>(Ch)));
+                        LayersDroppedWhy[Asset] = Cells[2];
                         continue;
                     }
                     if (Cells.size() >= 3 && Cells[0] == "material.techset_fallback")
@@ -1255,6 +1263,11 @@ namespace Bo3Target::Verify
                 {
                     C.Judged("material.f0_conversion");
                     C.Fail("material.f0_conversion", E, "the specular colour could not be converted from sqrt(F0): " + X->second);
+                }
+                if (const auto X = C.LayersDroppedWhy.find(Key); X != C.LayersDroppedWhy.end())
+                {
+                    C.Judged("material.layers_dropped");
+                    C.Warn("material.layers_dropped", E, "a layered material's layers are not carried here (a slice of the game's layer data did not fit its shape, or the layers were not read): " + X->second);
                 }
                 if (const auto F = C.FallbackWhy.find(Key); F != C.FallbackWhy.end())
                 {

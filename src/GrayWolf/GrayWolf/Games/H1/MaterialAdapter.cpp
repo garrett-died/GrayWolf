@@ -5,6 +5,8 @@
 #include "ZoneTableWalker.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -231,6 +233,29 @@ namespace
                     F.Reveal = true;
                     D.RevealSemantic = BaseReveal;
                     D.RevealChannel = 0;   // the reveal image is a grey picture: its red channel
+                    // a blend layer's reveal (a scene material made by Games/H1/BlendLayers: the techset name holds the token `layer`): MWR draws the layer where the map's green
+                    // is LOW against w^2, BO3 where it is HIGH, so the image is written as 1 - green; BO3's reveal is alpha = sat((r - lo) / (hi - lo)), lo = 1 - s*a^p,
+                    // hi = 1 + s*(1-a)^p, which for ramp p = 0 and soft edge s = 1/(2K) is MWR's sat((w^2 - R) * K) (mwr-materials.md 12.3, K = revealParams.x)
+                    if (std::find(F.Tokens.begin(), F.Tokens.end(), "layer") != F.Tokens.end())
+                    {
+                        D.RevealChannel = 1;
+                        D.RevealInvert = true;
+                        for (const auto& Block : M.Constants)
+                            for (size_t At = 0; At + 32 <= Block.size(); At += 32)
+                            {
+                                uint32_t Hash;
+                                float K;
+                                std::memcpy(&Hash, &Block[At], 4);
+                                std::memcpy(&K, &Block[At + 16], 4);
+                                if (Hash == 0x8C67DED5u && K >= 1.0f && std::isfinite(K))
+                                {
+                                    D.RevealRamp = 0.0f;
+                                    // material.awi limits alphaRevealSoftEdge to 0.01..1: a sharpness above 50 is written as 0.01 (row reveal_soft_edge_clamped)
+                                    D.RevealSoftEdge = std::clamp(1.0f / (2.0f * K), 0.01f, 1.0f);
+                                    if (1.0f / (2.0f * K) < 0.01f) D.Approximations = "reveal_soft_edge_clamped";   // joined with the layer's others below
+                                }
+                            }
+                    }
                 }
             const std::shared_ptr<const RuleTable> Table = Rules();
             // metal is told by the surface type (the rule file's metal_surfaces), and only a metal with a specular map takes the advanced family
@@ -261,6 +286,23 @@ namespace
                 // only the advanced family reads a specular colour map; a non-metal takes BO3's specular simple (the dielectric level the source's 51 is)
                 if (R.Techset.find("advanced_fullspec") == std::string::npos)
                 {
+                    // the pixel check (Description::PixelMetal): what the rules give this material if it were a metal, and its specular image kept
+                    if (F.Spec && !F.Metal)
+                    {
+                        Facts AsMetal = F;
+                        AsMetal.Metal = true;
+                        for (const Rule& Q : Table->Rows)
+                            if (std::all_of(Q.Conditions.begin(), Q.Conditions.end(), [&](const std::string& C) { return Holds(C, AsMetal); }))
+                            {
+                                if (Q.Techset.find("advanced_fullspec") != std::string::npos)
+                                {
+                                    D.Metal.Specular = D.Specular;
+                                    D.Metal.PromoteTechset = Q.Techset;
+                                    D.Metal.P99 = 100.0f;
+                                }
+                                break;
+                            }
+                    }
                     D.Specular = Materials::Map();
                     if (!D.FamilyWhy.empty()) D.FamilyWhy = "surface_unknown_specular_dropped_by_rule";   // the rule's family reads no specular map: the row must not claim it was kept
                 }
@@ -279,6 +321,21 @@ namespace
             D.TechsetWhy = "no_rule";   // no row of techset_rules.txt fits this name: the slot rules choose, and the exporter says so
             };
             Choose();
+            // a blend layer: its colour image's alpha multiplies the weight per pixel in MWR (no vertex place in BO3), and the layer's normal is rotated by the vertex's
+            // rotation word (no BO3 place): both are left out, said in a row
+            {
+                const std::vector<std::string> Words = Split([&] { std::string Lower; for (const char C : M.Techset) Lower += static_cast<char>(std::tolower(static_cast<unsigned char>(C))); return Lower; }(), '_');
+                if (std::find(Words.begin(), Words.end(), "layer") != Words.end())
+                {
+                    const std::string Earlier = D.Approximations;   // reveal_soft_edge_clamped, from the rule above
+                    D.Approximations = "colour_alpha_not_folded";
+                    if (!D.Normal.Empty()) D.Approximations += ",normal_rotation_dropped";
+                    // MWR squares the interpolated weight per pixel, BO3 interpolates the vertex alpha: only a layer with a reveal differs
+                    if (D.RevealInvert) D.Approximations += ",weight_squared_interpolation";
+                    if (!Earlier.empty()) D.Approximations += "," + Earlier;
+
+                }
+            }
             AccountTextures(M, D);
         }
 

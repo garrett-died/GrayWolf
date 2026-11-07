@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "MapRadiantWriter.h"
+#include "MapBlend.h"
 
 #include "ExportNaming.h"
 #include "GdtWriter.h"
@@ -614,7 +615,41 @@ namespace
                         for (int C = 0; C < 3; C++) Read[J][C] = std::strtod(Num(Points[K][J][C]).c_str(), nullptr);
                     V3 Back = Cross(Sub(Read[0], Read[1]), Sub(Read[2], Read[1]));
                     Back = Mul(Back, 1.0 / (std::max)(Length(Back), 1e-12));
+#ifdef GW_MESH_DUMP   // Dev builds only: GH_SIDEDUMP=<file> gets a line per solid tool side tried (owner, centroid, normal, what became of it) to compare two runs side by side
+                    static FILE* SideDump = [] {
+                        char Path[MAX_PATH] = {};
+                        FILE* F = nullptr;
+                        if (GetEnvironmentVariableA("GH_SIDEDUMP", Path, MAX_PATH) > 0) fopen_s(&F, Path, "w");
+                        return F;
+                    }();
+                    const RadiantTextureStats Before = TS;
+#endif
                     if (Tex.Drawn->Texture(Faces[K].Points, N, Faces[K].Dist, Back, Tex.Owner, Tex.Hidden, Textures[K], TS, Tex.Strict)) Textured[K] = 1, Any = true;
+#ifdef GW_MESH_DUMP
+                    if (SideDump != nullptr)
+                    {
+                        std::string Class;
+                        const auto Add = [&](size_t Now, size_t Was, const char* Name) {
+                            if (Now != Was) Class += (Class.empty() ? "" : "+") + std::string(Name);
+                        };
+                        Add(TS.SidesNoFit, Before.SidesNoFit, "nofit");
+                        Add(TS.SidesUvMissed, Before.SidesUvMissed, "uvmiss");
+                        Add(TS.SidesUndrawn, Before.SidesUndrawn, "undrawn1");
+                        Add(TS.RefitNone, Before.RefitNone, "r_none");
+                        Add(TS.RefitNoSolve, Before.RefitNoSolve, "r_nosolve");
+                        Add(TS.RefitDegenerate, Before.RefitDegenerate, "r_degenerate");
+                        Add(TS.RefitNoWhole, Before.RefitNoWhole, "r_nowhole");
+                        Add(TS.RefitMixed, Before.RefitMixed, "r_mixed");
+                        Add(TS.RefitUndrawn, Before.RefitUndrawn, "r_undrawn");
+                        Add(TS.RefitAmbiguous, Before.RefitAmbiguous, "r_ambiguous");
+                        if (Textured[K]) Class = TS.RefitTextured != Before.RefitTextured ? "TEXTURED_refit" : "TEXTURED_first";
+                        if (Class.empty()) Class = "tool";
+                        V3 C = { 0, 0, 0 };
+                        for (const V3& P : Faces[K].Points)
+                            for (int A = 0; A < 3; A++) C[A] += P[A] / static_cast<double>(Faces[K].Points.size());
+                        std::fprintf(SideDump, "%u\t%.1f\t%.1f\t%.1f\t%.2f\t%.2f\t%.2f\t%s\n", Tex.Owner, C[0], C[1], C[2], N[0], N[1], N[2], Class.c_str());
+                    }
+#endif
                 }
                 if (Any)
                 {
@@ -733,7 +768,8 @@ namespace
                         P[J] = { V.Pos[0], V.Pos[1], V.Pos[2] };
                         T.Corner[J].U = V.Uv[0];
                         T.Corner[J].V = V.Uv[1];
-                        std::memcpy(T.Corner[J].Color, V.Color, 4);
+                        if (S.Blend.Present()) T.Corner[J].Color[0] = T.Corner[J].Color[1] = T.Corner[J].Color[2] = T.Corner[J].Color[3] = 255;   // a blend's colour is its layers' weights
+                        else std::memcpy(T.Corner[J].Color, V.Color, 4);
                         Normals = Normals && V.NormalRead;
                         for (int A = 0; A < 3; A++) Vn[static_cast<size_t>(A)] += V.Normal[A];
                     }
@@ -910,7 +946,9 @@ namespace
                             RenderCorner C;
                             C.U = V.Uv[0];
                             C.V = V.Uv[1];
-                            std::memcpy(C.Color, V.Color, 4);
+                            // a blended surface's vertex colour is its layers' weights, not a tint: the base mesh is white and the layers carry the weights (WriteLayerPass)
+                            if (S.Blend.Present()) C.Color[0] = C.Color[1] = C.Color[2] = C.Color[3] = 255;
+                            else std::memcpy(C.Color, V.Color, 4);
                             Soup.Corners.push_back(C);
                         }
                     }
@@ -1025,12 +1063,191 @@ namespace
         for (std::string& Lines : Meshes.CoverageLines) Stats.CoverageLines.push_back(std::move(Lines));
     }
 
+    // The layers of an owner's blended surfaces (Surface::Blend) as decal meshes over the base (docs/hydrax-port/m3.md, after HydraX TerrainMeshes: the base mesh is
+    // drawn by the render pass and every layer above it is a mesh of decal material, coplanar, over the triangles where its weight is not 0, the weight as the vertex alpha
+    // (BlendAlpha), sorted into BO3's decal layers by its place). Same mesher path as the decals (no weld, no removal, coverage per layer label). A surface whose triangles a brush
+    // side or a collision mesh took from the render pass still gets its layers: they are drawn over whatever shows the base. nonColliding, white RGB.
+    void WriteLayerPass(std::string& Out, const MapScene& Scene, uint32_t Owner, RadiantGdt* Gdt, RadiantStats& Stats, size_t& Number)
+    {
+        const int Winding = WindingOf(Scene.Game);
+        RenderSoup Soup;
+        std::vector<std::string> Names;
+        std::vector<uint32_t> Layer;   // per label: the layer's place above the base (1 = the first)
+        std::map<std::string, int> Ids;
+        struct Look
+        {
+            V3 At, Front;
+            std::string Base, LayerMaterial;
+            uint32_t Layer;
+        };
+        std::vector<Look> Looks;
+        size_t UnreadHere = 0, NoColourHere = 0, NoMaterialHere = 0;
+        std::set<std::string> UnreadBases;
+        for (const Mesh& M : Scene.Objects)
+        {
+            if (DrawnWorld::Owner(M.Name) != Owner) continue;
+            for (const Surface& S : M.Surfaces)
+            {
+                const BlendData& B = S.Blend;
+                if (!B.Present() || S.Material.empty()) continue;
+                const auto Mat = Scene.Materials.find(S.Material);
+                if (Mat == Scene.Materials.end() || Mat->second.Layers.size() < B.Layers)
+                {
+                    Stats.LayerSurfacesNoMaterial++;
+                    NoMaterialHere++;
+                    continue;
+                }
+                for (uint32_t L = 0; L < B.Layers && L < MaxBlendLayers; L++)
+                {
+                    const Material::BlendLayer& Ref = Mat->second.Layers[L];
+                    if (Ref.Material.empty())
+                    {
+                        Stats.LayerNoColour++;   // the layer's colour image has no name (AddLayerMaterials): nothing to draw it with
+                        NoColourHere++;
+                        continue;
+                    }
+                    bool Joined = false;
+                    size_t Base = 0;
+                    for (size_t K = 0; K + 2 < S.Indices.size(); K += 3)
+                    {
+                        const Fate F = FateOf(S, K / 3);
+                        if (F != Fate::Patch) continue;
+                        bool Any = false, Unread = false;
+                        for (int J = 0; J < 3; J++)
+                        {
+                            const int W = B.Of(S.Indices[K + J], L);
+                            Any = Any || W > 0;
+                            Unread = Unread || W < 0;
+                        }
+                        // a corner whose weight was not read (the surface's slice did not fit the material's shape) is never taken for 0, and no value is made up for it: the whole
+                        // triangle is left out of the layer (the surface shows its base there), counted apart from the weight-0 triangles and reported once at the end
+                        if (Unread)
+                        {
+                            Stats.LayerTrianglesUnread++;
+                            UnreadHere++;
+                            UnreadBases.insert(S.Material);
+                            continue;
+                        }
+                        if (!Any)
+                        {
+                            Stats.LayerTrianglesSkippedZero[L]++;
+                            continue;
+                        }
+                        if (!Joined)
+                        {
+                            Joined = true;
+                            Base = Soup.Corners.size();
+                            for (size_t V = 0; V < S.Vertices.size(); V++)
+                            {
+                                const Vertex& Vx = S.Vertices[V];
+                                Soup.Positions.insert(Soup.Positions.end(), { Vx.Pos[0], Vx.Pos[1], Vx.Pos[2] });
+                                RenderCorner C;
+                                const size_t U = (V * B.Layers + L) * 2;
+                                C.U = U + 1 < B.Uv.size() ? B.Uv[U] : 0.0f;
+                                C.V = U + 1 < B.Uv.size() ? B.Uv[U + 1] : 0.0f;
+                                C.Color[0] = C.Color[1] = C.Color[2] = 255;
+                                C.Color[3] = BlendAlpha(B.Of(V, L), Ref.Reveal, Ref.Sharpness);
+                                Soup.Corners.push_back(C);
+                            }
+                        }
+                        const std::string Key = Ref.Material + " layer " + std::to_string(L + 1);
+                        const int Label = Ids.emplace(Key, static_cast<int>(Names.size())).first->second;
+                        if (static_cast<size_t>(Label) == Names.size())
+                        {
+                            Names.push_back(Ref.Material);
+                            Layer.push_back(L + 1);
+                        }
+                        V3 P[3], Vn = { 0, 0, 0 };
+                        bool Normals = true;
+                        for (int J = 0; J < 3; J++)
+                        {
+                            const Vertex& V = S.Vertices[S.Indices[K + J]];
+                            P[J] = { V.Pos[0], V.Pos[1], V.Pos[2] };
+                            Normals = Normals && V.NormalRead;
+                            for (int A = 0; A < 3; A++) Vn[A] += V.Normal[A];
+                            Soup.Indices.push_back(static_cast<int32_t>(Base + S.Indices[K + J]));
+                        }
+                        V3 Cr = Cross(Sub(P[1], P[0]), Sub(P[2], P[0]));
+                        const double CrLen = Length(Cr);
+                        V3 Front = Mul(Cr, Winding / (CrLen > 0 ? CrLen : 1.0));
+                        if (Normals && Length(Vn) > 0.5) Front = Mul(Vn, 1.0 / Length(Vn));
+                        Soup.Label.push_back(Label);
+                        Soup.Front.push_back(Front);
+                        Soup.Normal.push_back(Normals ? Vn : V3{ 0, 0, 0 });
+                        Stats.LayerTriangles[L]++;
+                        // a place for the owner to look at: all three corners well into the layer
+                        if (B.Of(S.Indices[K], L) >= 128 && B.Of(S.Indices[K + 1], L) >= 128 && B.Of(S.Indices[K + 2], L) >= 128)
+                            Looks.push_back({ { (P[0][0] + P[1][0] + P[2][0]) / 3, (P[0][1] + P[1][1] + P[2][1]) / 3, (P[0][2] + P[1][2] + P[2][2]) / 3 }, Front, S.Material, Ref.Material, L + 1 });
+                    }
+                }
+            }
+        }
+        if (UnreadHere > 0)
+            Stats.Unresolved.push_back(std::format("approximation: owner {} blend layers: {} layer triangles of {} blended materials have a corner weight that was not read (the slice of the vertex layer data did not fit the material's shape or "
+                                                   "a texture coordinate was not finite); those triangles are left out of the layer and show the base only", Owner, UnreadHere, UnreadBases.size()));
+        if (NoMaterialHere > 0)
+            Stats.Unresolved.push_back(std::format("approximation: owner {} blend layers: {} blended surfaces have no layer materials in the scene, their layers are not written", Owner, NoMaterialHere));
+        if (NoColourHere > 0)
+            Stats.Unresolved.push_back(std::format("approximation: owner {} blend layers: {} layers of blended surfaces have no named colour image, they are not written", Owner, NoColourHere));
+        if (Soup.Indices.empty()) return;
+        // a place for each layer (up to six) where it is well above the base: the camera stands 64 units out along the triangle's front (<map>.ownercheck.txt)
+        for (uint32_t Wanted = 1; Wanted <= MaxBlendLayers && Owner == 0; Wanted++)
+        {
+            // the middle one met of each layer that has any, so every layer has a place to look at
+            std::vector<const Look*> OfLayer;
+            for (const Look& Candidate : Looks)
+                if (Candidate.Layer == Wanted) OfLayer.push_back(&Candidate);
+            if (OfLayer.empty()) continue;
+            const Look& Lk = *OfLayer[OfLayer.size() / 2];
+            Stats.OwnerCheckLines.push_back(std::format("blend layer {}: look at ({}, {}, {}) from ({}, {}, {}); base material {}, layer material {}, decal layer {}; the layer should show over the base here, fading out toward the edge of its patch",
+                                                        Lk.Layer, RadiantNumber(Lk.At[0]), RadiantNumber(Lk.At[1]), RadiantNumber(Lk.At[2]), RadiantNumber(Lk.At[0] + Lk.Front[0] * 64), RadiantNumber(Lk.At[1] + Lk.Front[1] * 64),
+                                                        RadiantNumber(Lk.At[2] + Lk.Front[2] * 64), Lk.Base, Lk.LayerMaterial, BlendLayerName(Lk.Layer) != nullptr ? BlendLayerName(Lk.Layer) : "(none)"));
+        }
+
+        RenderMeshOptions Options;
+        Options.Decal = true;
+        Options.VertexOrderBorders = false;
+        const auto Started = std::chrono::steady_clock::now();
+        RenderMeshResult Meshes = BuildRenderMeshes(Soup, Names, Options);
+        Stats.MeshMilliseconds += static_cast<size_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - Started).count());
+        if (Meshes.Count.TrianglesIn != Meshes.Count.Covered + Meshes.Count.CopiesRemoved + Meshes.Count.ContainedRemoved + Meshes.Count.CollapsedByWeld)
+        {
+            Meshes.Count.AccountingFailed++;
+            Meshes.CoverageLines.push_back(std::format("owner {} blend layers: {} triangles in are not {} covered + {} copies removed + {} collapsed by the weld\n", Owner, Meshes.Count.TrianglesIn, Meshes.Count.Covered,
+                                                       Meshes.Count.CopiesRemoved, Meshes.Count.CollapsedByWeld));
+        }
+        std::vector<std::string> Written(Names.size());
+        for (size_t L = 0; L < Names.size(); L++) Written[L] = MaterialName(Names[L], Gdt);
+        const size_t Before = Out.size();
+        for (const RenderMesh& R : Meshes.Meshes)
+        {
+            MeshTextOptions Text;
+            Text.Prefix = "// brush " + std::to_string(Number++) + "\n {\n";
+            const uint32_t K = Layer[static_cast<size_t>(R.Label)];
+            if (const char* Name = BlendLayerName(K)) Text.DecalLayer = Name;
+            Stats.LayerMeshes[K - 1]++;
+            Out += MeshText(R.Mesh, Written[static_cast<size_t>(R.Label)], R.ReplaceUv, Text, &Stats.MeshTextMaxAbsT) + " }\n";
+        }
+        Stats.LayerBytes += Out.size() - Before;
+        Stats.Patches += Meshes.Count.Meshes;
+        Stats.PatchesColoured += Meshes.Count.MeshesColoured;
+        Stats.MeshLines.push_back(std::format("owner {} blend layers: {} triangles in, {} meshes ({} grids: {} fans, {} lone triangles, {} cells), covered {}, coverage MISSING {} LEFTOVER {}; decal overlap {} partial, {} contained",
+                                              Owner, Meshes.Count.TrianglesIn, Meshes.Count.Meshes, Meshes.Count.Grids, Meshes.Count.Fans, Meshes.Count.LoneTriangles, Meshes.Count.Cells, Meshes.Count.Covered,
+                                              Meshes.Count.CoverageMissing, Meshes.Count.CoverageLeftover, Meshes.Count.OverlapPartial, Meshes.Count.OverlapContained));
+        Stats.Mesh.Add(Meshes.Count);
+        for (std::string& Lines : Meshes.CoverageLines) Stats.CoverageLines.push_back(std::move(Lines));
+    }
+
     // The drawn triangles of Owner's meshes (DrawnWorld::Owner) no brush side draws, as meshes: one pass for the plain surfaces and one for the decals (Kind)
     void WritePatches(std::string& Out, const MapScene& Scene, const DrawnWorld& Drawn, uint32_t Owner, RadiantGdt* Gdt, RadiantStats& Stats,
                       size_t& Number, PatchKind Kind = PatchKind::All)
     {
         if (Kind != PatchKind::Decal) WritePatchPass(Out, Scene, Drawn, Owner, Gdt, Stats, Number, false);
-        if (Kind != PatchKind::NotDecal) WritePatchPass(Out, Scene, Drawn, Owner, Gdt, Stats, Number, true);
+        if (Kind != PatchKind::NotDecal)
+        {
+            WritePatchPass(Out, Scene, Drawn, Owner, Gdt, Stats, Number, true);
+            WriteLayerPass(Out, Scene, Owner, Gdt, Stats, Number);   // the blends' layers go with the decals (--map-prefabs)
+        }
     }
 
     std::string Quote(const std::string& Key, const std::string& Value)
@@ -1166,7 +1383,15 @@ namespace
                                                             { "map_radiant_placements_polar_noise", Stats.PlacementsPolarNoise },
                                                             { "map_radiant_keys_unresolved", Stats.KeysUnresolved },
                                                             { "map_radiant_patches_facing_normal", Stats.PatchesFacingNormal },
-                                                            { "map_radiant_patches_facing_against", Stats.PatchesFacingAgainst } });
+                                                            { "map_radiant_patches_facing_against", Stats.PatchesFacingAgainst },
+                                                            { "map_radiant_layer_bytes", Stats.LayerBytes },
+                                                            { "map_radiant_layer_surfaces_no_material", Stats.LayerSurfacesNoMaterial },
+                                                            { "map_radiant_layer_triangles_unread", Stats.LayerTrianglesUnread },
+                                                            { "map_radiant_layer_no_colour", Stats.LayerNoColour } });
+            for (uint32_t L = 0; L < MaxBlendLayers; L++)
+                Result.Counters.insert(Result.Counters.end(), { { "map_radiant_layer" + std::to_string(L + 1) + "_meshes", Stats.LayerMeshes[L] },
+                                                                { "map_radiant_layer" + std::to_string(L + 1) + "_triangles", Stats.LayerTriangles[L] },
+                                                                { "map_radiant_layer" + std::to_string(L + 1) + "_triangles_weight_zero", Stats.LayerTrianglesSkippedZero[L] } });
             Result.Counters.insert(Result.Counters.end(), { { "map_radiant_patches", Stats.Patches },
                                                             { "map_radiant_patches_coloured", Stats.PatchesColoured },
                                                             { "map_radiant_triangles_degenerate", Stats.TrianglesDegenerate },
@@ -2562,6 +2787,115 @@ int RadiantWriterSelfTest(std::string& Failures)
               "a drawn grid of quads is one mesh with every triangle covered and no facing against the normals", Error + " " + std::to_string(Meshes) + " " + std::to_string(Stats.Patches));
         Check(Text.find("  toolFlags;\n") != std::string::npos && (Text.find("   lightmap_gray\n   3 4 0 8\n") != std::string::npos || Text.find("   lightmap_gray\n   4 3 0 8\n") != std::string::npos),
               "the size line is the grid's 4 x 3 points and 0 8, after a toolFlags line (the stock layout)", Text.substr(0, 400));
+        // M3: a blended surface is a white base mesh and a decal mesh per layer over the triangles where the layer's weight is above 0, the weight the vertex alpha
+        {
+            MapScene Blend;
+            Blend.Game = "h1";
+            Mesh Bw;
+            Bw.Name = "world";
+            Surface Bs;
+            Bs.Material = "blend_a";
+            const float Pts[6][2] = { { 0, 0 }, { 64, 0 }, { 64, 64 }, { 0, 64 }, { 128, 0 }, { 128, 64 } };
+            const int16_t Weights[6] = { 0, 0, 128, 0, 0, 0 };   // only vertex 2 carries the layer: three of the four triangles touch it
+            for (int K = 0; K < 6; K++)
+            {
+                Vertex V;
+                V.Pos[0] = Pts[K][0], V.Pos[1] = Pts[K][1], V.Pos[2] = 0;
+                V.Normal[2] = 1, V.NormalRead = true;
+                V.Uv[0] = Pts[K][0] / 64, V.Uv[1] = Pts[K][1] / 64;
+                V.Color[0] = 255, V.Color[1] = static_cast<uint8_t>(Weights[K]), V.Color[2] = 7, V.Color[3] = 9;   // the weights, not a tint
+                Bs.Vertices.push_back(V);
+                Bs.Blend.Weight.push_back(Weights[K]);
+                Bs.Blend.Uv.push_back(Pts[K][0] / 32), Bs.Blend.Uv.push_back(Pts[K][1] / 32);
+            }
+            Bs.Blend.Layers = 1;
+            Bs.Indices = { 0, 1, 2, 0, 2, 3, 1, 4, 5, 1, 5, 2 };
+            Bw.Surfaces.push_back(Bs);
+            Blend.Objects.push_back(Bw);
+            Blend.Materials["blend_a"].Name = "blend_a";
+            Blend.Materials["blend_a"].Layers.push_back({ "blend_a_dec", false, -1.0f });
+            RadiantStats BStats;
+            std::string BError;
+            const fs::path BMap = Dir / "blend.map";
+            const bool BOk = WriteRadiant(Blend, BMap.string(), BStats, BError);
+            const std::string BText = Read(BMap);
+            Check(BOk && BStats.Mesh.CoverageMissing == 0 && BStats.Mesh.CoverageLeftover == 0 && BStats.Mesh.AccountingFailed == 0, "a blended scene writes with every triangle covered", BError);
+            Check(BStats.LayerTriangles[0] == 3 && BStats.LayerTrianglesSkippedZero[0] == 1 && BStats.LayerMeshes[0] >= 1, "three triangles touch the layer's weight, one does not", std::to_string(BStats.LayerTriangles[0]) + "/" + std::to_string(BStats.LayerTrianglesSkippedZero[0]));
+            Check(BText.find("   blend_a_dec\n") != std::string::npos && BText.find("decalLayerSort \"Asphalt (bottom)\"") != std::string::npos, "the layer is a mesh of its own material in BO3's first decal layer", BText.substr(0, 300));
+            Check(BText.find(" c 255 255 255 128 ") != std::string::npos, "the layer's vertex alpha is its weight, RGB white");
+            const size_t BaseAt = BText.find("   blend_a\n");
+            const size_t BaseEnd = BaseAt == std::string::npos ? BaseAt : BText.find("  }\n", BaseAt);
+            Check(BaseAt != std::string::npos && BText.substr(BaseAt, BaseEnd - BaseAt).find(" c ") == std::string::npos, "the base mesh is white: the vertex colour of a blend is not a tint");
+            // four layers on one triangle, the fourth with a reveal (K 4): each weight reaches the mesh of its own layer as that mesh's vertex alpha, each layer mesh has the layer's own
+            // texture coordinates, and the decal layer is the layer's place
+            {
+                MapScene Multi;
+                Multi.Game = "h1";
+                Mesh Mw;
+                Mw.Name = "world";
+                Surface Ms;
+                Ms.Material = "blend_b";
+                const int16_t PerLayer[4] = { 254, 128, 64, 200 };
+                Ms.Blend.Layers = 4;
+                for (int V = 0; V < 3; V++)
+                {
+                    Vertex Vx;
+                    Vx.Pos[0] = V == 1 ? 64.0f : 0.0f, Vx.Pos[1] = V == 2 ? 64.0f : 0.0f, Vx.Pos[2] = 0;
+                    Vx.Normal[2] = 1, Vx.NormalRead = true;
+                    Ms.Vertices.push_back(Vx);
+                    for (int L = 0; L < 4; L++)
+                    {
+                        Ms.Blend.Weight.push_back(PerLayer[L]);
+                        Ms.Blend.Uv.push_back((L + 1) * 0.25f + Vx.Pos[0] / 256.0f);   // layer L + 1: u 0.25 (L + 1) + x / 256, v 0.5 (L + 1) + y / 256: exact in a float, not degenerate
+                        Ms.Blend.Uv.push_back((L + 1) * 0.5f + Vx.Pos[1] / 256.0f);
+                    }
+                }
+                Ms.Indices = { 0, 1, 2 };
+                Mw.Surfaces.push_back(Ms);
+                Multi.Objects.push_back(Mw);
+                Multi.Materials["blend_b"].Name = "blend_b";
+                for (int L = 0; L < 4; L++) Multi.Materials["blend_b"].Layers.push_back({ "lay" + std::to_string(L + 1) + "_dec", L == 3, L == 3 ? 4.0f : -1.0f });
+                RadiantStats MStats;
+                std::string MError;
+                const fs::path MMap = Dir / "blend_multi.map";
+                const bool MOk = WriteRadiant(Multi, MMap.string(), MStats, MError);
+                const std::string MText = Read(MMap);
+                const auto Block = [&](const std::string& Name) {
+                    const size_t At = MText.find("\n   " + Name + "\n");
+                    return At == std::string::npos ? std::string() : MText.substr(At, MText.find("  }\n", At) - At);
+                };
+                const std::string L1 = Block("lay1_dec"), L2 = Block("lay2_dec"), L3 = Block("lay3_dec"), L4 = Block("lay4_dec");
+                Check(MOk && !L1.empty() && !L2.empty() && !L3.empty() && !L4.empty() && MStats.LayerMeshes[0] == 1 && MStats.LayerMeshes[3] == 1 && MStats.LayerMeshes[4] == 0, "four layers are four meshes, each of its layer's material", MError);
+                Check(L1.find(" c 255 255 255 254 ") != std::string::npos && L2.find(" c 255 255 255 128 ") != std::string::npos && L3.find(" c 255 255 255 64 ") != std::string::npos &&
+                          L4.find(" c 255 255 255 125 ") != std::string::npos,
+                      "each layer's weight is its mesh's vertex alpha; a reveal layer's is (w^2 - 1/(2K) - 0.001) / 0.998 (200 is 125 at K 4)", L4.substr(0, 200));
+                Check(L1.find(" t 256 512 ") != std::string::npos && L4.find(" t 1024 2048 ") != std::string::npos && L4.find(" t 256 512 ") == std::string::npos && L1.find(" t 1024 2048 ") == std::string::npos,
+                      "each layer mesh carries the layer's own texture coordinates (u 0.25 L + x / 256, v 0.5 L + y / 256, times 1024)", L4.substr(0, 200));
+                Check(L1.find("decalLayerSort \"Asphalt (bottom)\"") != std::string::npos && L4.find("decalLayerSort \"Concrete\"") != std::string::npos, "the decal layer is the layer's place above the base (hypothesis: the awi list from the bottom)");
+            }
+            // weights that were not read are never taken for 0: the surface is the base only, the triangles are counted unread and the export says so
+            {
+                MapScene Unread = Blend;
+                for (int16_t& W : Unread.Objects[0].Surfaces[0].Blend.Weight) W = -1;
+                RadiantStats UStats;
+                std::string UError;
+                const bool UOk = WriteRadiant(Unread, (Dir / "blend_unread.map").string(), UStats, UError);
+                bool Said = false;
+                for (const std::string& Line : UStats.Unresolved) Said = Said || Line.find("weight that was not read") != std::string::npos;
+                Check(UOk && UStats.LayerTrianglesUnread == 4 && UStats.LayerTrianglesSkippedZero[0] == 0 && UStats.LayerMeshes[0] == 0 && Said, "unread layer weights are counted unread, not as weight 0, and reported",
+                      UError + " " + std::to_string(UStats.LayerTrianglesUnread) + "/" + std::to_string(UStats.LayerTrianglesSkippedZero[0]));
+                // one corner read above 0 and one not read: no value is made up, the triangle is not in the layer
+                MapScene Mixed = Blend;
+                auto& Wt = Mixed.Objects[0].Surfaces[0].Blend.Weight;
+                Wt = { 0, 0, 255, -1, 0, 0 };
+                Mixed.Objects[0].Surfaces[0].Indices = { 1, 2, 3 };
+                RadiantStats MStats2;
+                std::string MError2;
+                const bool MOk2 = WriteRadiant(Mixed, (Dir / "blend_mixed.map").string(), MStats2, MError2);
+                Check(MOk2 && MStats2.LayerTrianglesUnread == 1 && MStats2.LayerMeshes[0] == 0 && MStats2.LayerTriangles[0] == 0, "a triangle with a read weight above 0 and an unread one is left out of the layer, never written with 0",
+                      MError2 + " " + std::to_string(MStats2.LayerTrianglesUnread) + "/" + std::to_string(MStats2.LayerMeshes[0]));
+            }
+        }
         // the tool name of a mesh from contents: the contents that name a sky, a trigger or a mantle are not clip or caulk, so a mesh is not given them (WriteCollisionMeshes counts and replaces them)
         {
             Collision Empty;

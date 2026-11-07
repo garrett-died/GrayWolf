@@ -82,6 +82,17 @@ namespace H1Layers
             return static_cast<int64_t>(It->second.Bits);
         }
 
+        // The surface word the intersection gives one layer id (the layer's own, whichever place it has in a blend): its bits, one when the id resolved, several when the
+        // blends that hold it share more than one bit (then the layer is one of them: ambiguous, never a guess), -1 for an id no blend held. Via: the evidence, as Surface's.
+        int64_t OfId(const std::string& Id, std::string* Via = nullptr) const
+        {
+            const auto It = Candidates.find(Id);
+            if (It == Candidates.end() || It->second.Bits == 0) return -1;
+            if (Via != nullptr)
+                *Via = std::format("kind=layer_id, layer_id={}, bits=0x{:X}, blends_with_id={}, multi_bit_blends_with_id={}", Id, It->second.Bits, It->second.Blends, It->second.MultiBit);
+            return static_cast<int64_t>(It->second.Bits);
+        }
+
         size_t Resolved() const
         {
             size_t N = 0;

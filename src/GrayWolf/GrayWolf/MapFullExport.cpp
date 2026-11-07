@@ -191,6 +191,12 @@ std::map<std::string, Bo3Target::Techsets::MapUse> GeometryUse(const MapScene& S
     // the sky model is the map's own sky: its materials are named by the map's geometry
     if (!Scene.Sky.Model.empty())
         if (const auto Sky = Scene.Models.find(Scene.Sky.Model); Sky != Scene.Models.end()) Measure(Sky->second, Scene.Sky.Model, false, true);
+    // the layer materials of a blended material (its layers are drawn as decal meshes over its surfaces): used where the blend is, so the same measure
+    const std::map<std::string, Bo3Target::Techsets::MapUse> Surfaces = Drawn;
+    for (const auto& [Name, Use] : Surfaces)
+        if (const auto Mat = Scene.Materials.find(Name); Mat != Scene.Materials.end())
+            for (const Material::BlendLayer& Layer : Mat->second.Layers)
+                if (Only == nullptr || Only->count(Layer.Material)) Drawn.emplace(Layer.Material, Use);
     return Drawn;
 }
 
@@ -430,6 +436,10 @@ bool WriteFullMapFiles(const MapScene& Scene, const Materials::IAdapter& Adapter
             if (!S.Material.empty()) Geometry.insert(S.Material);
     for (const MapDependency& D : List.Dependencies)
         if (D.Type == "material" && Scene.Materials.count(D.Name)) Geometry.insert(D.Name);
+    // the layers of the blends the world draws (CollectMapDependencies lists them already; a scene made some other way is covered here)
+    for (const std::string& Name : std::set<std::string>(Geometry))
+        if (const auto Mat = Scene.Materials.find(Name); Mat != Scene.Materials.end())
+            for (const Material::BlendLayer& Layer : Mat->second.Layers) Geometry.insert(Layer.Material);
     std::error_code Ec;
     if (!Geometry.empty())
     {

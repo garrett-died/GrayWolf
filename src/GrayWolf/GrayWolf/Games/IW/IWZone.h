@@ -128,6 +128,18 @@ public:
         Maps::TriggerLayout TriggerShapes;
         // the entity string's keys by number (Ghosts on: their script strings' token ids)
         std::span<const std::pair<uint32_t, const char*>> EntityKeys;
+        // The layers a game blends a surface of (Modern Warfare Remastered): the world's vertex layer data (GfxWorld: its size, a u32, and its pointer; a surface's
+        // u32 at SurfaceSlice is the byte offset of its slice, its u16 at SurfaceVertices the vertex count) and the game's two pure functions: Shape of a material
+        // (from its textures' semantic hashes: the layers above the base, the bytes of one vertex's slice, a code Decode is given back) and Decode of one vertex.
+        // Unset (Data < 0): no surface of the game is blended in layers.
+        struct BlendLayout
+        {
+            int64_t DataSize = -1, Data = -1;
+            int64_t SurfaceSlice = 0, SurfaceVertices = 16;
+            std::function<bool(const std::vector<uint32_t>& Semantics, const std::string& Name, uint32_t& Layers, uint32_t& Stride, uint32_t& Code)> Shape;
+            std::function<void(ByteView Slice, uint32_t Code, const uint8_t Color[4], Maps::BlendVertex& Out)> Decode;
+        };
+        BlendLayout Blend;
     };
     // Advanced Warfare's and MWR's clipMap_t brushes (the same shapes in both)
     static Maps::ClipLayout AwClipBrushes();

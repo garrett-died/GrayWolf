@@ -300,9 +300,54 @@ bool Builder::Derive(const char* What, const Bo3Target::DeriveRequest& Request, 
     return false;
 }
 
-void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Materials::Source* Source, const std::string& Game)
+int Builder::GreyP99(const fs::path& File)
+{
+    Rgba8Image Image;
+    std::string Error;
+    if (!Bo3Target::LoadRgba8(File, Image, Error) || Image.Width == 0 || Image.Height == 0 || Image.Pixels.size() < static_cast<size_t>(Image.Width) * Image.Height * 4) return -1;
+    std::array<size_t, 256> Histogram{};
+    const size_t Count = static_cast<size_t>(Image.Width) * Image.Height;
+    for (size_t P = 0; P < Count; P++) Histogram[(static_cast<size_t>(Image.Pixels[P * 4]) + Image.Pixels[P * 4 + 1] + Image.Pixels[P * 4 + 2]) / 3]++;
+    size_t Seen = 0;
+    for (size_t G = 0; G < 256; G++)
+    {
+        Seen += Histogram[G];
+        if (Seen * 100 >= Count * 99) return static_cast<int>(G);
+    }
+    return 255;
+}
+
+void Builder::Add(const Materials::Description& Given, const fs::path& Dir, const Materials::Source* Source, const std::string& Game)
 {
     AddDir = Dir;
+    // The pixel check of a family chosen by the surface type alone (Description::PixelMetal, mwr-m1.md F.1): a dielectric by surface whose specular image is bare-metal bright is a metal.
+    // Only this direction is acted on: a metal surface with a dielectric-looking map keeps the advanced family and its map (harmless; counted).
+    Materials::Description Checked;
+    const Materials::Description* Use = &Given;
+    std::vector<Note> PixelNotes;
+    if (Given.Metal.Active())
+    {
+        const fs::path File = (Dir / fs::path(Given.Metal.Specular.Path)).lexically_normal();
+        const int P99 = GreyP99(File);
+        if (P99 < 0) Counter("pixel_metal_unread")++;
+        else
+        {
+            Counter("pixel_metal_checked")++;
+            if (static_cast<float>(P99) > Given.Metal.P99)
+            {
+                Checked = Given;
+                Checked.TechsetName = Given.Metal.PromoteTechset;
+                Checked.Specular = Given.Metal.Specular;
+                Checked.Metal = Materials::Description::PixelMetal();
+                Use = &Checked;
+                Counter("pixel_metal_promoted")++;
+                PixelNotes.push_back({ "material.family_pixel_metal", "game=" + Game + ", p99=" + std::to_string(P99) + ", techset=" + Given.Metal.PromoteTechset,
+                                       "the surface type calls the material a dielectric but its specular image is bare-metal bright (99th percentile of grey above " + std::to_string(static_cast<int>(Given.Metal.P99)) +
+                                           "): it takes the family with a specular colour map" });
+            }
+        }
+    }
+    const Materials::Description& D = *Use;
     const std::string Name = AssetName(D.Name);
     const std::string& SkipWhy = D.SkipWhy;
     if (!SkipWhy.empty())
@@ -344,6 +389,20 @@ void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Ma
         std::stringstream Kinds(D.TexturesUnbound);
         for (std::string Kind; std::getline(Kinds, Kind, ',');) Counter("texture_unbound_" + Kind.substr(0, Kind.find('(')))++;
         M.Notes.push_back({ "material.texture_unbound", "game=" + Game + ", semantics=" + D.TexturesUnbound, "the source binds textures this export does not write: they are named here and not carried to BO3" });
+    }
+    if (!D.Approximations.empty())
+    {
+        std::stringstream Codes(D.Approximations);
+        for (std::string Code; std::getline(Codes, Code, ',');)
+        {
+            Counter("layer_approximation_" + Code)++;
+            M.Notes.push_back({ "material.layer_approximation", "game=" + Game + ", what=" + Code,
+                                Code == "normal_rotation_dropped" ? "the game rotates a layer's normal by a per-vertex 2x2 matrix (hypothesis: the rotation word of the vertex layer data); BO3 has no place for it, the layer's normal is written unrotated"
+                                : Code == "weight_squared_interpolation" ? "MWR squares the interpolated layer weight per pixel (B = sat((w^2 - R) K)); BO3 interpolates the vertex alpha, which holds w^2 - 1/(2K) per vertex: between two different weights the layer is stronger in the middle of the edge in BO3 (a 0 to 1 edge: w^2 0.5 against 0.25); not subdivided"
+                                : Code == "reveal_soft_edge_clamped" ? "the layer's sharpness K is above 50, so 1/(2K) is below the 0.01 material.awi allows for alphaRevealSoftEdge: it is written as 0.01 and the vertex alpha uses 0.01 too"
+                                : Code == "colour_alpha_not_folded" ? "the layer's colour image alpha multiplies its weight per pixel in the game; BO3 has no vertex place for it and the image alpha is left to the decal techset"
+                                                                    : "left out of the source on purpose" });
+        }
     }
     if (!D.FamilyWhy.empty())
     {
@@ -592,6 +651,7 @@ void Builder::Add(const Materials::Description& D, const fs::path& Dir, const Ma
     else if (M.Slots.count("cosinePowerMap")) M.Values.emplace_back("glossSurfaceType", "<full>");
     Counter("type_" + M.Type)++;
     Counter("materials")++;
+    for (Note& N : PixelNotes) M.Notes.push_back(std::move(N));
     Defined.emplace(Name, std::move(M));
 }
 
@@ -840,6 +900,7 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
                         Rq.Op = Bo3Target::DeriveOp::Channel;
                         Rq.Source = From;
                         Rq.Channel = ChannelOf(D.RevealChannel);   // the adapter states which channel of the game's image holds the reveal
+                        Rq.Invert = D.RevealInvert;                // and whether the BO3 reveal is its inverse
                         Rq.Tag = Tag("revealMap");
                         Bound = Derive("reveal", Rq, Grey) && DerivedSlot(M, RevealSlot->Key.c_str(), Grey, "revealMap", "Linear1ch", "compressed");
                     }
@@ -851,7 +912,13 @@ void Builder::ChooseTechset(Material& M, const Materials::Description& D, const 
                     Counter("reveal_conversion_failed")++;
                     M.Notes.push_back({ "material.reveal_conversion_failed", "image=" + fs::path(Im.Path).filename().string(), "the reveal image could not be reduced to one channel; alphaRevealMap is left empty" });
                 }
-                else if (Bound || Slot(M, RevealSlot->Key.c_str(), Reveal, AddDir, "revealMap", "Linear1ch", "compressed")) Counter("reveal_image_bound")++;
+                else if (Bound || Slot(M, RevealSlot->Key.c_str(), Reveal, AddDir, "revealMap", "Linear1ch", "compressed"))
+                {
+                    Counter("reveal_image_bound")++;
+                    // the reveal constants the adapter states (the stock defaults stay where it states none)
+                    if (D.RevealSoftEdge >= 0.0f) M.Values.emplace_back("alphaRevealSoftEdge", Tc::FloatText(D.RevealSoftEdge)), Counter("reveal_soft_edge_from_adapter")++;
+                    if (D.RevealRamp >= 0.0f) M.Values.emplace_back("alphaRevealRamp", Tc::FloatText(D.RevealRamp));
+                }
             }
             break;
         }
@@ -1600,6 +1667,57 @@ int SelfTest(std::string& Failures)
                   Lit.GlossStopsMin == 0.0f && Lit.GlossStopsMax == 16.0f,
               "mwr: the specular is sqrt(F0), the gloss its alpha in 0..16 stops", "");
         Check(!Lit.Naming.Empty() && Lit.LayersDropped == 0, "mwr: the image naming is declared, no layer is dropped on a single layer", "");
+        // M1b: the pixel check of the family. A dielectric by surface (concrete, bit 4) with a specular image states a promotion; a metal by surface (bit 12) states none
+        {
+            const Materials::Description Concrete = Described("m_l_sm_lmpb_r0c0n0sd0om0_nfwpf", 2, 1ll << 4, false), MetalSurface = Described("m_l_sm_lmpb_r0c0n0sd0om0_nfwpf", 2, 1ll << 12, false);
+            Check(Concrete.Metal.Active() && Concrete.Metal.PromoteTechset == "lit_advanced_fullspec" && Concrete.Specular.Empty() && !MetalSurface.Metal.Active() && MetalSurface.TechsetName == "lit_advanced_fullspec",
+                  "mwr: a dielectric-by-surface material keeps its specular image for the pixel check and names the family a metal takes; a metal surface needs no check", Concrete.TechsetName + " -> " + Concrete.Metal.PromoteTechset);
+            // the Builder reads the pixels: a bright map promotes, a dark one does not
+            auto Grey = [&](const char* Name, uint8_t Level) {
+                Rgba8Image Image;
+                Image.Width = Image.Height = 8;
+                Image.Pixels.assign(8 * 8 * 4, Level);
+                for (size_t P = 3; P < Image.Pixels.size(); P += 4) Image.Pixels[P] = 255;
+                std::string Error;
+                return Bo3Target::SaveRgba8(Dir / Name, Image, Error);
+            };
+            Check(Grey("m1b_bright.png", 200) && Grey("m1b_dark.png", 50) && Builder::GreyP99(Dir / "m1b_bright.png") == 200 && Builder::GreyP99(Dir / "m1b_dark.png") == 50 && Builder::GreyP99(Dir / "m1b_none.png") == -1,
+                  "mwr: the 99th percentile of grey of a PNG, -1 for a file that is not there", std::to_string(Builder::GreyP99(Dir / "m1b_bright.png")));
+            const auto Promoted = [&](const char* Image) {
+                Materials::Description D = Concrete;
+                D.Name = "mtl_h1_pixelmetal";
+                D.Albedo = Map("c.png");
+                D.Normal = Map("n.png");
+                D.TechsetName = "lit_plus";
+                D.Metal.Specular.Path = Image;
+                D.Metal.PromoteTechset = "lit_advanced_fullspec";
+                D.Specular = Materials::Map();
+                Builder B(Base, "t_");
+                B.TechsetData(&Data);
+                B.Add(D, Dir, nullptr, "mwr");
+                const Builder::Resolved R = B.Resolve();
+                const auto It = B.Counters().find("t_pixel_metal_promoted");
+                return std::make_pair(R.Materials.empty() ? std::string("(none)") : Value(R.Materials[0], "materialType"), It == B.Counters().end() ? size_t(0) : It->second);
+            };
+            // a layer's approximations are rows and counters
+            {
+                Materials::Description L = Concrete;
+                L.Name = "mtl_h1_layerapprox";
+                L.Albedo = Map("c.png");
+                L.Approximations = "colour_alpha_not_folded,normal_rotation_dropped";
+                Builder Bl(Base, "t_");
+                Bl.TechsetData(&Data);
+                Bl.Add(L, Dir, nullptr, "mwr");
+                const Builder::Resolved Rl = Bl.Resolve();
+                size_t Rows = 0;
+                for (const auto& N : Rl.Materials.empty() ? std::vector<Builder::Note>() : Rl.Materials[0].Notes) Rows += N.Code == "material.layer_approximation" ? 1 : 0;
+                const auto Counted = Bl.Counters().find("t_layer_approximation_normal_rotation_dropped");
+                Check(Rows == 2 && Counted != Bl.Counters().end() && Counted->second == 1, "mwr: a layer's approximations are one material.layer_approximation row each and counted", std::to_string(Rows));
+            }
+            const auto Bright = Promoted("m1b_bright.png"), Dark = Promoted("m1b_dark.png");
+            Check(Bright.first == "lit_advanced_fullspec" && Bright.second == 1 && Dark.first == "lit_plus" && Dark.second == 0, "mwr: a dielectric by surface whose specular image is bare-metal bright takes the family with a specular colour map; a dark one does not",
+                  Bright.first + " " + std::to_string(Bright.second) + " / " + Dark.first + " " + std::to_string(Dark.second));
+        }
         const Materials::Description Decal = Described("m_l_sm_lmpb_r0c0n0sd0om0_ndw_aat_nfwpf", 0x10, 1ll << 4, false);
         Check(Decal.TechsetName == "lit_decal_plus" && Decal.Specular.Empty() && Decal.Alpha == Materials::AlphaMode::Blend, "mwr: ndw + aat is a decal (plus family for a non-metal, no specular map), blended", Decal.TechsetName);
         const Materials::Description Pane = Described("m_l_sm_lmpb_r0c0n0sd0om0_cltrans_nfwpf", 0x20, 1ll << 8, false);
@@ -1704,20 +1822,25 @@ int SelfTest(std::string& Failures)
                   "C5: a reveal derive failure binds no raw image, writes material.reveal_conversion_failed and does not count reveal_image_bound", Rr.Materials.empty() ? "(none)" : Value(Rr.Materials[0], "alphaRevealMap"));
             // D12: the channel of the reveal image comes from the adapter (the description), not from shared code
             ImageChannel Asked = ImageChannel::Red;
+            bool AskedInvert = false;
             Builder Bc(Base, "t_");
             Bc.TechsetData(&Data);
             Bc.ConvertImages(true);
             Bc.SetRunRoot(Dir);
             Bc.DeriveHook = [&](const char*, const Bo3Target::DeriveRequest& Request, fs::path& File) {
                 Asked = Request.Channel;
+                AskedInvert = Request.Invert;
                 File = Dir / "derived_reveal.png";
                 std::ofstream(File, std::ios::binary) << "x";
                 return true;
             };
             Rv.RevealChannel = 2;
+            Rv.RevealInvert = true, Rv.RevealSoftEdge = 0.125f, Rv.RevealRamp = 0.0f;
             Bc.Add(Rv, Dir, &Sr, "mwr");
-            Bc.Resolve();
+            const auto Rb = Bc.Resolve();
             Check(Asked == ChannelOf(2), "D12: the reveal channel asked of the derive is the description's (RevealChannel), not a constant in shared code", std::to_string(static_cast<int>(Asked)));
+            Check(AskedInvert && !Rb.Materials.empty() && Value(Rb.Materials[0], "alphaRevealSoftEdge") == "0.125" && Value(Rb.Materials[0], "alphaRevealRamp") == "0",
+                  "M3: a layer's reveal is derived inverted and the material carries the soft edge and the ramp the adapter states", Rb.Materials.empty() ? "(none)" : Value(Rb.Materials[0], "alphaRevealSoftEdge") + " " + Value(Rb.Materials[0], "alphaRevealRamp"));
         }
         {
             // C6: no techset can be chosen: the fallback is still reported, and a rules_* reason reaches the gate
@@ -1828,10 +1951,13 @@ int SelfTest(std::string& Failures)
             Side.Materials.back().SkipWhy = "combo_image:image=x";
             Side.Materials.back().TechsetWhy = "no_techset";
             Side.Materials.back().RevealSemantic = 0x34D849D5u;
+            Side.Materials.back().RevealInvert = true, Side.Materials.back().RevealSoftEdge = 0.125f, Side.Materials.back().RevealRamp = 0.0f, Side.Materials.back().RevealChannel = 1;
             const std::string SidePath = (Dir / "rules.materials.json").string();
             const bool Wrote = Materials::WriteSidecar(SidePath, Side), Read = Materials::ReadSidecar(SidePath, Back);
             Check(Wrote && Read && Back.Materials.size() == 1 && Back.Materials[0].TechsetName == "lit_advanced" && Back.Materials[0].SkipWhy == "combo_image:image=x" && Back.Materials[0].TechsetWhy == "no_techset" && Back.Materials[0].RevealSemantic == 0x34D849D5u,
                   "the sidecar keeps a game's techset name, skip reason and reveal slot", std::format("{} {}", Wrote, Read));
+            Check(Read && Back.Materials.size() == 1 && Back.Materials[0].RevealInvert && Back.Materials[0].RevealSoftEdge == 0.125f && Back.Materials[0].RevealRamp == 0.0f && Back.Materials[0].RevealChannel == 1,
+                  "the sidecar keeps the reveal's inversion, soft edge, ramp and channel (a blend layer's reveal)", "");
         }
         Builder::Resolved Rn, Ru, Rz, Rr;
         Run(Named, Rn);

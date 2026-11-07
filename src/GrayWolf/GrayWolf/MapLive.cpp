@@ -38,7 +38,11 @@ std::string AddMaterial(MapScene& Scene, const XMaterial_t& M)
     Out.SurfaceFlags = M.SurfaceFlags, Out.RenderFlags = M.RenderFlags, Out.SurfaceVia = M.SurfaceVia;
     for (const XImage_t& I : M.Images)
     {
-        if (I.ImageName.empty()) continue;
+        if (I.ImageName.empty())
+        {
+            if (I.SemanticHash != 0) Out.UnnamedSemantics.push_back(I.SemanticHash);
+            continue;
+        }
         Out.Textures.push_back({ I.SemanticHash, I.ImageName });
         Scene.Images[I.ImageName];
     }
@@ -331,7 +335,15 @@ bool WorldBuilder::Triangle(const std::string& Material, uint32_t A, uint32_t B,
     const uint32_t In[3] = { A, B, C };
     for (int K = 0; K < 3; K++)
     {
-        const auto Found = Map.find(In[K]);
+        // a blended surface's vertex carries the data of the surface it was read for (its layer uvs and COLOR1 weights): two world surfaces of one material that share a vertex
+        // number each keep a corner of their own; any other game reads a vertex once per material as ever
+        const uint64_t Key = Blend ? (static_cast<uint64_t>(Source + 1) << 32) | In[K] : In[K];
+        if (Blend && SharedCount != nullptr)
+        {
+            const auto [Seen, FirstTime] = FirstSource.try_emplace((static_cast<uint64_t>(It->second) << 32) | In[K], Source);
+            if (!FirstTime && Seen->second != Source) *SharedCount += Map.count(Key) == 0 ? 1 : 0;
+        }
+        const auto Found = Map.find(Key);
         if (Found != Map.end())
         {
             Local[K] = Found->second;
@@ -348,8 +360,22 @@ bool WorldBuilder::Triangle(const std::string& Material, uint32_t A, uint32_t B,
             if (Sf.Vertices.empty()) Sf.UvSets = 1 + N;
             Sf.MoreUvs.insert(Sf.MoreUvs.end(), Uvs, Uvs + (Sf.UvSets - 1) * 2);
         }
+        if (Blend)
+        {
+            // the layers come from the material's shape, so every vertex of a surface has the same count; one that does not (never) is not read
+            BlendVertex Layers;
+            const uint32_t N = std::min(Blend(In[K], V, Layers), MaxBlendLayers);
+            if (Sf.Vertices.empty()) Sf.Blend.Layers = N;
+            for (uint32_t L = 0; L < Sf.Blend.Layers; L++)
+            {
+                const bool Same = N == Sf.Blend.Layers;
+                Sf.Blend.Weight.push_back(Same ? Layers.Weight[L] : static_cast<int16_t>(-1));
+                Sf.Blend.Uv.push_back(Same ? Layers.Uv[L][0] : 0.0f);
+                Sf.Blend.Uv.push_back(Same ? Layers.Uv[L][1] : 0.0f);
+            }
+        }
         Sf.Vertices.push_back(V);
-        Map.emplace(In[K], Local[K]);
+        Map.emplace(Key, Local[K]);
     }
     Sf.Indices.insert(Sf.Indices.end(), Local, Local + 3);
     if (Sort >= 0) Sf.TriangleSort.push_back(static_cast<uint32_t>(Sort));
@@ -358,13 +384,14 @@ bool WorldBuilder::Triangle(const std::string& Material, uint32_t A, uint32_t B,
 }
 
 void BuildWorld(MapScene& Scene, uint32_t BrushCount, uint32_t SurfaceCount, const std::function<std::pair<uint32_t, uint32_t>(uint32_t)>& Range,
-                const WorldBuilder::Fetch& Read, const std::function<void(uint32_t, WorldBuilder&)>& Surface, const WorldBuilder::FetchUvs& MoreUvs)
+                const WorldBuilder::Fetch& Read, const std::function<void(uint32_t, WorldBuilder&)>& Surface, const WorldBuilder::FetchUvs& MoreUvs,
+                const WorldBuilder::FetchBlend& Blend)
 {
     for (uint32_t B = 0; B < BrushCount; B++)
     {
         const auto [First, End] = Range(B);
         if (End <= First || First >= SurfaceCount) continue;
-        WorldBuilder Mesh(B == 0 ? "world" : "brushmodel_" + std::to_string(B), Read, MoreUvs);
+        WorldBuilder Mesh(B == 0 ? "world" : "brushmodel_" + std::to_string(B), Read, MoreUvs, Blend);
         for (uint32_t S = First; S < End && S < SurfaceCount; S++) Surface(S, Mesh);
         if (Mesh.Triangles()) Scene.Objects.push_back(Mesh.Take());
     }
@@ -390,11 +417,19 @@ size_t AddWorld(MapScene& Scene, const WorldLayout& L, const WorldBuilder::Fetch
     // the surface being added, for MoreUvs (a vertex's number in it)
     int64_t Current = -1;
     uint32_t CurrentBase = 0;
+    std::string CurrentMaterial;
+    WorldBuilder::FetchBlend Blend;
+    if (L.Blend && L.VertexBytes == 0)
+        // a vertex below the surface's first one is outside it: its layers are still the material's (a surface is never a blend for some vertices only), its data unread (the
+        // game's function counts it)
+        Blend = [&](uint32_t I, const Vertex& V, BlendVertex& Out) { return L.Blend(Current, CurrentMaterial, I >= CurrentBase ? I - CurrentBase : 0xFFFFFFFFu, V, Out); };
     WorldBuilder::FetchUvs MoreUvs;
     if (L.MoreUvs && L.VertexBytes == 0)
         MoreUvs = [&](uint32_t I, float* Out, uint32_t Max) { return I >= CurrentBase ? L.MoreUvs(Current, I - CurrentBase, Out, Max) : 0u; };
     BuildWorld(Scene, L.BrushCount, L.SurfaceCount, Range, Read, [&](uint32_t S, WorldBuilder& Mesh) {
         if (L.Skip && L.Skip->count(S)) return;
+        Mesh.SetSource(S);
+        Mesh.CountShared(L.SharedVertices);
         const int64_t Sf = L.Surfaces + (int64_t)S * L.SurfaceSize;
         const uint32_t Base = U32(Sf + L.FirstVertex) / std::max(L.FirstVertexUnit, 1u) + (L.VertexBase ? L.VertexBase(Sf) : 0u),
                        BaseIndex = U32(Sf + L.BaseIndex);
@@ -405,6 +440,7 @@ size_t AddWorld(MapScene& Scene, const WorldLayout& L, const WorldBuilder::Fetch
                                                        : ExportNaming::At<uint64_t>(Img, Sf + L.Material);
         auto Found = Names.find(MatAddress);
         if (Found == Names.end()) Found = Names.emplace(MatAddress, MaterialOf(MatAddress)).first;
+        CurrentMaterial = Found->second;
         for (uint32_t T = 0; T < Tris; T++)
         {
             const uint32_t I = BaseIndex + T * 3;
@@ -415,7 +451,7 @@ size_t AddWorld(MapScene& Scene, const WorldLayout& L, const WorldBuilder::Fetch
             };
             if (!Mesh.Triangle(Found->second, Idx(0), Idx(1), Idx(2), Sort)) Bad++;
         }
-    }, MoreUvs);
+    }, MoreUvs, Blend);
     return Bad;
 }
 }

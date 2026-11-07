@@ -6,6 +6,8 @@
 #include "ExportNaming.h"
 #include "ExportWriters.h"
 #include "FileSystems.h"
+#include "Games/IW/BlendSlices.h"
+#include "MapBlend.h"
 #include "MapLive.h"
 #include "SABSupport.h"
 #include "SettingsManager.h"
@@ -248,7 +250,89 @@ bool IWZone::ReadLevel(Maps::MapScene& Scene, std::map<std::string, uint64_t>& M
         Counter("map_surface_materials_unresolved")++;
         return std::string();
     };
+    // The layers of a blended surface (MapLayout::Blend). A surface's slice of the vertex layer data is read only when its size is what the material's shape says: the
+    // slice runs to the next slice's offset (or the end of the data), so a stride that is not the shape's is seen, counted and the surface's layers are left unread (-1),
+    // never read at a guessed stride.
+    std::map<std::string, std::tuple<bool, uint32_t, uint32_t, uint32_t>> Shapes;   // scene material -> (a blend, layers, stride, the game's code)
+    std::unique_ptr<BlendSlices> Slices;
+    int64_t LayerData = -1;
+    uint32_t LayerBytes = 0;
+    if (M.Blend.Data >= 0 && M.Blend.Shape && M.Blend.Decode)
+    {
+        LayerData = Off(At<uint64_t>(Img, World + M.Blend.Data));
+        LayerBytes = At<uint32_t>(Img, World + M.Blend.DataSize);
+        // the surface records must lie in the zone before they are read, and so must the data
+        const bool SurfacesInside = Surfaces >= 0 && static_cast<uint64_t>(Surfaces) + static_cast<uint64_t>(SurfaceCount) * static_cast<uint64_t>(L.SurfaceSize) <= Img.size();
+        if (LayerData >= 0 && static_cast<uint64_t>(LayerData) + LayerBytes <= Img.size() && SurfacesInside)
+        {
+            std::vector<uint32_t> Starts;
+            Starts.reserve(SurfaceCount);
+            for (uint32_t S = 0; S < SurfaceCount; S++) Starts.push_back(At<uint32_t>(Img, Surfaces + static_cast<int64_t>(S) * L.SurfaceSize + M.Blend.SurfaceSlice));
+            Slices = std::make_unique<BlendSlices>(std::move(Starts), LayerBytes);
+        }
+        else
+            LayerData = -1;
+        Counter(LayerData >= 0 ? "map_blend_data_bytes" : "map_blend_data_unreadable") += LayerBytes;
+    }
+    int64_t LastSurface = -1;
+    bool SliceOk = false;
+    uint32_t SliceAt = 0, SliceCount = 0, SliceStride = 0, SliceCode = 0, SliceLayers = 0;
+    size_t SharedVertices = 0;
+    L.SharedVertices = &SharedVertices;
+    if (LayerData >= 0 && Slices)
+        L.Blend = [&](int64_t Sf, const std::string& Material, uint32_t Local, const Maps::Vertex& V, Maps::BlendVertex& Out) -> uint32_t {
+            auto Found = Shapes.find(Material);
+            if (Found == Shapes.end())
+            {
+                std::vector<uint32_t> Semantics;
+                if (const auto Mat = Scene.Materials.find(Material); Mat != Scene.Materials.end())
+                {
+                    for (const Maps::Texture& T : Mat->second.Textures) Semantics.push_back(T.Semantic);
+                    // a texture whose image the reader could not name still has its place in the slice's shape
+                    Semantics.insert(Semantics.end(), Mat->second.UnnamedSemantics.begin(), Mat->second.UnnamedSemantics.end());
+                }
+                uint32_t Layers = 0, Stride = 0, Code = 0;
+                const bool Blend = M.Blend.Shape(Semantics, Material, Layers, Stride, Code) && Layers != 0;
+                Found = Shapes.emplace(Material, std::make_tuple(Blend, Layers, Stride, Code)).first;
+            }
+            const auto& [Blend, Layers, Stride, Code] = Found->second;
+            if (!Blend) return 0;
+            if (Sf != LastSurface)
+            {
+                LastSurface = Sf;
+                SliceAt = At<uint32_t>(Img, Sf + M.Blend.SurfaceSlice);
+                SliceCount = At<uint16_t>(Img, Sf + M.Blend.SurfaceVertices);
+                SliceStride = Stride, SliceCode = Code, SliceLayers = Layers;
+                const uint64_t End = Slices->EndOf(SliceAt);
+                SliceOk = Slices->Fits(SliceAt, SliceCount, Stride);
+                Counter("map_blend_surfaces")++;
+                Counter(SliceOk ? "map_blend_surfaces_read" : "map_blend_surfaces_stride_mismatch")++;
+                if (!SliceOk && Dbg)
+                    std::fprintf(Dbg, "[blend] %s layers %u stride %u: slice at %u, %u vertices, %llu bytes to the next slice\n", Material.c_str(), Layers, Stride, SliceAt, SliceCount,
+                                 static_cast<unsigned long long>(End >= SliceAt ? End - SliceAt : 0));
+            }
+            Out = Maps::BlendVertex();
+            if (Local >= SliceCount && SliceOk)
+            {
+                Counter("map_blend_vertex_outside_surface")++;   // a vertex number the surface does not own: its layers are the material's, its data unread
+                return SliceLayers;
+            }
+            if (!SliceOk || Local >= SliceCount) return SliceLayers;
+            const size_t At_ = static_cast<size_t>(LayerData) + SliceAt + static_cast<size_t>(Local) * SliceStride;
+            M.Blend.Decode(Img.subspan(At_, SliceStride), SliceCode, V.Color, Out);
+            if (Out.BadUv != 0) Counter("map_blend_uv_nonfinite")++;
+            Counter(Out.Rot == 0 ? "map_blend_rot_vertices_identity" : Out.Rot == 1 ? "map_blend_rot_vertices_flipped" : "map_blend_rot_vertices_rotated")++;
+            return SliceLayers;
+        };
     if (const size_t Bad = Maps::AddWorld(Scene, L, Fetch, MaterialOf)) Counter("map_triangles_unread") += Bad;
+    if (M.Blend.Data >= 0)
+    {
+        std::map<std::string, size_t> Measured;
+        Counter("map_blend_vertices_shared_between_surfaces") += SharedVertices;
+        Maps::MarkUnreadBlends(Scene);
+        Maps::BlendCounters(Maps::MeasureBlends(Scene), Measured);
+        for (const auto& [Name, N] : Measured) Counter(Name) += N;
+    }
 
     AddStaticModels(Scene, Models, Off(At<uint64_t>(Img, World + M.SModels)), At<uint32_t>(Img, World + M.SModelCount), M.SModelSize, M.SModelModel);
     AddDynamicEntities(Scene, Models, M.Clip, M.DynCounts, M.DynLists, M.DynSize, M.DynDestroyed, M.DynPose);

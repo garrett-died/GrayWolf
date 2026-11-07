@@ -27,6 +27,11 @@ rule|glass|token=cltrans;surface=glass|glass|blend|hypothesis: cltrans plus the 
 rule|cltrans_adv|token=cltrans;metal|lit_transparent_advanced_fullspec|blend|hypothesis: metals take the advanced family (owner's h1_materials / ww2 gdts, Treyarch Materials.txt)
 rule|cltrans_plain|token=cltrans;plain|lit_transparent|blend|hypothesis: neither gloss nor occlusion
 rule|cltrans|token=cltrans|lit_transparent_plus|blend|hypothesis: non-metals take the plus family (aoMap, glossMap, no specColorMap)
+rule|layer_reveal_adv|token=layer;reveal;metal|lit_decal_reveal_advanced_fullspec|blend|hypothesis: a blend layer (Games/H1/BlendLayers.cpp makes it a scene material of its own) with a reveal map is a reveal decal; metals take the advanced family
+rule|layer_reveal|token=layer;reveal|lit_decal_reveal_plus|blend|hypothesis: a layer with a reveal map, non-metal (the plus family, as the base materials)
+rule|layer_adv|token=layer;metal|lit_decal_advanced_fullspec|blend|hypothesis: a layer with no reveal map is a plain alpha decal, its weight the vertex alpha
+rule|layer_plain|token=layer;plain|lit_decal|blend|hypothesis
+rule|layer|token=layer|lit_decal_plus|blend|hypothesis
 rule|decal_reveal_adv|token=ndw;token=aat;reveal;metal|lit_decal_reveal_advanced_fullspec|blend|hypothesis
 rule|decal_reveal|token=ndw;token=aat;reveal|lit_decal_reveal_plus|blend|owner's practice: h1_asphalt_rough_01_rvl is lit_decal_reveal_plus with alphaRevealMap i_<stem>_r; needs the bound reveal image
 rule|decal_aat_adv|token=ndw;token=aat;metal|lit_decal_advanced_fullspec|blend|hypothesis

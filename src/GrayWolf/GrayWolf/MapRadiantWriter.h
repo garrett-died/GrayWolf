@@ -89,6 +89,9 @@ namespace Maps
         size_t DecalMeshesLayered = 0, DecalMeshesSortUnnamed = 0, DecalMeshesNoSort = 0;
         size_t DecalSortNonzeroOnDecal = 0, DecalSortZeroOnDecal = 0, DecalSortNonzeroOnSurface = 0, DecalSortZeroOnSurface = 0;   // the world triangles by decal sort (nonzero / zero) and kind of material
         std::map<std::string, size_t> DecalLayerMeshes;
+        // M3: the layers of blended surfaces as decal meshes (WriteLayerPass), by the layer's place above the base (index 0 = the first)
+        std::array<size_t, MaxBlendLayers> LayerMeshes{}, LayerTriangles{}, LayerTrianglesSkippedZero{};
+        size_t LayerBytes = 0, LayerSurfacesNoMaterial = 0, LayerTrianglesUnread = 0, LayerNoColour = 0;
         std::vector<std::vector<std::vector<char>>> CollisionTaken;
         // one block per material whose coverage failed (written to <map>.coverage.txt)
         std::vector<std::string> CoverageLines;

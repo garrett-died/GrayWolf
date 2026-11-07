@@ -67,20 +67,30 @@ namespace Maps
         // a vertex's UV sets after its Uv: up to Max pairs written to Out, how many returned
         using FetchUvs = std::function<uint32_t(uint32_t Index, float* Out, uint32_t Max)>;
         static constexpr uint32_t MaxMoreUvs = 7;
-        WorldBuilder(std::string Name, Fetch Read, FetchUvs MoreUvs = {})
-            : Out{ std::move(Name), {} }, Read(std::move(Read)), MoreUvs(std::move(MoreUvs)) {}
+        // a vertex's blend layers (the weights and texture coordinates of the layers above the base): the number of layers its surface has (0: not blended),
+        // the vertex's data written to Out (weights -1 where unread)
+        using FetchBlend = std::function<uint32_t(uint32_t Index, const Vertex& V, BlendVertex& Out)>;
+        WorldBuilder(std::string Name, Fetch Read, FetchUvs MoreUvs = {}, FetchBlend Blend = {})
+            : Out{ std::move(Name), {} }, Read(std::move(Read)), MoreUvs(std::move(MoreUvs)), Blend(std::move(Blend)) {}
         // false when a vertex could not be read (the triangle is left out)
         // Sort: the triangle's decal sort where the game gives one (-1: none read), kept per triangle (Surface::TriangleSort); it does not split the surface
         bool Triangle(const std::string& Material, uint32_t A, uint32_t B, uint32_t C, int64_t Sort = -1);
         size_t Triangles() const { return Count; }
+        // The world surface the next triangles belong to (blends: a vertex number two surfaces share is read for each), and where the vertices that were shared are counted
+        void SetSource(int64_t S) { Source = S; }
+        void CountShared(size_t* Into) { SharedCount = Into; }
         Mesh Take() { return std::move(Out); }
 
     private:
         Mesh Out;
         Fetch Read;
         FetchUvs MoreUvs;
+        FetchBlend Blend;
         std::unordered_map<std::string, size_t> Group;                  // material (and decal sort) -> surface
-        std::vector<std::unordered_map<uint32_t, uint32_t>> Remap;      // per surface
+        std::vector<std::unordered_map<uint64_t, uint32_t>> Remap;      // per surface: the vertex number, with the source surface's when blends are read
+        std::unordered_map<uint64_t, int64_t> FirstSource;              // blends: (surface, vertex number) -> the world surface it was first read for
+        int64_t Source = -1;
+        size_t* SharedCount = nullptr;
         size_t Count = 0;
     };
 
@@ -89,7 +99,8 @@ namespace Maps
     // adding one surface's triangles to the model's builder; a model without a triangle left out
     void BuildWorld(MapScene& Scene, uint32_t BrushCount, uint32_t SurfaceCount,
                     const std::function<std::pair<uint32_t, uint32_t>(uint32_t Brush)>& Range, const WorldBuilder::Fetch& Read,
-                    const std::function<void(uint32_t Surface, WorldBuilder& Mesh)>& Surface, const WorldBuilder::FetchUvs& MoreUvs = {});
+                    const std::function<void(uint32_t Surface, WorldBuilder& Mesh)>& Surface, const WorldBuilder::FetchUvs& MoreUvs = {},
+                    const WorldBuilder::FetchBlend& Blend = {});
 
     // A GfxWorld's surfaces as every game lays them out (C2M's readers, BO4 and Ghosts): brush
     // models own ranges of surfaces (model 0 is the level), a surface a range of triangles in the
@@ -116,6 +127,10 @@ namespace Maps
         // a surface's vertex's UV sets after its Uv (by the surface's position and the vertex's
         // number in it: up to Max pairs written to Out, how many returned); unset: one set
         std::function<uint32_t(int64_t Surface, uint32_t Local, float* Out, uint32_t Max)> MoreUvs;
+        // a surface's vertex's blend layers (WorldBuilder::FetchBlend), by the surface's position, its material's scene name and the vertex's number in it; unset: none
+        std::function<uint32_t(int64_t Surface, const std::string& Material, uint32_t Local, const Vertex& V, BlendVertex& Out)> Blend;
+        // counts, when set: vertices (of a blend) that two world surfaces of one material share by number and so were read once for each
+        size_t* SharedVertices = nullptr;
     };
     // Adds one world mesh per brush model with triangles; the triangles left out (a vertex not read).
     size_t AddWorld(MapScene& Scene, const WorldLayout& L, const WorldBuilder::Fetch& Read,

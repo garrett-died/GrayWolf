@@ -5,6 +5,8 @@
 // .ff header, the LOD surfaces the game fills in at load time, the pixels of loaded images inside
 // the zone, and sounds through the aliases.
 
+#include "Games/H1/BlendLayers.h"
+#include "MapBlend.h"
 #include "Games/H1/LayerBits.h"
 #include "CoDAssets.h"
 #include "DiskGame.h"
@@ -405,6 +407,19 @@ namespace
         // is written under an unresolved key, never as BO3's colour or intensity.
         M.Lights.Up = 32, M.Lights.Def = 0x88, M.Lights.ColorUnit = 15500.03f, M.Lights.ColorKey = "color_div_15500_03";
         M.ImageNameAt = ImageNameAt;
+        // the layers of a blend: the world's vertex layer data (size u32 at gfx_map +0x150, pointer at +0x158) and a surface's slice offset (u32 at 0) and vertex count (u16 at 16)
+        // (mwr-materials.md 12.3); the shape and the decoding are Games/H1/BlendLayers.h's
+        M.Blend.DataSize = 0x150, M.Blend.Data = 0x158, M.Blend.SurfaceSlice = 0, M.Blend.SurfaceVertices = 16;
+        M.Blend.Shape = [](const std::vector<uint32_t>& Semantics, const std::string& Name, uint32_t& Layers, uint32_t& Stride, uint32_t& Code) {
+            const H1Blend::Shape S = H1Blend::ShapeOf(Semantics, Name);
+            Layers = S.Layers, Stride = S.Stride(), Code = S.Layers | (S.Rotations << 8);
+            return S.Layers != 0;
+        };
+        M.Blend.Decode = [](ByteView Slice, uint32_t Code, const uint8_t Color[4], Maps::BlendVertex& Out) {
+            H1Blend::Shape S;
+            S.Layers = Code & 0xff, S.Rotations = Code >> 8;
+            H1Blend::Decode(Slice, S, Color, Out);
+        };
         M.EntityKeys = H1Keys::EntityKeys;
         M.ClipBrushes = IWZone::AwClipBrushes(), M.Triggers = 0x18;   // Advanced Warfare's shapes; MapEnts' MapTriggers at 0x18
         // The partitions add a vertex segment to a triangle's u16 numbers (Modern Warfare Remastered, measured on mp_crash: 16-byte records, triangle count u8, border count u8,
@@ -419,6 +434,29 @@ namespace
     bool MwrZone::ReadMap(Maps::MapScene& Scene, std::map<std::string, uint64_t>& Models)
     {
         const bool Ok = ReadLevel(Scene, Models, Level(), GameModernWarfareRM::ReadXMaterial);
+        // one scene material per distinct layer art of the level's blends
+        {
+            if (!Layers) Layers = MakeLayers(Books);
+            std::map<std::string, size_t> Made;
+            const size_t N = H1Blend::AddLayerMaterials(Scene, [this](const std::string& Id, std::string& Via) { return Layers->OfId(Id, &Via); }, &Made);
+            Counter("map_blend_layer_materials") += N;
+            for (const auto& [Name, V] : Made) Counter(Name) += V;
+        }
+        {
+            std::map<std::string, size_t> Interp;
+            Maps::MeasureBlendInterpolation(Scene, Interp);
+            for (const auto& [Name, N] : Interp) Counter(Name) += N;
+        }
+        // evidence for the blend reader's field positions that does not rest on the slice size (counters map_blend_uv_*, map_blend_shared_*, map_blend_smooth_*)
+        if (GetEnvironmentVariableA("GH_BLEND_EVIDENCE", nullptr, 0) > 0)   // a measurement, off by default
+        {
+            std::map<std::string, size_t> Evidence;
+            Maps::MeasureBlendEvidence(Scene, [](const std::string& Material, uint32_t Layer) {
+                const std::vector<std::string> Ids = H1Layers::IdsOf(Material);
+                return Layer < Ids.size() ? Ids[Layer] : std::string();
+            }, Evidence);
+            for (const auto& [Name, N] : Evidence) Counter(Name) += N;
+        }
         // the tool materials this game's clip contents name, as data of the profile (flag_names.txt, clip_tool rows)
         if (const SurfaceTypes::Names* Names = SurfaceTypes::For("h1"))
             for (const auto& Row : Names->ClipTools())

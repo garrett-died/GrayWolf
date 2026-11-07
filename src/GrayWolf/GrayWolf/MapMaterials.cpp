@@ -36,6 +36,9 @@ std::pair<Materials::Source, Materials::Description> DescribeMaterial(const MapS
         }
     }
     Materials::Description D = Adapter.Describe(Src);
+    // a blend whose layers the scene carries as materials of their own (Material::Layers) drops none of them
+    // (unless some of its surfaces' weights were not read: those layers are then still dropped there, said by the layers_dropped row)
+    if (const auto It = Scene.Materials.find(Name); It != Scene.Materials.end() && !It->second.Layers.empty() && It->second.SurfacesUnread == 0) D.LayersDropped = 0;
     return { std::move(Src), std::move(D) };
 }
 }

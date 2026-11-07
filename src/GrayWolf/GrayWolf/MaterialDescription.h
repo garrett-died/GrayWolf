@@ -167,9 +167,24 @@ namespace Materials
         // The game's slot hash of the reveal image of a decal, when the adapter binds one: the builder fills alphaRevealMap of a reveal techset from it
         uint32_t RevealSemantic = 0;
         int RevealChannel = 0;   // the channel of that image that holds the reveal (MWR: the grey picture's red); the game's adapter states it
+        bool RevealInvert = false;       // the reveal image is written as 1 - the channel (a layer's reveal: MWR is visible where the map is low, BO3 where it is high)
+        float RevealSoftEdge = -1.0f, RevealRamp = -1.0f;   // alphaRevealSoftEdge / alphaRevealRamp the adapter states for the reveal techset (< 0: not stated, the stock defaults stay)
         // Textures of the source the description does not carry (comma separated names, one per kind: "detail", "parallax", ...): the exporter writes a
         // material.texture_unbound row and the gate warns
         std::string TexturesUnbound;
+        // What the description leaves out of the source on purpose (comma separated codes, e.g. "normal_rotation"): the exporter writes a material.layer_approximation row each
+        std::string Approximations;
+        // A game that tells a metal from a dielectric by the surface type alone (MWR) can have the specular image's pixels check it where the images exist (publish time, Builder::Add): a
+        // material the surface type calls a dielectric (its family has no specular colour map, which the adapter cleared) whose specular image has a 99th percentile of grey above P99
+        // is a bare metal, and takes PromoteTechset with Specular back. The adapter states all of it; unset (empty Specular) = no check. (mwr-m1.md F.1: 44 of 455 such materials.)
+        struct PixelMetal
+        {
+            Map Specular;
+            float P99 = 100.0f;
+            std::string PromoteTechset;
+            bool Active() const { return !Specular.Empty() && !PromoteTechset.empty(); }
+        };
+        PixelMetal Metal;
         // Why the techset family was chosen against the usual rule: "surface_unknown_treated_as_metal" (an ambiguous or unread surface keeps its specular map)
         std::string FamilyWhy;
     };

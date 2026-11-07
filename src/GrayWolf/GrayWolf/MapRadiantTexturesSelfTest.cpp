@@ -229,6 +229,21 @@ int RadiantTexturesSelfTest(std::string& Failures)
     Check(RadiantNumber(0.12345678) == "0.1235", "the other numbers keep four decimals", RadiantNumber(0.12345678));
     // ---- the trait: HydraX has Black Ops 4 strict and Black Ops III not; Modern Warfare Remastered measured strict (docs/hydrax-port/m2d.md)
     Check(StrictMaterials("bo4") && !StrictMaterials("bo3") && StrictMaterials("mwr") && StrictMaterials("BO4"), "StrictMaterials per game");
+    // ---- M3: a blended surface's vertex colour is its layers' weights, so its triangles match brush sides; a coloured surface that is no blend still does not
+    {
+        Surface Coloured = Square("mat_blend", 0, 1, Plain);
+        for (Vertex& V : Coloured.Vertices) V.Color[0] = 255, V.Color[1] = 40, V.Color[2] = 0, V.Color[3] = 0;
+        RadiantTextureStats Plainly, Blended;
+        DrawnWorld Left(SceneOf({ Coloured }), Plainly);
+        Coloured.Blend.Layers = 1;
+        DrawnWorld Right(SceneOf({ Coloured }), Blended);
+        SideTexture T;
+        const bool OkLeft = Left.Texture(Face, Up, 0, Up, 0, nullptr, T, Plainly);
+        SideTexture U;
+        const bool OkRight = Right.Texture(Face, Up, 0, Up, 0, nullptr, U, Blended);
+        Check(!OkLeft && Plainly.TrianglesColoured == 2, "a coloured surface that is no blend is left out of the matching", std::format("{} {}", OkLeft, Plainly.TrianglesColoured));
+        Check(OkRight && Blended.TrianglesColoured == 0 && U.Material == "mat_blend", "the triangles of a blended surface texture a brush side with the base material", std::format("{} {} {}", OkRight, Blended.TrianglesColoured, U.Material));
+    }
     return Failed;
 }
 }

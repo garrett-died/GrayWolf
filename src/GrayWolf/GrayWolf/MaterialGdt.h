@@ -105,6 +105,8 @@ namespace MaterialGdt
         // that gives the same asset name is counted a collision (callers add in a sorted order).
         // Source: the game's raw material (its techset name, image semantics, constant block) when the sidecar
         // holds it; Game: the sidecar's game id ("bo4"). Both only matter with TechsetData.
+        // The 99th percentile of the grey level (0..255) of an image file's colour channels, -1 when it cannot be read (the pixel check of Description::PixelMetal)
+        static int GreyP99(const std::filesystem::path& File);
         void Add(const Materials::Description& D, const std::filesystem::path& Dir, const Materials::Source* Source = nullptr,
                  const std::string& Game = std::string());
 

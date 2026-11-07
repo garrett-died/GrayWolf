@@ -186,10 +186,17 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
   measurement only (165 of 173 stock names on one map). Other games write `<none>` and a `material.surface_unknown` row: GrayWolf does
   not read their flag word yet. A `flag_names.txt` may declare `surface_bits` and `surface_bit|name|bit|BO3 name` for a surface word that is a
   bit set.
-- Modern Warfare Remastered's layered blends (`*145n_123n`) are written as their first layer only, listed as `material.layers_dropped`.
+- Modern Warfare Remastered's layered blends (`*145n_123n`): in a Radiant map the base is the first layer and each further layer is a
+  non-colliding mesh with its own material, one per distinct art, weights in vertex alpha, reveal images as `_r` with green inverted. On
+  `mp_crash` that is 267,301 layer meshes, 206 layer materials and a `.map` about 1.6 times larger. Outside a Radiant map a blend is its first
+  layer only, listed as `material.layers_dropped`. What BO3 cannot match is listed per material: `colour_alpha_not_folded`,
+  `normal_rotation_dropped` (44 to 65% of blend vertices carry a rotation we think turns the layer's normal frame, a hypothesis), and
+  `weight_squared_interpolation`, since the game squares the weight per pixel while BO3 interpolates the vertex value; the mean error at a mid-edge
+  is about 0.02 on three maps. The layer stride rule is fitted to slice sizes, not read from a flag; it read all blend surfaces of eight maps.
+  `decalLayerSort` per layer is a hypothesis. Nothing here has been seen in Radiant.
   A blend's surface word is the union of its layers, so the first layer's bit is found by intersecting other blends of that layer,
-  listed as `material.surface_from_layer_id`, with the blends that prove it. The rule is a hypothesis. A blend still holding two bits stays
-  a `material.surface_type` failure: 25 on `mp_shipment`, 116 on `mp_crash`.
+  listed as `material.surface_from_layer_id`, with the blends that prove it. The rule is a hypothesis. A blend or layer still holding two bits stays
+  a `material.surface_type` failure: 58 on `mp_shipment`.
 - `layerSortDecal` stays `Debris (top)` on every Modern Warfare Remastered decal: neither the game's sort key nor the hand-made GDTs give
   a table. Lights are read from the world's records, 32 of 33 on `mp_crash`; `Right` handedness is not checked against a stock light.
 - Modern Warfare Remastered textures with no Black Ops III use yet (detail, parallax, decal layers, a few unnamed semantics) are listed as
@@ -201,6 +208,7 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
   `graywolf_disk_floor.tsv` and exits 75. Up to 63 writes can pass after the drive crosses the floor. This guards image writes only: a full map's
   publish step can take many gigabytes of page file. The GUI and the other export commands have no floor. `--plan` gives a size estimate that leaves
   out derived images. A PNG full map of a Modern Warfare Remastered map took 10 GB (`mp_shipment`) and 21 GB (`mp_bog`).
+  Once the free space floor is reached no further zone or dependency zone is opened, and what was not pulled is reported.
 - Black Ops 4 decals come from the techset `renderFlags`. A material whose techset record could not be read gets no class and a
   `material.render_class_unread` row: 335 of 2,209 materials on `mp_frenetic`. Cold War has no decal class yet.
 - Materials only models use stay `<not in editor>`, so Radiant lists a map's geometry and not a model's materials.
@@ -224,7 +232,7 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
 - Radiant brush sides: a side the first texture fit leaves a tool gets a second fit from the drawn triangles lying on it, and face numbers keep
   seven decimals. Against the stock `zm_giant` source, unique faces textured right rose from 4,557 to 5,130 and missed fell from 2,670 to 2,094,
   while wrong real materials rose from 19 to 22. Some second fits carry a shear, which the writer records but no test has proven in Radiant. On
-  `mp_crash`, 11,977 sides stay tools because nothing drawn covers them, probably blend layers; that is not proven.
+  `mp_crash`, blends now count as their first layer when matching sides, which took textured sides from 92,010 to 118,249, with 15 sides lost.
 - Constants exist for Black Ops 4 techsets with a proven layout only. Others keep stock defaults and
   are listed as `material.constants_defaulted`.
 - A colour specular map on a scalar slot is read as a mask, which loses colour. It is counted.

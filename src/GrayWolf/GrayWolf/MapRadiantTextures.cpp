@@ -143,7 +143,13 @@ DrawnWorld::DrawnWorld(const MapScene& Scene, RadiantTextureStats& Stats)
                     for (const uint8_t Channel : V.Color) White = White && Channel == 255;
                 }
                 if (!Valid) continue;
-                if (!White)
+                // a blended surface's vertex colour is its layers' weights, not a tint: its triangles are the base layer's (M3) and match brush sides like any other
+#ifdef GW_MESH_DUMP   // Dev builds only: GH_BLEND_OLD=1 restores the exclusion of a blend's coloured triangles (to compare with the unit before M3)
+                static const bool Old = GetEnvironmentVariableA("GH_BLEND_OLD", nullptr, 0) > 0;
+                if (!White && (Old || !S.Blend.Present()))
+#else
+                if (!White && !S.Blend.Present())
+#endif
                 {
                     Stats.TrianglesColoured++;
                     continue;

@@ -507,7 +507,13 @@ std::string SidecarText(const Sidecar& S)
         if (!D.TechsetWhy.empty()) J["techset_why"] = D.TechsetWhy;
         if (D.RevealSemantic != 0) J["reveal_semantic"] = D.RevealSemantic;
         if (D.RevealChannel != 0) J["reveal_channel"] = D.RevealChannel;
+        if (D.RevealInvert) J["reveal_invert"] = true;
+        if (D.RevealSoftEdge >= 0.0f) J["reveal_soft_edge"] = D.RevealSoftEdge;
+        if (D.RevealRamp >= 0.0f) J["reveal_ramp"] = D.RevealRamp;
         if (!D.TexturesUnbound.empty()) J["textures_unbound"] = D.TexturesUnbound;
+        if (!D.Approximations.empty()) J["approximations"] = D.Approximations;
+        if (D.Metal.Active())
+            J["pixel_metal"] = { { "path", D.Metal.Specular.Path }, { "pack", PackName(D.Metal.Specular.Pack) }, { "p99", D.Metal.P99 }, { "promote", D.Metal.PromoteTechset } };
         if (!D.FamilyWhy.empty()) J["family_why"] = D.FamilyWhy;
         if (D.GlossStopsMax >= 0.0f) J["gloss_stops"] = { Rounded(D.GlossStopsMin < 0.0f ? 0.0f : D.GlossStopsMin), Rounded(D.GlossStopsMax) };
         if (D.LayersDropped > 0) J["layers_dropped"] = D.LayersDropped;
@@ -633,7 +639,19 @@ bool ReadSidecar(const std::string& Path, Sidecar& S)
             D.TechsetWhy = J.value("techset_why", std::string());
             D.RevealSemantic = J.value("reveal_semantic", static_cast<uint32_t>(0));
             D.RevealChannel = J.value("reveal_channel", 0);
+            D.RevealInvert = J.value("reveal_invert", false);
+            D.RevealSoftEdge = J.value("reveal_soft_edge", -1.0f);
+            D.RevealRamp = J.value("reveal_ramp", -1.0f);
             D.TexturesUnbound = J.value("textures_unbound", std::string());
+            D.Approximations = J.value("approximations", std::string());
+            if (J.contains("pixel_metal") && J["pixel_metal"].is_object())
+            {
+                const auto& P = J["pixel_metal"];
+                D.Metal.Specular.Path = P.value("path", std::string());
+                D.Metal.Specular.Pack = PackFromName(P.value("pack", std::string()));
+                D.Metal.P99 = P.value("p99", 100.0f);
+                D.Metal.PromoteTechset = P.value("promote", std::string());
+            }
             D.FamilyWhy = J.value("family_why", std::string());
             if (J.contains("gloss_stops") && J["gloss_stops"].is_array() && J["gloss_stops"].size() == 2)
             {
