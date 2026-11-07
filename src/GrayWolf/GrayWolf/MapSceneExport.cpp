@@ -121,6 +121,7 @@ bool WriteMapFiles(MapScene& Scene, const std::set<std::string>& Names,
         {
             NoteRunMapFile(MapDir, std::filesystem::path(Stem + W->Extension()).filename().string(), "map");
             for (const std::string& File : Result.Files) NoteRunMapFile(MapDir, File, "map");
+            for (const std::string& File : Result.DataFiles) NoteRunMapFile(MapDir, File, "mapdata");
         }
         for (const auto& [Key, V] : Result.Counters) Counters[Key] += V;
         if (Result.Later)

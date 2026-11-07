@@ -349,6 +349,13 @@ namespace H1Blend
         return Arts.size();
     }
 
+    uint32_t NameHash(std::string_view Name)
+    {
+        uint32_t H = 0;
+        for (const char C : Name) H = (H * 33u) ^ static_cast<uint32_t>(std::tolower(static_cast<unsigned char>(C)));
+        return H;
+    }
+
     int SelfTest(std::string& Failures)
     {
         int Failed = 0;
@@ -357,6 +364,11 @@ namespace H1Blend
             Failed++;
             Failures += std::string("h1 blend: ") + What + (Got.empty() ? "" : " (" + Got + ")") + "\n";
         };
+        // the name hash against the values read off the game's own tables (mwr-materials.md 2 and 5)
+        Check(NameHash("colorMap") == 0xa0ab1041u && NameHash("normalMap") == 0x59d30d0fu && NameHash("specularMap") == 0x34ecccb3u && NameHash("envMapParms") == 0x3d9994dcu &&
+                  NameHash("revealParams") == 0x8C67DED5u && NameHash("envMapParms1") == 0xf0cc306du && NameHash("COLORMAP") == 0xa0ab1041u,
+              "the name hash reproduces the proven hashes of the game's tables (case aside)");
+        Check(NameHash("hdrColorParms") == 0xc97690deu, "hdrColorParms hashes to the constant the sky material holds (c97690de, x = 30 on mp_crash; the name is plural, hdrColorParm is 1d60af0d and is not in the table)");
         // the hash is the game's: three names the zones prove, and the layer slots measured in mwr-materials.md 4.1
         Check(Hash("colorMap") == 0xA0AB1041u && Hash("normalMap") == 0x59D30D0Fu && Hash("revealMap") == 0x34D849D5u, "the slot name hash is the game's (colorMap, normalMap, revealMap)");
         Check(SemanticOf(Slot::Colour, 1) == 0xB60D1850u && SemanticOf(Slot::Colour, 2) == 0xB60D1853u && SemanticOf(Slot::Normal, 1) == 0x9434AEDEu &&

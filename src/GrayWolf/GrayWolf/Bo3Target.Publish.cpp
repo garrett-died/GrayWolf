@@ -3,6 +3,7 @@
 // See Bo3Target.Publish.h.
 
 #include "Bo3Target.Publish.h"
+#include "ModToolsSky.h"
 
 #include "Bo3Target.MaterialImages.h"
 #include "DiskGame.h"
@@ -1281,6 +1282,24 @@ namespace Bo3Target::Publish
                     MapFiles.push_back(MapFolder / Name);
                     ThisRun.insert(Lower(Name));
                 }
+            // the data files the Radiant writer made under <map>_radiant (the ssi and sky GDTs, the sky EXR): each goes to the same path in the Mod Tools folder, below
+            // source_data or model_export only (stock has the ssi in source_data, a sky's GDT and EXR in model_export)
+            std::map<std::string, std::string> DataDest;
+            for (const auto& [Kind, Name] : MapIndex)
+                if (Kind == "mapdata")
+                {
+                    const size_t Slash = Name.find('/');
+                    std::string Rel = Slash == std::string::npos ? std::string() : Name.substr(Slash + 1);
+                    const bool Allowed = (Rel.rfind("source_data/", 0) == 0 || Rel.rfind("model_export/", 0) == 0) && Rel.find("..") == std::string::npos && Rel.find(':') == std::string::npos;
+                    if (!Allowed)
+                    {
+                        Count("map_data_refused");
+                        continue;
+                    }
+                    std::replace(Rel.begin(), Rel.end(), '/', '\\');
+                    DataDest[(MapFolder / Name).string()] = Rel;
+                    MapFiles.push_back(MapFolder / Name);
+                }
             size_t NotThisRun = 0;
             for (fs::directory_iterator It(MapFolder, Ec), End; !Ec && It != End; It.increment(Ec))
             {
@@ -1296,7 +1315,8 @@ namespace Bo3Target::Publish
             for (const fs::path& From : MapFiles)
             {
                 const std::string FileName = From.filename().string();
-                const std::optional<std::string> Dest = Pl::SlotPath(Pl::Slot::MapGeometry, FileName);
+                const auto Data = DataDest.find(From.string());
+                const std::optional<std::string> Dest = Data != DataDest.end() ? std::optional<std::string>(Data->second) : Pl::SlotPath(Pl::Slot::MapGeometry, FileName);
                 if (!Dest) continue;
                 // the source read whole, its size checked: an unreadable or cut-short map must not become an empty (or
                 // partial) file over a valid one the manifest owns
@@ -2167,17 +2187,46 @@ namespace Bo3Target::Publish
             Maps::BeginRunMapFiles(Run / "maps");
             Maps::NoteRunMapFile(Run / "maps", "mp_x.map", "map");
             Maps::NoteRunMapFile(Run / "maps", "mp_x_prefab_lights.map", "map");
+            // the data files of the Radiant writer (M4e): the ssi and sky GDTs and the sky EXR go to the same path below the Mod Tools folder; a path outside source_data / model_export is refused
+            {
+                const fs::path Data = Run / "maps" / "mp_x_radiant";
+                fs::create_directories(Data / "source_data", Ec);
+                fs::create_directories(Data / "model_export" / "t7_skybox" / "mp_x", Ec);
+                fs::create_directories(Run / "maps" / "mp_x_radiant" / "share", Ec);
+                std::ofstream(Data / "source_data" / "ssi_mp_x.gdt", std::ios::binary) << "{\r\n\t\"graywolf_mp_x\" ( \"ssi.gdf\" )\r\n\t{\r\n\t\t\"skyboxmodel\" \"skybox_mp_x\"\r\n\t}\r\n}\r\n";
+                std::ofstream(Data / "model_export" / "mp_x_sky.gdt", std::ios::binary) << "{\r\n\t\"mtl_skybox_mp_x\" ( \"material.gdf\" )\r\n\t{\r\n\t\t\"colorMap\" \"skybox_mp_x\"\r\n\t}\r\n"
+                                                                                       "\t\"skybox_mp_x\" ( \"image.gdf\" )\r\n\t{\r\n\t\t\"baseImage\" \"model_export\\\\t7_skybox\\\\mp_x\\\\skybox_mp_x_ll.exr\"\r\n\t}\r\n"
+                                                                                       "\t\"skybox_mp_x\" ( \"xmodel.gdf\" )\r\n\t{\r\n\t\t\"materials\" \"mtl_skybox_default\\r\\n\"\r\n\t\t\"skinOverride\" \"mtl_skybox_default mtl_skybox_mp_x\\r\\n\"\r\n\t}\r\n}\r\n";
+                std::ofstream(Data / "model_export" / "t7_skybox" / "mp_x" / "skybox_mp_x_ll.exr", std::ios::binary) << "EXRBYTES";
+                std::ofstream(Data / "share" / "evil.txt", std::ios::binary) << "x";
+                Maps::NoteRunMapFile(Run / "maps", "mp_x_radiant/source_data/ssi_mp_x.gdt", "mapdata");
+                Maps::NoteRunMapFile(Run / "maps", "mp_x_radiant/model_export/mp_x_sky.gdt", "mapdata");
+                Maps::NoteRunMapFile(Run / "maps", "mp_x_radiant/model_export/t7_skybox/mp_x/skybox_mp_x_ll.exr", "mapdata");
+                Maps::NoteRunMapFile(Run / "maps", "mp_x_radiant/share/evil.txt", "mapdata");
+                Maps::NoteRunMapFile(Run / "maps", "mp_x_radiant/model_export/../../evil.gdt", "mapdata");
+            }
             Result R = Go(Run, Root, Know);
             Check(R.Error.empty(), "maps: no error", R.Error);
+            Check(Slurp(Root / "source_data" / "ssi_mp_x.gdt").find("skybox_mp_x") != std::string::npos && Slurp(Root / "model_export" / "mp_x_sky.gdt").find("mtl_skybox_mp_x") != std::string::npos &&
+                      Slurp(Root / "model_export" / "t7_skybox" / "mp_x" / "skybox_mp_x_ll.exr") == "EXRBYTES",
+                  "maps: the ssi and sky GDTs and the sky EXR are published at their paths below the Mod Tools folder", "");
+            Check(!Exists(Root / "share" / "evil.txt") && !Exists(Root / "evil.gdt") && R.Counters["publish_map_data_refused"] == 2, "maps: a data path outside source_data and model_export is refused", std::to_string(R.Counters["publish_map_data_refused"]));
+            {
+                ModToolsSky::Location Where;
+                Where.Root = Root.string();
+                ModToolsSky::SkySource Source;
+                std::string Why;
+                Check(ModToolsSky::ResolveSsiEntry(Where, "graywolf_mp_x", Source, Why) && Source.Kind == ModToolsSky::SourceKind::LatLong && Source.Material == "mtl_skybox_mp_x", "maps: the published sky reads back through the preview's chain from the published root", Why);
+            }
             Check(Slurp(Root / "map_source" / "graywolf_maps" / "mp_x.map") == "iwmap 4\n// main\n" &&
                       Slurp(Root / "map_source" / "graywolf_maps" / "mp_x_prefab_lights.map") == "iwmap 4\n// lights\n",
                   "maps: the main map and the prefab file are in map_source\\graywolf_maps", "");
             Check(!Exists(Root / "map_source" / "graywolf_maps" / "mp_x.glb"), "maps: only .map files are placed", "");
             Check(!Exists(Root / "map_source" / "graywolf_maps" / "mp_stale.map") && R.Counters["publish_map_files_not_this_run"] == 1,
                   "maps: a stale .map the run did not make is not published, and counted", std::to_string(R.Counters["publish_map_files_not_this_run"]));
-            Check(R.Counters["publish_map_files_written"] == 2, "maps: two files written", std::to_string(R.Counters["publish_map_files_written"]));
+            Check(R.Counters["publish_map_files_written"] == 5, "maps: five files written (two maps, three data files)", std::to_string(R.Counters["publish_map_files_written"]));
             Result Again = Go(Run, Root, Know);
-            Check(Again.Counters["publish_map_files_unchanged"] == 2 && Again.Counters["publish_map_files_written"] == 0, "maps: a second run leaves them as they are",
+            Check(Again.Counters["publish_map_files_unchanged"] == 5 && Again.Counters["publish_map_files_written"] == 0, "maps: a second run leaves them as they are",
                   std::to_string(Again.Counters["publish_map_files_unchanged"]));
             // a file the manifest does not list is foreign: never replaced
             std::ofstream(Root / "map_source" / "graywolf_maps" / "mp_y.map", std::ios::binary) << "hand made";

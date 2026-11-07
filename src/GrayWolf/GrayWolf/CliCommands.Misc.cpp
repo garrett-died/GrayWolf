@@ -60,6 +60,9 @@
 #include "MapSurfaceFromCollision.h"
 #include "MapSunProbes.h"
 #include "MapCreateFx.h"
+#include "SkyLatLong.h"
+#include "ExrWriter.h"
+#include "MapSkyGdt.h"
 #include "Games/H1/BlendLayers.h"
 #include "Games/IW/BlendSlices.h"
 #include "MapRadiantRules.h"
@@ -1043,6 +1046,8 @@ static int SelfTest(std::string& Failures)
     Failed += Maps::SurfaceFromCollisionSelfTest(Failures);
     Failed += Maps::SunProbesSelfTest(Failures);
     Failed += Maps::CreateFxSelfTest(Failures);
+    Failed += SkyConv::SelfTest(Failures);
+    Failed += Maps::SkyGdtSelfTest(Failures);
     Failed += BlendSlices::SelfTest(Failures);
 
     return Failed;
@@ -1053,7 +1058,8 @@ static int SelfTest(std::string& Failures)
 int RunExrSelfTest(const CliOptions& Options)
 {
     std::string Failures;
-    const int Failed = Exr::SelfTest(Failures);
+    int Failed = Exr::SelfTest(Failures);
+    Failed += Exr::WriterSelfTest(Failures);
     CliReport(Options, std::format("{}result={}\nself_test_failures={}\n", Failures, (Failed == 0) ? "ok" : "error", Failed));
     return (Failed == 0) ? 0 : 4;
 }

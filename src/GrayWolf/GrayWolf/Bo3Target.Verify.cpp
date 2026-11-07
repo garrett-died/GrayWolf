@@ -8,6 +8,7 @@
 #include "Bo3Target.GdtDb.h"
 #include "Bo3Target.Output.h"
 #include "XAnimBinReader.h"
+#include "ExrWriter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -130,6 +131,7 @@ namespace Bo3Target::Verify
             size_t UnresolvedNoDb = 0, SlotImageNotInOutput = 0, UnjudgedRange = 0, SlotImageRead = 0;
             size_t ClosureBins = 0, ClosureUnparsed = 0, ClosureNoDb = 0;      // model.material_closure: files read, files not parsed, names that could not be looked up
             std::vector<std::string> ClosureUnparsedExamples, ClosureNoDbExamples;
+            std::set<std::string> SkyImages;   // lower-case names of the images a sky_* material uses as its colorMap (only those may be EXR)
             bool HaveAwi = false;
             // material asset (lower case) -> the reason its surfaceType is <none>, from graywolf_approximations.tsv
             std::map<std::string, std::string> SurfaceWhy;
@@ -454,7 +456,8 @@ namespace Bo3Target::Verify
                         }
                         C.Judged("gdt.order");
                         PrevName = Cur.Name;
-                        const std::string Key = Lower(Cur.Name);
+                        // an image and an xmodel may share a name in one file: the stock t7_skybox.gdt has skybox_<map> as both, so the name is unique per GDF
+                        const std::string Key = Lower(Cur.Gdf) + ":" + Lower(Cur.Name);
                         if (!NamesInFile.insert(Key).second)
                             C.Add("gdt.duplicate_name", Asset, Severity::Failure, std::format("name \"{}\" is defined twice in this file (names are unique case-insensitively, G3)", Cur.Name));
                         C.Judged("gdt.duplicate_name");
@@ -913,7 +916,11 @@ namespace Bo3Target::Verify
                     std::replace(Rel.begin(), Rel.end(), '/', '\\');
                     fs::path File;
                     std::error_code Ec;
-                    if (!UnderRoot(fs::path(RootText), Rel, Unescape(Value), File) || !fs::is_regular_file(File, Ec))
+                    bool Found = UnderRoot(fs::path(RootText), Rel, Unescape(Value), File) && fs::is_regular_file(File, Ec);
+                    // a model the output only names (a sky xmodel names the stock sky mesh, never copied) resolves under the Mod Tools root
+                    if (!Found && D->K == Awi::Kind::XModel && !C.In.ModToolsRoot.empty() && Lower(Unescape(Value)) == "t6_props\\vista\\skybox\\t6_skybox.xmodel_bin")
+                        Found = UnderRoot(C.In.ModToolsRoot, Rel, Unescape(Value), File) && fs::is_regular_file(File, Ec);
+                    if (!Found)
                         C.Fail("awi.file", E, std::format("{} = \"{}\" does not resolve to a file under the layout root ({}{}); an absolute path or a .. that leaves the root does not count", Key, Value, Rel, Unescape(Value)));
                     break;
                 }
@@ -971,6 +978,8 @@ namespace Bo3Target::Verify
         {
             return !Method.empty() && Method != "uncompressed" && Method.rfind("R", 0) != 0;   // "compressed...", "BC7", "shared exponent"; the R8/R16 formats are not block compressed
         }
+
+        std::string ExrProblem(const fs::path& File);
 
         void CheckImage(Context& C, const Entry& E)
         {
@@ -1041,6 +1050,13 @@ namespace Bo3Target::Verify
                         }
                     }
                 }
+            }
+            // the lat-long EXR of a sky material: its structure is checked (the pixel rules are for TIFF and PNG); any other image, whatever its extension, goes on to those rules
+            if (C.SkyImages.count(Lower(E.Name)) != 0 && Lower(File.extension().string()) == ".exr")
+            {
+                C.Judged("image.format");
+                if (const std::string Problem = ExrProblem(File); !Problem.empty()) C.Fail("image.format", E, "the sky EXR is not a readable OpenEXR file: " + Problem);
+                return;
             }
             const ImageInfo Info = ReadImageHeaderFile(File);
             C.Judged("image.format");
@@ -1116,6 +1132,71 @@ namespace Bo3Target::Verify
             }
         }
 
+        // The structure of an OpenEXR scanline file: magic, version 2 without flags, the attributes the sky needs (channels R G B, compression, dataWindow), the offset table and the
+        // last chunk inside the file. "" when sound.
+        std::string ExrProblem(const fs::path& File)
+        {
+            std::error_code Ec;
+            const std::uintmax_t Size = fs::file_size(File, Ec);
+            std::ifstream In(File, std::ios::binary);
+            if (Ec || !In || Size < 16 || Size > (std::uintmax_t(1) << 30)) return "unreadable or too small";
+            std::string Head(static_cast<size_t>(std::min<std::uintmax_t>(Size, 65536)), '\0');
+            In.read(Head.data(), static_cast<std::streamsize>(Head.size()));
+            const auto U8 = [&](size_t At) { return At < Head.size() ? static_cast<uint8_t>(Head[At]) : 0u; };
+            const auto I32 = [&](size_t At) { return static_cast<int32_t>(U8(At) | (U8(At + 1) << 8) | (U8(At + 2) << 16) | (static_cast<uint32_t>(U8(At + 3)) << 24)); };
+            if (U8(0) != 0x76 || U8(1) != 0x2f || U8(2) != 0x31 || U8(3) != 0x01) return "no OpenEXR magic number";
+            if (U8(4) != 2 || U8(5) != 0 || U8(6) != 0 || U8(7) != 0) return "not version 2 without flags (tiled, deep or multipart)";
+            size_t At = 8;
+            int Compression = -1, X0 = 0, Y0 = 0, X1 = -1, Y1 = -1;
+            bool Channels = false, R = false, G = false, B = false;
+            while (At < Head.size() && U8(At) != 0)
+            {
+                const size_t NameEnd = Head.find('\0', At), TypeEnd = NameEnd == std::string::npos ? NameEnd : Head.find('\0', NameEnd + 1);
+                if (TypeEnd == std::string::npos || TypeEnd + 5 > Head.size()) return "the header is cut short or over 64 KiB";
+                const std::string Name = Head.substr(At, NameEnd - At);
+                const int32_t Len = I32(TypeEnd + 1);
+                const size_t Body = TypeEnd + 5;
+                if (Len < 0 || Body + static_cast<size_t>(Len) > Head.size()) return "an attribute runs past the header";
+                if (Name == "compression" && Len == 1) Compression = static_cast<int>(U8(Body));
+                else if (Name == "dataWindow" && Len == 16) X0 = I32(Body), Y0 = I32(Body + 4), X1 = I32(Body + 8), Y1 = I32(Body + 12);
+                else if (Name == "channels")
+                {
+                    Channels = true;
+                    size_t P = Body;
+                    while (P < Body + static_cast<size_t>(Len) && U8(P) != 0)
+                    {
+                        const size_t E = Head.find('\0', P);
+                        if (E == std::string::npos || E + 17 > Body + static_cast<size_t>(Len)) return "the channel list is cut short";
+                        const std::string C = Head.substr(P, E - P);
+                        R = R || C == "R", G = G || C == "G", B = B || C == "B";
+                        P = E + 17;
+                    }
+                }
+                At = Body + static_cast<size_t>(Len);
+            }
+            if (At >= Head.size()) return "no end of header";
+            if (!Channels || !R || !G || !B) return "no R, G and B channels";
+            if (Compression < 0 || Compression > 9) return "no valid compression attribute";
+            if (X1 < X0 || Y1 < Y0 || X1 - X0 >= 16384 || Y1 - Y0 >= 16384) return "the dataWindow is empty or over 16384";
+            const int Lines[10] = { 1, 1, 1, 16, 32, 16, 32, 32, 32, 256 };
+            const int Rows = Y1 - Y0 + 1, Chunks = (Rows + Lines[Compression] - 1) / Lines[Compression];
+            const std::uintmax_t TableAt = At + 1, TableEnd = TableAt + static_cast<std::uintmax_t>(Chunks) * 8;
+            if (TableEnd > Size) return "the offset table runs past the end of the file";
+            In.clear();
+            In.seekg(static_cast<std::streamoff>(TableEnd - 8));
+            std::array<uint8_t, 8> Last{};
+            In.read(reinterpret_cast<char*>(Last.data()), 8);
+            std::uint64_t Offset = 0;
+            for (size_t K = 0; K < 8; K++) Offset |= static_cast<std::uint64_t>(Last[K]) << (8 * K);
+            if (Offset < TableEnd || Offset + 8 > Size) return "the last chunk's offset is outside the file";
+            In.seekg(static_cast<std::streamoff>(Offset + 4));
+            std::array<uint8_t, 4> Len{};
+            In.read(reinterpret_cast<char*>(Len.data()), 4);
+            const std::uint64_t ChunkSize = static_cast<std::uint64_t>(Len[0]) | (static_cast<std::uint64_t>(Len[1]) << 8) | (static_cast<std::uint64_t>(Len[2]) << 16) | (static_cast<std::uint64_t>(Len[3]) << 24);
+            if (Offset + 8 + ChunkSize > Size) return "the file ends inside the last chunk";
+            return std::string();
+        }
+
         // ---- check 3 and the rest of 4: a material
 
         void CheckMaterial(Context& C, const Entry& E)
@@ -1137,6 +1218,22 @@ namespace Bo3Target::Verify
                     C.Judged("rules.forbidden_techset");
                     if (Type.find("nocull") != std::string::npos || Type.find("transparent") != std::string::npos)
                         C.Add("rules.costly_techset", E.Id(), Severity::Info, std::format("materialType \"{}\" is nocull or transparent: costly to draw", Type));
+                }
+            }
+
+            // a sky material: its colour image is an EXR (the lat-long the sky shader reads; M4e)
+            if (Lower(Type).rfind("sky_", 0) == 0)
+            {
+                C.Judged("sky.chain");
+                const std::string Color = E.Value("colorMap");
+                const Entry* SkyImage = Color.empty() ? nullptr : C.Find("image", Color);
+                if (SkyImage == nullptr)
+                    C.Fail("sky.chain", E, std::format("the sky material's colorMap \"{}\" is not an image entry of this output", Color));
+                else
+                {
+                    const std::string Base = Lower(SkyImage->Value("baseImage"));
+                    if (Base.size() < 4 || Base.compare(Base.size() - 4, 4, ".exr") != 0)
+                        C.Fail("sky.chain", E, std::format("the sky image \"{}\" has baseImage \"{}\", not an EXR: the sky shader reads a lat-long EXR", Color, SkyImage->Value("baseImage")));
                 }
             }
 
@@ -1208,7 +1305,13 @@ namespace Bo3Target::Verify
                 const std::string* Surface = E.Get("surfaceType");
                 if (Surface != nullptr)
                 {
-                    if (*Surface == "<none>")
+                    if (*Surface == "<none>" && Lower(Type).rfind("sky_", 0) == 0)
+                    {
+                        // a sky material has no surface: every stock sky material writes <none>
+                        C.Judged("material.surface_type");
+                        C.Add("material.surface_type", E.Id(), Severity::Info, "a sky material has no surface type (the stock sky materials all write <none>)");
+                    }
+                    else if (*Surface == "<none>")
                     {
                         C.Judged("material.surface_type");
                         std::string Key = E.Name;
@@ -1347,6 +1450,21 @@ namespace Bo3Target::Verify
         }
 
         // diffuse and specular of one material: bare metal is black
+        // a sky xmodel (it swaps the stock sky material, mtl_skybox_default, for its own): the skinOverride's last name is a material entry of this output
+        void CheckSkyXmodel(Context& C, const Entry& E)
+        {
+            if (E.Value("materials").find("mtl_skybox_default") == std::string::npos) return;
+            C.Judged("sky.chain");
+            std::string Skin = E.Value("skinOverride");
+            for (size_t At = Skin.find("\\r\\n"); At != std::string::npos; At = Skin.find("\\r\\n")) Skin.replace(At, 4, " ");
+            const size_t End = Skin.find_last_not_of(" \t\r\n");
+            const std::string Last = End == std::string::npos ? std::string() : Skin.substr(Skin.find_last_of(" \t", End) == std::string::npos ? 0 : Skin.find_last_of(" \t", End) + 1, End + 1 - (Skin.find_last_of(" \t", End) == std::string::npos ? 0 : Skin.find_last_of(" \t", End) + 1));
+            if (Last.empty() || Last == "mtl_skybox_default")
+                C.Fail("sky.chain", E, "the sky xmodel's skinOverride names no sky material of its own");
+            else if (C.Find("material", Last) == nullptr)
+                C.Fail("sky.chain", E, std::format("the sky xmodel's skinOverride names \"{}\", which is not a material entry of this output", Last));
+        }
+
         void CheckBareMetal(Context& C, const Entry& E)
         {
             const std::string DiffName = E.Value("colorMap"), SpecName = E.Value("specColorMap");
@@ -1866,6 +1984,8 @@ namespace Bo3Target::Verify
                 }
             }
 
+            for (const Entry& E : C.Entries)
+                if (Lower(E.Gdf) == "material" && Lower(E.Value("materialType")).rfind("sky_", 0) == 0) C.SkyImages.insert(Lower(E.Value("colorMap")));
             // 2, 3, 5 and the file-reading part of 4
             for (const Entry& E : C.Entries)
             {
@@ -1873,6 +1993,7 @@ namespace Bo3Target::Verify
                 CheckSchema(C, E, In.Roots[E.Root].string());
                 if (Lower(E.Gdf) == "material") CheckMaterial(C, E);
                 else if (Lower(E.Gdf) == "image") CheckImage(C, E);
+                else if (Lower(E.Gdf) == "xmodel") CheckSkyXmodel(C, E);
             }
             for (const Entry& E : C.Entries)
                 if (Lower(E.Gdf) == "material") CheckBareMetal(C, E);
@@ -1920,7 +2041,7 @@ namespace Bo3Target::Verify
         R.NotRun.emplace_back("sound (check 6)", "not built this round");
         R.NotRun.emplace_back("weapon and anim (check 7)", "not built this round");
         R.NotRun.emplace_back("stock oracle comparison (check 8)", "not built this round");
-        R.NotRun.emplace_back("rules: clean glass 40, effect maps never uncompressed, decal category, sky EXR and skinOverride, emissive intensity 0..12000",
+        R.NotRun.emplace_back("rules: clean glass 40, effect maps never uncompressed, decal category, emissive intensity 0..12000 (the sky EXR and skinOverride rule is sky.chain)",
                               "need the material's intent, the sky/decal classification or a key material.awi does not declare; nothing here judges them");
         return std::move(C.R);
     }
@@ -2160,7 +2281,8 @@ void GenerateUI( asset Asset )
 }
 )AWI");
         Tc::Data Catalog;
-        Catalog.LoadCatalogText(R"({"techsets":[{"n":"lit","c":"Geometry","f":"none","b":"Opaque","t":0,"s":[["colorMap","colorMap","diffuseMap",null]]}]})");
+        Catalog.LoadCatalogText(R"({"techsets":[{"n":"lit","c":"Geometry","f":"none","b":"Opaque","t":0,"s":[["colorMap","colorMap","diffuseMap",null]]},
+            {"n":"sky_latlong_hdr","c":"Geometry","f":"emissive sky","b":"Other","t":0,"s":[["colorMap","colorMap","HDR","$white_diffuse_hdr"]]}]})");
         GdtDb::Catalog Held;     // a gdt.db that holds nothing
         const auto Full = [&](const fs::path& Root) {
             Inputs In;
@@ -2223,6 +2345,45 @@ void GenerateUI( asset Asset )
             Put(NoAwi / "a.gdt", Gdt({ Ent("zone_thing", "unknownkind", { { "k", "v" } }) }));
             const Result N = Run(Full(NoAwi));
             Check(N.ExitCode() == 2 && Has(N, "awi.schema", Severity::Failure, "unknownkind:zone_thing") == 1, "an entry whose GDF has no awi cannot be judged: exit 2", Describe(N));
+        }
+
+        // 2b. the sky chain (M4e): a sky material needs an EXR image; a sky xmodel's skinOverride must name a material of the output
+        {
+            const fs::path Sky = Base / "sky" / "bo3";
+            Put(Sky / "texture_assets" / "t" / "c.tif", Tiff(8, 8, 3, { 100, 100, 100 }));
+            std::vector<uint16_t> ExrPixels(8 * 4 * 3, 0x3c00);
+            std::vector<uint8_t> ExrBytes;
+            std::string ExrWhy;
+            Exr::WriteHalfRgb(8, 4, ExrPixels, Exr::WriteCompression::Zips, ExrBytes, ExrWhy);
+            const std::string ExrFile(ExrBytes.begin(), ExrBytes.end());
+            Put(Sky / "model_export" / "sky.exr", ExrFile);
+            Put(Sky / "model_export" / "trunc.exr", ExrFile.substr(0, ExrFile.size() - 3));
+            Put(Sky / "model_export" / "ren.exr", ExrFile);
+            Put(Mod / "model_export" / "other" / "x.xmodel_bin", "x");
+            Put(Mod / "model_export" / "t6_props" / "vista" / "skybox" / "t6_skybox.xmodel_bin", "x");
+            Put(Sky / "sky.gdt", Gdt({
+                Ent("i_sky", "image", { { "baseImage", "model_export\\\\sky.exr" }, { "semantic", "HDR" }, { "type", "image" } }),
+                Ent("i_notexr", "image", { { "baseImage", "texture_assets\\\\t\\\\c.tif" }, { "semantic", "HDR" }, { "type", "image" } }),
+                Ent("i_trunc", "image", { { "baseImage", "model_export\\\\trunc.exr" }, { "semantic", "HDR" }, { "type", "image" } }),
+                Ent("i_ren", "image", { { "baseImage", "model_export\\\\ren.exr" }, { "semantic", "diffuseMap" }, { "type", "image" } }),
+                Ent("x_other", "xmodel", { { "filename", "other\\\\x.xmodel_bin" }, { "type", "rigid" } }),
+                Ent("x_sky", "xmodel", { { "filename", "t6_props\\\\vista\\\\skybox\\\\t6_skybox.xmodel_bin" }, { "type", "rigid" } }),
+                Ent("mtl_sky_trunc", "material", { { "colorMap", "i_trunc" }, { "materialType", "sky_latlong_hdr" }, { "surfaceType", "<none>" }, { "usage", "<not in editor>" } }),
+                Ent("mtl_sky_ok", "material", { { "colorMap", "i_sky" }, { "materialType", "sky_latlong_hdr" }, { "surfaceType", "<none>" }, { "usage", "<not in editor>" } }),
+                Ent("mtl_sky_tif", "material", { { "colorMap", "i_notexr" }, { "materialType", "sky_latlong_hdr" }, { "surfaceType", "<none>" }, { "usage", "<not in editor>" } }),
+                Ent("mtl_sky_noimg", "material", { { "colorMap", "i_missing" }, { "materialType", "sky_latlong_hdr" }, { "surfaceType", "<none>" }, { "usage", "<not in editor>" } }),
+                Ent("skybox_ok", "xmodel", { { "materials", "mtl_skybox_default\\r\\n" }, { "skinOverride", "mtl_skybox_default mtl_sky_ok\\r\\n" }, { "type", "rigid" } }),
+                Ent("skybox_bad", "xmodel", { { "materials", "mtl_skybox_default\\r\\n" }, { "skinOverride", "mtl_skybox_default mtl_sky_nowhere\\r\\n" }, { "type", "rigid" } }),
+                Ent("skybox_none", "xmodel", { { "materials", "mtl_skybox_default\\r\\n" }, { "skinOverride", "" }, { "type", "rigid" } }),
+            }));
+            const Result R = Run(Full(Sky));
+            Check(Has(R, "sky.chain", Severity::Failure, "material:mtl_sky_ok") == 0 && Has(R, "sky.chain", Severity::Failure, "material:mtl_sky_tif") == 1 && Has(R, "sky.chain", Severity::Failure, "material:mtl_sky_noimg") == 1,
+                  "a sky material with an EXR image passes; a TIFF or a missing image fails (sky.chain)", Describe(R));
+            Check(Has(R, "image.format", Severity::Failure, "image:i_sky") == 0 && Has(R, "image.format", Severity::Failure, "image:i_trunc") == 1, "a sky EXR is checked in structure: a whole file passes, one cut short fails (image.format)", Describe(R));
+            Check(Has(R, "image.format", Severity::Failure, "image:i_ren") == 1, "an .exr that no sky material uses does not skip the image rules", Describe(R));
+            Check(Has(R, "awi.file", Severity::Failure, "xmodel:x_other") == 1 && Has(R, "awi.file", Severity::Failure, "xmodel:x_sky") == 0, "the Mod Tools root stands in only for the stock sky mesh, not any xmodel", Describe(R));
+            Check(Has(R, "sky.chain", Severity::Failure, "xmodel:skybox_ok") == 0 && Has(R, "sky.chain", Severity::Failure, "xmodel:skybox_bad") == 1 && Has(R, "sky.chain", Severity::Failure, "xmodel:skybox_none") == 1,
+                  "a sky xmodel whose skinOverride names a material of the output passes; a missing material or none fails (sky.chain)", Describe(R));
         }
 
         // 3. parent entries are resolved and validated

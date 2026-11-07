@@ -32,11 +32,40 @@ namespace Maps
         using Point = std::array<double, 3>;
 
         // One face of the box: three points on the plane whose (p1 - p0) x (p2 - p0) points INTO the box (the stock volume_sun's order: its bottom face has +Z)
-        std::string Face(const Point& P0, const Point& P1, const Point& P2)
+        std::string Face(const Point& P0, const Point& P1, const Point& P2, const char* Material = "sun_volume")
         {
             const auto Pt = [](const Point& P) { return "( " + Num(P[0]) + " " + Num(P[1]) + " " + Num(P[2]) + " )"; };
-            return " " + Pt(P0) + " " + Pt(P1) + " " + Pt(P2) + " sun_volume 64 64 0 0 0 0 lightmap_gray 16384 16384 0 0 0 0\n";
+            return " " + Pt(P0) + " " + Pt(P1) + " " + Pt(P2) + " " + Material + " 64 64 0 0 0 0 lightmap_gray 16384 16384 0 0 0 0\n";
         }
+    }
+
+    std::array<SkySlab, 6> SkyShell(const std::array<double, 3>& A, const std::array<double, 3>& B, double T)
+    {
+        return { { { { A[0] - T, A[1] - T, A[2] - T }, { A[0], B[1] + T, B[2] + T } },
+                   { { B[0], A[1] - T, A[2] - T }, { B[0] + T, B[1] + T, B[2] + T } },
+                   { { A[0], A[1] - T, A[2] - T }, { B[0], A[1], B[2] + T } },
+                   { { A[0], B[1], A[2] - T }, { B[0], B[1] + T, B[2] + T } },
+                   { { A[0], A[1], A[2] - T }, { B[0], B[1], A[2] } },
+                   { { A[0], A[1], B[2] }, { B[0], B[1], B[2] + T } } } };
+    }
+
+    std::string SkyShellEntity(size_t Entity, const std::array<double, 3>& A, const std::array<double, 3>& B, double T)
+    {
+        std::string Out = std::format("// entity {}\n{{\n\"classname\" \"func_group\"\n", Entity);
+        size_t N = 0;
+        for (const SkySlab& S : SkyShell(A, B, T))
+        {
+            Out += std::format("// brush {}\n{{\n", N++);
+            const double X0 = S.Lo[0], Y0 = S.Lo[1], Z0 = S.Lo[2], X1 = S.Hi[0], Y1 = S.Hi[1], Z1 = S.Hi[2];
+            using Triple = std::array<Point, 3>;
+            const Triple Faces[6] = { { { { X0, Y0, Z0 }, { X1, Y0, Z0 }, { X1, Y1, Z0 } } }, { { { X0, Y0, Z1 }, { X0, Y1, Z1 }, { X1, Y1, Z1 } } },
+                                      { { { X0, Y0, Z0 }, { X0, Y1, Z0 }, { X0, Y1, Z1 } } }, { { { X1, Y0, Z0 }, { X1, Y0, Z1 }, { X1, Y1, Z1 } } },
+                                      { { { X0, Y0, Z0 }, { X0, Y0, Z1 }, { X1, Y0, Z1 } } }, { { { X0, Y1, Z0 }, { X1, Y1, Z0 }, { X1, Y1, Z1 } } } };
+            for (const Triple& F : Faces) Out += Face(F[0], F[1], F[2], "sky");
+            Out += "}\n";
+        }
+        Out += "}\n";
+        return Out;
     }
 
     bool SafeText(const std::string& S)
@@ -68,7 +97,11 @@ namespace Maps
         if (!E.SkyboxModel.empty()) F.push_back({ "skyboxmodel", E.SkyboxModel });
         F.push_back({ "type", "ssi" });
         F.push_back({ "yaw", Num(E.Yaw) });
-        return Gdt::Entry(E.Name, "ssi.gdf", F, "\n");
+        // APE writes an entry's keys sorted, case aside (bo3-verify's gdt.order)
+        std::stable_sort(F.begin(), F.end(), [](const auto& A, const auto& B) {
+            return std::lexicographical_compare(A.first.begin(), A.first.end(), B.first.begin(), B.first.end(), [](char X, char Y) { return std::tolower(static_cast<unsigned char>(X)) < std::tolower(static_cast<unsigned char>(Y)); });
+        });
+        return Gdt::Entry(E.Name, "ssi.gdf", F, "\r\n");
     }
 
     bool ParseSsiStock(const std::string& Json, SsiStock& Out, std::string& Why)
@@ -140,6 +173,54 @@ namespace Maps
         {
             const std::span<const float> Corners(B.Vertices);
             for (size_t K = 0; K + 2 < Corners.size(); K += 3) Take(Corners.subspan(K, 3).first<3>());
+        }
+        return Any;
+    }
+
+    bool WrittenBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi, std::array<std::string, 6>* Why, const char* SkipModelContaining)
+    {
+        bool Any = CollisionBounds(Scene, Lo, Hi);
+        if (Why != nullptr)
+            for (std::string& W : *Why) W = "collision";
+        const auto Take = [&](const float (&P)[3], const auto& Label) {
+            for (size_t A = 0; A < 3; A++)
+                if (!std::isfinite(P[A])) return;
+            for (size_t A = 0; A < 3; A++)
+            {
+                if (!Any || P[A] < Lo[A])
+                {
+                    Lo[A] = P[A];
+                    if (Why != nullptr) (*Why)[A * 2] = Label(P);
+                }
+                if (!Any || P[A] > Hi[A])
+                {
+                    Hi[A] = P[A];
+                    if (Why != nullptr) (*Why)[A * 2 + 1] = Label(P);
+                }
+            }
+            Any = true;
+        };
+        const auto IsSky = [&](const std::string& Name) {
+            std::string L = Name;
+            for (char& C : L) C = static_cast<char>(std::tolower(static_cast<unsigned char>(C)));
+            if (L.find("sky") != std::string::npos) return true;
+            const auto It = Scene.Materials.find(Name);
+            if (It == Scene.Materials.end()) return false;
+            std::string T = It->second.Techset;
+            for (char& C : T) C = static_cast<char>(std::tolower(static_cast<unsigned char>(C)));
+            return T.find("sky") != std::string::npos;
+        };
+        for (const Mesh& M : Scene.Objects)
+            for (const Surface& S : M.Surfaces)
+            {
+                if (IsSky(S.Material)) continue;
+                for (const Vertex& V : S.Vertices)
+                    Take(V.Pos, [&](const float (&P)[3]) { return std::format("render vertex of {} ({}) at ({:.0f}, {:.0f}, {:.0f})", M.Name, S.Material, P[0], P[1], P[2]); });
+            }
+        for (const Instance& I : Scene.StaticInstances)
+        {
+            if (SkipModelContaining != nullptr && I.Model.find(SkipModelContaining) != std::string::npos) continue;
+            Take(I.Origin, [&](const float (&P)[3]) { return std::format("static instance {} of {} at ({:.0f}, {:.0f}, {:.0f})", I.Name, I.Model, P[0], P[1], P[2]); });
         }
         return Any;
     }
@@ -325,6 +406,98 @@ namespace Maps
               "an effect placement is a script_struct with its origin, angles and name", Fe);
         Fx.Name = "a\"b\nc";
         Check(EffectPlacementEntity(7, Fx).empty(), "an effect name with a quote or newline is refused");
+        // the written bounds: the collision, the drawn world (not a far sky mesh) and the instances' origins
+        {
+            MapScene S;
+            S.Collision.Vertices = { 0, 0, 0, 10, 10, 10 };
+            Mesh World, SkyMesh;
+            Surface Ground, Sky;
+            Ground.Material = "ground";
+            Ground.Vertices.resize(2);
+            Ground.Vertices[0].Pos[0] = -500, Ground.Vertices[1].Pos[2] = 900;
+            Sky.Material = "hdr_sky_x";
+            Sky.Vertices.resize(1);
+            Sky.Vertices[0].Pos[0] = 90000;
+            World.Surfaces.push_back(Ground);
+            SkyMesh.Surfaces.push_back(Sky);
+            S.Objects = { World, SkyMesh };
+            Instance I;
+            I.Origin[1] = 2000;
+            S.StaticInstances.push_back(I);
+            std::array<float, 3> Lo{}, Hi{};
+            Check(WrittenBounds(S, Lo, Hi) && Lo[0] == -500 && Hi[0] == 10 && Hi[1] == 2000 && Hi[2] == 900 && Lo[1] == 0, "the written bounds take the drawn world and the instances, not the sky mesh",
+                  std::format("{} {} {} / {} {} {}", Lo[0], Lo[1], Lo[2], Hi[0], Hi[1], Hi[2]));
+        }
+        // the sky shell around a 100 x 200 x 50 box with 10 thick slabs. Stated independently: the shell is every point of the outer box (inner grown by 10) that is not in the inner
+        // box, so each probe point of a grid over the outer box lies in exactly one slab if it is outside the inner box and in none if inside, and the volumes add up
+        {
+            const std::array<double, 3> A = { 0, 0, 0 }, B = { 100, 200, 50 };
+            const double T = 10;
+            const std::array<SkySlab, 6> Slabs = SkyShell(A, B, T);
+            size_t Gaps = 0, Doubles = 0, Inside = 0, Probed = 0;
+            for (double X = -9.5; X < 110; X += 3)
+                for (double Y = -9.5; Y < 210; Y += 3)
+                    for (double Z = -9.5; Z < 60; Z += 3)
+                    {
+                        int Hits = 0;
+                        for (const SkySlab& S : Slabs) Hits += X > S.Lo[0] && X < S.Hi[0] && Y > S.Lo[1] && Y < S.Hi[1] && Z > S.Lo[2] && Z < S.Hi[2];
+                        const bool InInner = X > 0 && X < 100 && Y > 0 && Y < 200 && Z > 0 && Z < 50;
+                        Probed++;
+                        if (InInner) Inside += Hits != 0;
+                        else if (Hits == 0) Gaps++;
+                        else if (Hits > 1) Doubles++;
+                    }
+            Check(Probed > 1000 && Gaps == 0 && Doubles == 0 && Inside == 0, "the sky shell has no gap, no overlap and leaves the inside empty", std::format("{} gaps {} overlaps {} inside of {}", Gaps, Doubles, Inside, Probed));
+            double Volume = 0;
+            for (const SkySlab& S : Slabs) Volume += (S.Hi[0] - S.Lo[0]) * (S.Hi[1] - S.Lo[1]) * (S.Hi[2] - S.Lo[2]);
+            Check(std::fabs(Volume - (120.0 * 220.0 * 70.0 - 100.0 * 200.0 * 50.0)) < 1e-6, "the slabs' volumes add up to outer box minus inner box", std::format("{}", Volume));
+            // the text: six brushes of six `sky` faces, every face's normal (from its three points) pointing into its brush
+            const std::string Text = SkyShellEntity(3, A, B, T);
+            size_t SkyFaces = 0, Brushes = 0, Outward = 0, Faces = 0;
+            for (size_t At = Text.find("// brush"); At != std::string::npos; At = Text.find("// brush", At + 1))
+            {
+                Brushes++;
+                const size_t End = Text.find("\n}\n", At);
+                std::vector<std::array<double, 9>> Planes;
+                double Centre[3] = { 0, 0, 0 };
+                size_t Pos = Text.find('\n', At);
+                while ((Pos = Text.find("( ", Pos)) != std::string::npos && Pos < End)
+                {
+                    std::array<double, 9> P{};
+                    size_t At2 = Pos;
+                    int Read = 0;
+                    for (int K = 0; K < 3; K++)
+                    {
+                        At2 = Text.find('(', At2) + 1;
+                        for (int A = 0; A < 3; A++)
+                        {
+                            const char* Start = &Text[At2];
+                            char* E = nullptr;
+                            P[K * 3 + A] = std::strtod(Start, &E);
+                            Read += E != Start;
+                            At2 += static_cast<size_t>(std::distance(Start, static_cast<const char*>(E)));
+                        }
+                        At2 = Text.find(')', At2);
+                    }
+                    if (Read != 9) break;
+                    Pos = At2;
+                    SkyFaces += Text.compare(At2, 6, ") sky ") == 0;
+                    Planes.push_back(P);
+                }
+                for (const auto& P : Planes)
+                    for (int K = 0; K < 3; K++) Centre[K] += (P[K] + P[3 + K] + P[6 + K]) / 3.0 / static_cast<double>(Planes.size());
+                for (const auto& P : Planes)
+                {
+                    const double U[3] = { P[3] - P[0], P[4] - P[1], P[5] - P[2] }, V[3] = { P[6] - P[0], P[7] - P[1], P[8] - P[2] };
+                    const double N[3] = { U[1] * V[2] - U[2] * V[1], U[2] * V[0] - U[0] * V[2], U[0] * V[1] - U[1] * V[0] };
+                    const double Along = N[0] * (Centre[0] - P[0]) + N[1] * (Centre[1] - P[1]) + N[2] * (Centre[2] - P[2]);
+                    Faces++;
+                    Outward += Along <= 0;
+                }
+            }
+            Check(Brushes == 6 && Faces == 36 && SkyFaces == 36 && Outward == 0 && Text.find("\"classname\" \"func_group\"") != std::string::npos, "six brushes of six sky faces, every normal into its brush",
+                  std::format("{} brushes {} faces {} sky {} outward", Brushes, Faces, SkyFaces, Outward));
+        }
         return Failed;
     }
 }

@@ -203,10 +203,22 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
 - Modern Warfare Remastered maps get a `volume_sun` around the collision bounds, an `info_null` target, an `ssi` entry `graywolf_<map>` and
   `reflection_probe` entities. Sun angles and colour ratios come from the game. Its brightness has no known conversion to stops, so stops, EV range and
   shadow values are the median of the 94 stock entries, listed as `ssi_values_from_stock_median`: a starting value to tune, not a value read from the map.
-  Probes are at the game's origins; the record holds no size, so size is not read. The sky and the LUT are not written yet.
+  Probes are at the game's origins; the record holds no size, so size is not read.
+- Modern Warfare Remastered's sky is a BC6H cube. It is resampled by direction into a 2:1 lat-long EXR (half RGB, ZIPS) using the BO3 sky
+  shader's own mapping, and written as stock-form image, `sky_latlong_hdr` material and xmodel entries over the stock sky mesh, with `skyboxmodel` on
+  the worldspawn and the `ssi` entry. These files are published beside the map. Brightness has no known conversion: texels times the game's
+  `hdrColorParms` are scaled by one factor for the game, set so `mp_crash` matches the upper-hemisphere mean of a stock day sky, and `skyStops`
+  is the stock median, listed as `sky_values_from_stock_median`. `skyRotation 0` is an assumption. The brightest sky texel lies 11 to 36 degrees
+  from the sun direction on four maps.
+- A Modern Warfare Remastered map is enclosed by six `sky` brushes around everything written, as one group that can be deleted. A map whose bounds
+  would pass 64,000 units gets none and the report names what is that far out: on `mp_crash`, ten vista models. Whether cod2map takes the shell as
+  sealed is unknown.
+- The colour grade (`clut`) is the identity on the maps that have one, so no `lutmaterial` is written.
 - Script-placed effects come from `maps/createfx/<map>_fx`: 230 on `mp_crash`, 187 on `mp_crossfire`, written as entities in the effects prefab. A placement
   is tied to its name by the shape of its instruction group, not by a full bytecode decode. A script whose groups do not fit is rejected whole and
-  reported rather than risk effects at the wrong place, which is what happens to all 294 on `mp_bog` for now. The effect assets themselves are not exported yet.
+  reported rather than risk effects at the wrong place. Optional keys (`sizescale`, and `tintcolor`, `tintalpha` and `emissive` together) are read
+  inside their own placement; any other key or combination fails closed and is named. `mp_bog` writes 287 of 294, the other 7 lie outside the map.
+  The effect assets themselves are not exported yet.
 - `layerSortDecal` stays `Debris (top)` on every Modern Warfare Remastered decal: neither the game's sort key nor the hand-made GDTs give
   a table. Lights are read from the world's records, 32 of 33 on `mp_crash`; `Right` handedness is not checked against a stock light.
 - Modern Warfare Remastered textures with no Black Ops III use yet (detail, parallax, decal layers, a few unnamed semantics) are listed as

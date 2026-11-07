@@ -198,6 +198,15 @@ namespace Maps
         std::string Image;   // a sky drawn as a texture (a key of Images): written beside the .glb
         float Sun[3] = { 0, 0, 0 };   // unit vector toward the sun, game space (zero: unknown)
         bool Atmosphere = false;      // the game draws the sky by scattering (no texture): a physical sky
+        int64_t ReaderImage = -1;     // the reader's own position of the sky image (a game's reader decodes it once, below)
+        // The sky cube resampled into the lat-long image a Black Ops III sky material holds (M4e; SkyLatLong.h): OpenEXR bytes (half RGB, ZIPS), the size, and the number the
+        // cube's texels were multiplied by on the way (the game shader's own multiplier, so the file holds what the game draws). Empty when the reader made none.
+        std::vector<uint8_t> LatLongExr;
+        int LatLongWidth = 0, LatLongHeight = 0;
+        float ExrScale = 1.0f;
+        float UpperMeanWritten = 0.0f;   // the mean luminance of the lat-long's upper half as written
+        std::string CalibrationBasis;    // where the reader's brightness calibration comes from, for the row and the owner check
+        std::string LatLongNote;      // what the conversion measured, for the owner check ("" : nothing)
     };
 
     // A brush of the clip map: the convex volume its sides bound. Each side is a plane whose normal
@@ -262,6 +271,7 @@ namespace Maps
     {
         std::string Name;
         std::string Game;                           // the game id ("bo4"): the materials sidecar's
+        bool SealWithSkyShell = false;              // the game's reader asks for a sky shell around the map (MapSunProbes.h SkyShell): a trait of the game, off where a game does not set it
         std::vector<Mesh> Objects;                  // world geometry
         std::map<std::string, Mesh> Models;         // what the instances place, by name
         std::vector<Instance> StaticInstances, DynamicInstances, SplinedInstances;

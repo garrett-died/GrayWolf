@@ -13,6 +13,8 @@
 #include "MapRadiantGeometry.h"
 #include "MapRadiantRules.h"
 #include "MapSunProbes.h"
+#include "MapSkyGdt.h"
+#include "ModToolsSky.h"
 #include "SurfaceTypes.h"
 #include "MapRadiantTextures.h"
 #include "MaterialGdt.h"
@@ -1489,10 +1491,11 @@ namespace
             // M4: only for a game that has the data (a scene without probes, sun or effects reports none of these)
             for (const auto& [Key, N] : std::initializer_list<std::pair<const char*, size_t>>{
                      { "map_radiant_probes", Stats.Probes }, { "map_radiant_probes_no_size", Stats.ProbesNoSize }, { "map_radiant_sun_volumes", Stats.SunVolumes },
-                     { "map_radiant_ssi_stock_values", Stats.SsiStockValues }, { "map_radiant_effect_placements", Stats.EffectPlacements }, { "map_radiant_effect_placements_refused", Stats.EffectPlacementsRefused } })
+                     { "map_radiant_ssi_stock_values", Stats.SsiStockValues }, { "map_radiant_sky_written", Stats.SkyWritten }, { "map_radiant_sky_shells", Stats.SkyShells }, { "map_radiant_effect_placements", Stats.EffectPlacements }, { "map_radiant_effect_placements_refused", Stats.EffectPlacementsRefused } })
                 if (N != 0) Result.Counters.emplace_back(Key, N);
             // the prefab files: counts by part (the file is <map>_prefab_<part>.map), and what the main map keeps
             for (const RadiantPrefabFile& F : Stats.PrefabFiles) Result.Files.push_back(F.File);
+            Result.DataFiles = Stats.DataFiles;
             if (!Prefabs.empty())
             {
                 Result.Counters.emplace_back("map_radiant_prefab_files", Stats.PrefabFiles.size());
@@ -1554,7 +1557,7 @@ namespace
                 B.SetMapUse(Usage);
                 for (size_t K = 0; K < Described.size(); K++) B.Add(Described[K], G.Root, &Sources[K], GameId);
                 std::vector<std::string> Entries = G.ModelEntries;
-                const std::vector<std::string> Mine = B.Entries("\n");
+                const std::vector<std::string> Mine = B.Entries("\r\n");
                 // every usage fallback leaves a row, as the publish step's approximations file does: <map>_radiant/graywolf_approximations.tsv
                 {
                     std::string Rows = "code\tasset\tdetail\tmessage\n";
@@ -1586,7 +1589,7 @@ namespace
                 for (const auto& [K, N] : B.Counters()) Counters[K] += N;
                 fs::create_directories(G.Root / "source_data", Ec);
                 const fs::path GdtFile = G.Root / "source_data" / (G.Map + ".gdt");
-                std::ofstream(GdtFile, std::ios::binary) << Gdt::Document(Entries, "\n");
+                std::ofstream(GdtFile, std::ios::binary) << Gdt::Document(Entries, "\r\n");
                 std::ofstream(fs::path(GdtFile).replace_extension(".names.json"), std::ios::binary) << B.NamesJson();
             };
         }
@@ -1972,6 +1975,68 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         }
     }
 
+    // M4e: the sky. A reader that resampled the game's sky cube (Scene.Sky.LatLongExr) gets the Mod Tools' own form: the EXR under model_export/t7_skybox/<map>, an image, a
+    // material and an xmodel entry in model_export/<map>_sky.gdt, and the xmodel named by the worldspawn's skyboxmodel (and the ssi entry's, below). Brightness fields are the
+    // median of the stock sky materials; skyRotation 0 is an assumption (how the degrees become the shader's float2 is not in share/raw).
+    std::string SkyXmodel;
+    if (!Scene.Sky.LatLongExr.empty())
+    {
+        SkyStock Stock;
+        SkyNames Names;
+        std::string Why;
+        if (!LoadSkyStock(Stock, Why))
+            Stats.Unresolved.push_back("sky: " + Why + ": the sky is not written (no skyboxmodel)");
+        else if (!SkyNamesFor(Map, Stock, Names))
+            Stats.Unresolved.push_back("sky: the map's name is not usable in sky entry names (" + Map + "): the sky is not written");
+        else
+        {
+            const std::string BaseImage = "model_export\\t7_skybox\\" + Map + "\\" + Names.Image + "_ll.exr";
+            const std::string Text = SkyGdtText(Names, BaseImage, Stock, 0.0);
+            const fs::path ExrFile = Root / "model_export" / "t7_skybox" / Map / (Names.Image + "_ll.exr");
+            const fs::path GdtFile = Root / "model_export" / (Map + "_sky.gdt");
+            std::error_code SkyEc;
+            fs::create_directories(ExrFile.parent_path(), SkyEc);
+            bool Done = !Text.empty() && !SkyEc;
+            if (Done)
+            {
+                std::ofstream Exr(ExrFile, std::ios::binary);
+                Exr.write(reinterpret_cast<const char*>(Scene.Sky.LatLongExr.data()), static_cast<std::streamsize>(Scene.Sky.LatLongExr.size()));
+                Exr.close();
+                std::ofstream Gdt(GdtFile, std::ios::binary);
+                Gdt << Text;
+                Gdt.close();
+                Done = Exr.good() && Gdt.good() && fs::exists(ExrFile, SkyEc) && fs::exists(GdtFile, SkyEc);
+            }
+            if (!Done)
+            {
+                Error = "the sky files could not be written under " + (Root / "model_export").string();
+                return false;
+            }
+            SkyXmodel = Names.Xmodel;
+            Stats.DataFiles.push_back(Map + "_radiant/model_export/t7_skybox/" + Map + "/" + Names.Image + "_ll.exr");
+            Stats.DataFiles.push_back(Map + "_radiant/model_export/" + Map + "_sky.gdt");
+            for (Entity& E : Ents)
+                if (E.count("classname") && E.at("classname") == "worldspawn")
+                {
+                    E["skyboxmodel"] = SkyXmodel;
+                    break;
+                }
+            const auto StockValue = [&Stock](const char* Key) {
+                for (const auto& [K, V] : Stock.MaterialValues)
+                    if (K == Key) return V;
+                return std::string("?");
+            };
+            Stats.SkyWritten++;
+            Stats.Unresolved.push_back(std::format("sky_values_from_stock_median: the sky material {} takes skyStops {}, skyScaleRGB {} and skySize {} from the median of the {} lat-long sky materials of the stock model_export/t7_skybox.gdt ({}), "
+                                                   "not from the game: the sky's brightness is a starting value (the file holds the cube's texels times {} so that its upper half has mean luminance {:.3f}, the stock day skies' level (skybox_default_day and skybox_ethiopia: 0.377); the calibration is one factor for every MWR map ({}) and is a measurement of this game's skies, not a game value); skyRotation 0 is assumed to turn nothing: how the material's degrees become the "
+                                                   "shader's rotation is not in share/raw. {}",
+                                                   Names.Material, StockValue("skyStops"), StockValue("skyScaleRGB"), StockValue("skySize"), Stock.Materials, Stock.Source, Scene.Sky.ExrScale, Scene.Sky.UpperMeanWritten, Scene.Sky.CalibrationBasis, Scene.Sky.LatLongNote));
+            Stats.OwnerCheckLines.push_back(std::format("sky: {}x{} half RGB EXR model_export/t7_skybox/{}/{}_ll.exr, entries {} / {} / {} in model_export/{}_sky.gdt, skyboxmodel {} on the worldspawn and the ssi entry. Check in Radiant that the sky "
+                                                        "shows, the sun stands where the brightest part of the sky is, and the horizon is level; if the sky is turned about the vertical, set the material's skyRotation. {}",
+                                                        Scene.Sky.LatLongWidth, Scene.Sky.LatLongHeight, Map, Names.Image, Names.Image, Names.Material, Names.Xmodel, Map, SkyXmodel, Scene.Sky.LatLongNote));
+        }
+    }
+
     std::string Out = "iwmap 4\n\"000_Global\" flags  active\n\"The Map\" flags \n";
     size_t EntityNumber = 0;
     std::vector<Block> Blocks;
@@ -2160,6 +2225,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
             Ssi.Name = "graywolf_" + Map;
             while (std::find(Stock.StockNames.begin(), Stock.StockNames.end(), Ssi.Name) != Stock.StockNames.end()) Ssi.Name += "_gw";
             Ssi.Pitch = Pitch, Ssi.Yaw = Yaw;
+            Ssi.SkyboxModel = SkyXmodel;
             if (HaveStock) Ssi.Stock = Stock.Values;
             const float Max = std::max({ Scene.Sun.Color[0], Scene.Sun.Color[1], Scene.Sun.Color[2] });
             if (Max > 0 && std::isfinite(Max))
@@ -2178,13 +2244,14 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
                 fs::create_directories(Root / "source_data", SunEc);
                 const fs::path SsiFile = Root / "source_data" / ("ssi_" + Map + ".gdt");
                 std::ofstream SsiOut(SsiFile, std::ios::binary);
-                SsiOut << Gdt::Document({ Entry }, "\n");
+                SsiOut << Gdt::Document({ Entry }, "\r\n");
                 SsiOut.close();
                 if (SunEc || !SsiOut.good() || !fs::exists(SsiFile, SunEc))
                 {
                     Error = "the ssi entry could not be written: " + SsiFile.string();
                     return false;
                 }
+                Stats.DataFiles.push_back(Map + "_radiant/source_data/ssi_" + Map + ".gdt");
                 Blocks.push_back({ Out.size(), PrefabPart::BrushEntities });
                 Out += SunVolumeEntities(EntityNumber, BoxLo, BoxHi, "graywolf_sun_target", Ssi.Name);
                 EntityNumber += 2;
@@ -2205,6 +2272,72 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
                 }
                 else
                     Stats.Unresolved.push_back("sun: " + StockWhy + ": the ssi entry has no stops or exposure fields, so Radiant uses its own defaults (brighter than any stock sun)");
+            }
+        }
+    }
+    // M4e: a sky shell. cod2map needs the map sealed; the Mod Tools' own maps seal with brushes in the stock `sky` material (zm_giant's geo prefab: five shells of `sky`), and the
+    // MWR export has only clip and caulk brushes. Six slabs 64 thick around the collision bounds plus 1024, in the brush entities prefab, optional to delete. Whether it seals the
+    // map in cod2map is unknown: nothing was compiled.
+    if (Scene.SealWithSkyShell)
+    {
+        std::array<float, 3> Lo{}, Hi{};
+        std::array<std::string, 6> BoundsWhy;
+        if (WrittenBounds(Scene, Lo, Hi, &BoundsWhy))
+        {
+            std::array<double, 3> A{}, B{};
+            SunBox(Lo, Hi, 1024.0f, 64000.0f, A, B);
+            // a box that reaches the clamp would put slabs inside the map: no shell then, said
+            bool Clamped = false;
+            for (size_t K = 0; K < 3; K++)
+                Clamped = Clamped || std::fabs(static_cast<double>(Lo[K]) - 1024.0) >= 64000.0 || std::fabs(static_cast<double>(Hi[K]) + 1024.0) >= 64000.0;
+            if (Clamped)
+            {
+                std::string Reach;
+                for (size_t K = 0; K < 6; K++)
+                {
+                    const double V = K % 2 == 0 ? static_cast<double>(Lo[K / 2]) - 1024.0 : static_cast<double>(Hi[K / 2]) + 1024.0;
+                    if (std::fabs(V) >= 64000.0) Reach += std::format(" {} {}: {};", "xyz"[K / 2], K % 2 == 0 ? "min" : "max", BoundsWhy[K]);
+                }
+                // what the far objects are: the static instances outside the shell's reach by model name, the bounds without the models named *vista*, and the entities that would then stand outside
+                std::map<std::string, size_t> Far;
+                size_t FarCount = 0;
+                for (const Instance& I : Scene.StaticInstances)
+                    if (std::fabs(I.Origin[0]) + 1024.0 >= 64000.0 || std::fabs(I.Origin[1]) + 1024.0 >= 64000.0 || std::fabs(I.Origin[2]) + 1024.0 >= 64000.0)
+                        Far[I.Model]++, FarCount++;
+                std::string FarText;
+                for (const auto& [Model, N] : Far) FarText += std::format(" {} x{};", Model, N);
+                std::array<float, 3> VLo{}, VHi{};
+                std::string Without = "no bounds without them";
+                size_t EntitiesOutside = 0;
+                if (WrittenBounds(Scene, VLo, VHi, nullptr, "vista"))
+                {
+                    Without = std::format("({:.0f} {:.0f} {:.0f}) to ({:.0f} {:.0f} {:.0f})", VLo[0], VLo[1], VLo[2], VHi[0], VHi[1], VHi[2]);
+                    for (const Entity& E : Ents)
+                    {
+                        const auto At = E.find("origin");
+                        float P[3];
+                        if (At == E.end() || sscanf_s(At->second.c_str(), "%f %f %f", &P[0], &P[1], &P[2]) != 3) continue;
+                        for (size_t A = 0; A < 3; A++)
+                            if (P[A] < VLo[A] - 1024.0f || P[A] > VHi[A] + 1024.0f)
+                            {
+                                EntitiesOutside++;
+                                break;
+                            }
+                    }
+                }
+                Stats.Unresolved.push_back(std::format("sealing: the map's bounds plus the 1024 margin reach the +-64000 limit of the shell, so no sky shell is written (a clamped shell would stand inside the map). What sets the extremes:{} "
+                                                       "{} static instance(s) lie out there, by model:{} Bounds without models named *vista*: {}; entities with an origin outside those bounds plus 1024: {}. Nothing was cut; a rule that leaves vista models out of the "
+                                                       "bounds would put them outside the shell.", Reach, FarCount, FarText, Without, EntitiesOutside));
+            }
+            else
+            {
+            Blocks.push_back({ Out.size(), PrefabPart::BrushEntities });
+            Out += SkyShellEntity(EntityNumber++, A, B, 64.0);
+            Stats.Entities++;
+            Stats.SkyShells++;
+            Stats.OwnerCheckLines.push_back(std::format("sealing: a shell of six `sky` slabs 64 thick surrounds the collision bounds plus 1024 ({} {} {} to {} {} {}) in the brush entities prefab, as zm_giant seals with `sky` brushes; "
+                                                        "delete that func_group if you seal the map yourself. Whether cod2map accepts it as sealed is unknown (nothing compiled); a leak file names the gap.",
+                                                        A[0], A[1], A[2], B[0], B[1], B[2]));
             }
         }
     }
@@ -2248,7 +2381,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
     // the GDT listing them, LF as it has always been written
     std::vector<std::string> Entries;
     const auto Listed = [&](const std::string& Name, const std::string& File) {
-        Entries.push_back(Gdt::Entry(Name, "xmodel.gdf", { { "filename", Gdt::Path(Map + "/" + File) }, { "type", "rigid" } }, "\n"));
+        Entries.push_back(Gdt::Entry(Name, "xmodel.gdf", { { "filename", Gdt::Path(Map + "/" + File) }, { "type", "rigid" } }, "\r\n"));
     };
     for (const std::string& Name : Named)
     {
@@ -2420,7 +2553,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
     }
     if (Full != nullptr) return File.good();   // no GDT of its own
     fs::create_directories(Root / "source_data", Ec);
-    std::ofstream(Root / "source_data" / (Map + ".gdt"), std::ios::binary) << Gdt::Document(Entries, "\n");
+    std::ofstream(Root / "source_data" / (Map + ".gdt"), std::ios::binary) << Gdt::Document(Entries, "\r\n");
     return File.good();
 }
 
@@ -2494,6 +2627,9 @@ int RadiantWriterSelfTest(std::string& Failures)
                 EffectPlacement E;
                 E.Kind = "fx", E.Name = "smoke_x", E.Origin[0] = 1;
                 S.Effects.push_back(E);
+                S.SealWithSkyShell = true;
+                S.Sky.LatLongExr = { 0x76, 0x2f, 0x31, 0x01 };   // stands for the EXR: the writer only copies it
+                S.Sky.LatLongWidth = 8192, S.Sky.LatLongHeight = 4096, S.Sky.ExrScale = 30.0f, S.Sky.LatLongNote = "test sky";
             }
             return S;
         };
@@ -2526,11 +2662,46 @@ int RadiantWriterSelfTest(std::string& Failures)
                 Check(Gdt.find("\"graywolf_m4scene\"") != std::string::npos && Gdt.find("\"pitch\" \"130\"") != std::string::npos && Gdt.find("\"yaw\" \"240\"") != std::string::npos && Gdt.find("\"colorSRGB\" \"1 1 0.7882 1\"") != std::string::npos &&
                           Gdt.find("\"stops\" \"11\"") != std::string::npos && Gdt.find("\"evmax\" \"12.5\"") != std::string::npos,
                       "the ssi entry has the sun's angles and colour ratios and the stock median brightness", Gdt);
+                Check(Gdt.find("\"bounceCount\"") < Gdt.find("\"colorSRGB\"") && Gdt.find("\"colorSRGB\"") < Gdt.find("\"enablesun\"") && Gdt.find("\"enablesun\"") < Gdt.find("\"stops\"") && Gdt.find("\"stops\"") < Gdt.find("\"yaw\"") &&
+                          Gdt.find("\r\n") != std::string::npos && Gdt.find("\n") == Gdt.find("\r\n") + 1,
+                      "the ssi entry's keys are sorted case aside and the lines end in CRLF (bo3-verify gdt.order, gdt.syntax)");
+                // M4e: the sky's EXR and entries, skyboxmodel on the worldspawn and the ssi entry, the chain reads back, and the shell of sky brushes
+                const fs::path Radiant = Map.parent_path() / "m4scene_radiant";
+                Check(Stats.SkyWritten == 1 && Stats.SkyShells == 1, "the sky and its shell are counted", std::format("{} {}", Stats.SkyWritten, Stats.SkyShells));
+                Check(fs::exists(Radiant / "model_export" / "t7_skybox" / "m4scene" / "skybox_m4scene_ll.exr") && fs::exists(Radiant / "model_export" / "m4scene_sky.gdt"), "the sky EXR and its GDT are written");
+                Check(Slurp(Map).find("\"skyboxmodel\" \"skybox_m4scene\"") != std::string::npos, "the worldspawn names the sky xmodel");
+                Check(Gdt.find("\"skyboxmodel\" \"skybox_m4scene\"") != std::string::npos, "the ssi entry names the sky xmodel");
+                ModToolsSky::Location Where;
+                Where.Root = Radiant.string();
+                ModToolsSky::SkySource Source;
+                std::string Why;
+                const bool Back = ModToolsSky::ResolveSsiEntry(Where, "graywolf_m4scene", Source, Why);
+                Check(Back && Source.Kind == ModToolsSky::SourceKind::LatLong && Source.Material == "mtl_skybox_m4scene" && !Source.Fallback, "the written sky reads back through the preview's chain", Why);
+                Check(All.find("\"classname\" \"func_group\"") != std::string::npos && All.find(" sky 64 64 0 0 0 0") != std::string::npos, "the sky shell is in the brush entities prefab");
+                // the shell is a trait of the game: the same scene without it writes none; a scene whose bounds reach the clamp writes none and says so
+                for (const bool Far : { false, true })
+                {
+                    MapScene Variant = S;
+                    Variant.SealWithSkyShell = Far;
+                    if (Far) Variant.Collision.Vertices.insert(Variant.Collision.Vertices.end(), { 70000.0f, 0.0f, 0.0f });
+                    const fs::path VMap = Dir / (Far ? "m4far" : "m4noseal") / "m4scene.map";
+                    fs::create_directories(VMap.parent_path(), Ec);
+                    RadiantStats VStats;
+                    std::string VError;
+                    const bool VOk = WriteRadiant(Variant, VMap.string(), VStats, VError, nullptr, { PrefabPart::Lights, PrefabPart::Effects, PrefabPart::Entities, PrefabPart::BrushEntities });
+                    std::string VAll = Slurp(VMap);
+                    for (const RadiantPrefabFile& F : VStats.PrefabFiles) VAll += Slurp(VMap.parent_path() / F.File);
+                    bool Said = false;
+                    for (const std::string& Line : VStats.Unresolved) Said = Said || Line.rfind("sealing:", 0) == 0;
+                    Check(VOk && VStats.SkyShells == 0 && VAll.find(" sky 64 64 0 0 0 0") == std::string::npos && (Far ? Said : true),
+                          Far ? "bounds at the clamp: no shell, reported" : "a game without the trait gets no shell", VError);
+                }
             }
             else
             {
                 Check(Stats.Probes == 0 && Stats.SunVolumes == 0 && Stats.EffectPlacements == 0 && All.find("volume_sun") == std::string::npos && All.find("reflection_probe") == std::string::npos &&
-                          All.find("graywolf_createfx") == std::string::npos && !fs::exists(Ssi),
+                          All.find("graywolf_createfx") == std::string::npos && !fs::exists(Ssi) && All.find(" sky 64 64 0 0 0 0") == std::string::npos && Stats.SkyWritten == 0 && Stats.SkyShells == 0 &&
+                          All.find("skyboxmodel") == std::string::npos,
                       "a scene without probes, sun or effects writes none of them and no ssi file");
             }
         }

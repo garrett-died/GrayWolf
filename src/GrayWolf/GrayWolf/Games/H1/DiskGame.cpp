@@ -10,6 +10,12 @@
 #include "MapSurfaceFromCollision.h"
 #include "MapCreateFx.h"
 #include "MapSunProbes.h"
+#include "ExrWriter.h"
+#include "ExrReader.h"
+#include <nlohmann/json.hpp>
+#include <fstream>
+#include <sstream>
+#include "SkyCubeDds.h"
 #include "FastFile.h"
 #include "Games/H1/LayerBits.h"
 #include "CoDAssets.h"
@@ -448,12 +454,47 @@ namespace
         L.AnchorPrefix = 0x8f;
         L.LoopNext = "soundalias";
         L.DelayAnchor = "~delay_min", L.DelayNext = "delay_max", L.DelayAfter = "soundalias";
-        L.FxNext = "fxid";
+        // optional effect keys after "fxid", "delay" (mp_bog): sizescale alone is +1 (3 groups of 3); tintcolor, tintalpha and emissive together (with sizescale) give 6 field sets in 2 groups, so +3 for the three. How the 3 divides among them is not known: only the whole combination is tied, any subset fails closed and is named.
+        L.FxNext = "fxid", L.FxDelay = "delay", L.FxExtraKeys = { { "sizescale", 1 } }, L.FxKeyCombos = { { { "tintcolor", "tintalpha", "emissive" }, 3 } };
         L.VectorOp = 0x56, L.PairPrefix = 0x89, L.Call = { 0x6f, 0x9e };
         L.FieldSet = { 0x88, 0x00, 0x52, 0x42, 0x9c, 0x97, 0x5b };
         L.FieldSetsLoop = 1, L.FieldSetsDelay = 3, L.FieldSetsFx = 2;
         L.AngleLimit = 720.0f;
         return L;
+    }
+
+    // The sky's brightness calibration of this game (zonekit/profiles/h1/target/sky.json, target data): one factor for every MWR map, so the maps keep their levels relative to each other.
+    // The file is found beside the exe or in a checkout above it. A missing file is a reported 1.
+    static double H1SkyCalibration(std::string& Source)
+    {
+        wchar_t Buf[MAX_PATH * 2] = {};
+        GetModuleFileNameW(nullptr, Buf, static_cast<DWORD>(std::size(Buf)));
+        std::error_code Ec;
+        for (fs::path P = fs::path(Buf).parent_path(); !P.empty(); P = P.parent_path())
+        {
+            const fs::path File = P / "zonekit" / "profiles" / "h1" / "target" / "sky.json";
+            if (fs::exists(File, Ec))
+            {
+                std::ifstream In(File, std::ios::binary);
+                std::stringstream Text;
+                Text << In.rdbuf();
+                try
+                {
+                    const nlohmann::json J = nlohmann::json::parse(Text.str());
+                    const double Scale = J.at("exr_scale").get<double>();
+                    Source = J.value("basis", std::string());
+                    if (std::isfinite(Scale) && Scale > 0) return Scale;
+                }
+                catch (const nlohmann::json::exception&)
+                {
+                }
+                Source = "sky.json unreadable";
+                return 1.0;
+            }
+            if (P == P.parent_path()) break;
+        }
+        Source = "zonekit/profiles/h1/target/sky.json not found";
+        return 1.0;
     }
 
     bool MwrZone::ReadMap(Maps::MapScene& Scene, std::map<std::string, uint64_t>& Models)
@@ -514,7 +555,19 @@ namespace
                     Counter("map_createfx_entries") += Fx.Entries;
                     Counter("map_createfx_vector_pairs") += Fx.VectorPairs;
                     if (Fx.Unparsed) Counter("map_createfx_anchors_unparsed") += Fx.Unparsed;
+                    for (std::string Key : Fx.UnknownKeys)
+                    {
+                        for (char& C : Key)
+                            if (!std::isalnum(static_cast<unsigned char>(C))) C = '_';
+                        Counter("map_createfx_unknown_key_" + Key)++;
+                    }
                     if (Fx.Unties) Counter("map_createfx_groups_untied") += Fx.Unties;
+                    for (std::string Group : Fx.UntiedGroups)
+                    {
+                        for (char& C : Group)
+                            if (!std::isalnum(static_cast<unsigned char>(C))) C = '_';
+                        Counter("map_createfx_untied_" + Group)++;
+                    }
                     if (Fx.Mismatch) Counter("map_createfx_file_rejected")++;
                     if (Fx.Outside) Counter("map_createfx_origin_outside_bounds") += Fx.Outside;
                     if (Fx.BadAngles) Counter("map_createfx_angles_out_of_range") += Fx.BadAngles;
@@ -550,6 +603,119 @@ namespace
                 for (int A = 0; A < 3; A++) Scene.Sun.Toward[A] = L.Dir[A], Scene.Sun.Color[A] = L.Color[A];
                 break;
             }
+        // M4e: the sky. The sky image is a cube map (BC6H, six faces); the sky shader of the game (wc_sky_cso_nfwpf, read from the techset zones) samples it with the world
+        // direction and multiplies the texel by the material's first constant (hdrColorParm: mad texel, cb3[0].x, cb3[0].y; the material holds 30 0 0 0). The cube is resampled
+        // by direction into the lat-long a Black Ops III sky material holds, the texels times that multiplier, and written as an EXR (SkyLatLong.h, ExrWriter.h).
+        Scene.SealWithSkyShell = true;   // MWR: its export has only clip and caulk brushes, so it is not enclosed (m4e.md 3)
+        if (Scene.Sky.ReaderImage >= 0)
+        {
+            const std::unique_ptr<XImageDDS> Dds = DecodeAt(Scene.Sky.ReaderImage, ImageUsageType::DiffuseMap);
+            SkyConv::Cube Cube;
+            std::string Format, Why;
+            if (!Dds || Dds->DataBuffer == nullptr || Dds->DataSize == 0)
+                Counter("map_sky_image_unreadable")++;
+            else if (!SkyConv::DecodeCubeDds(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Dds->DataBuffer), Dds->DataSize), Cube, Format, Why))
+            {
+                Counter("map_sky_cube_not_decoded")++;
+                Scene.Sky.LatLongNote = "the sky image is not a cube this reader decodes: " + Why + " (" + Format + ")";
+            }
+            else
+            try
+            {
+                // the multiplier: the constant named hdrColorParms of the sky material (MWR's name hash, mwr-materials.md 2; 30 0 0 0 on mp_crash), its x
+                const uint32_t HdrColorParm = H1Blend::NameHash("hdrColorParms");
+                float Multiplier = 1.0f;
+                bool FoundMultiplier = false;
+                for (const auto& [Name, Material] : Scene.Materials)
+                {
+                    if (Material.Techset.rfind("wc_sky", 0) != 0) continue;
+                    for (const auto& Block : Material.Constants)
+                        for (size_t At = 0; At + 32 <= Block.size() && !FoundMultiplier; At += 32)
+                        {
+                            std::array<float, 4> V{};
+                            uint32_t Hash = 0;
+                            std::memcpy(&Hash, std::span<const uint8_t>(Block).subspan(At, 4).data(), 4);
+                            std::memcpy(V.data(), std::span<const uint8_t>(Block).subspan(At + 16, sizeof(V)).data(), sizeof(V));
+                            if (Hash == HdrColorParm && std::isfinite(V[0]) && V[0] > 0.0f) Multiplier = V[0], FoundMultiplier = true;
+                        }
+                }
+                Counter(FoundMultiplier ? "map_sky_multiplier_read" : "map_sky_multiplier_hdrcolorparm_not_found")++;
+                const SkyConv::Peak Peak = SkyConv::Brightest(Cube);
+                if (!Peak.Found) Counter("map_sky_cube_black")++;
+                const SkyConv::CubeConvention Convention;   // identity: the shader samples the cube with the world direction
+                double World[3];
+                Convention.ToWorld(Peak.Dir, World);
+                Counter("map_sky_face_size") += static_cast<size_t>(Cube.Size);
+                Counter("map_sky_peak_x1000") += static_cast<size_t>(Peak.MaxChannel * 1000.0);
+                Counter("map_sky_mean_x1000000") += static_cast<size_t>(Peak.Mean * 1e6);
+                Counter("map_sky_multiplier_x1000") += static_cast<size_t>(Multiplier * 1000.0f);
+                Counter("map_sky_peak_face") += static_cast<size_t>(Peak.Face);
+                std::string Angle = "no sun";
+                if (Scene.Sun.Present)
+                {
+                    const double Toward[3] = { Scene.Sun.Toward[0], Scene.Sun.Toward[1], Scene.Sun.Toward[2] };
+                    const double Deg = SkyConv::AngleBetween(World, Toward);
+                    Counter("map_sky_peak_to_sun_centidegrees") += static_cast<size_t>(Deg * 100.0);
+                    Angle = std::format("{:.2f} degrees from the sun", Deg);
+                }
+                // the brightest texel above the horizon: a bake that mirrors the sky below it has the global peak in the mirror, so the sun's own disc is found in the upper hemisphere
+                if (Scene.Sun.Present)
+                {
+                    const SkyConv::Peak Upper = SkyConv::Brightest(Cube, Convention, 0.0);
+                    double UpperWorld[3] = { 0, 0, 0 };
+                    if (!Upper.Found) Counter("map_sky_no_texel_above_horizon")++;
+                    Convention.ToWorld(Upper.Dir, UpperWorld);
+                    const double Toward[3] = { Scene.Sun.Toward[0], Scene.Sun.Toward[1], Scene.Sun.Toward[2] };
+                    const double Deg = SkyConv::AngleBetween(UpperWorld, Toward);
+                    if (Upper.Found)
+                    {
+                        Counter("map_sky_upper_peak_to_sun_centidegrees") += static_cast<size_t>(Deg * 100.0);
+                        Counter("map_sky_upper_peak_x1000") += static_cast<size_t>(Upper.Luminance * 1000.0);
+                        Angle += std::format("; brightest texel above the horizon {:.1f} at ({:.3f}, {:.3f}, {:.3f}), {:.2f} degrees from the sun", Upper.Luminance, UpperWorld[0], UpperWorld[1], UpperWorld[2], Deg);
+                    }
+                    else
+                        Angle += "; no texel above the horizon is lit";
+                }
+                std::string CalibrationBasis;
+                const double Calibration = H1SkyCalibration(CalibrationBasis);
+                if (CalibrationBasis.rfind("zonekit", 0) == 0 || CalibrationBasis == "sky.json unreadable") Counter("map_sky_calibration_default")++;
+                const float Applied = static_cast<float>(Multiplier * Calibration);
+                int W = 0, H = 0;
+                SkyConv::LatLongSize(Cube.Size, W, H);
+                std::vector<uint16_t> Half;
+                std::vector<uint8_t> Exr;
+                if (!SkyConv::ResampleToLatLong(Cube, Convention, Applied, W, H, Half, Why) || !Exr::WriteHalfRgb(W, H, Half, Exr::WriteCompression::Zips, Exr, Why))
+                {
+                    Counter("map_sky_not_converted")++;
+                    Scene.Sky.LatLongNote = "the sky cube was not converted: " + Why;
+                }
+                else
+                {
+                    // the mean luminance of the upper half of the lat-long, before and after the calibration: the figure the calibration is set from (the stock day skies' upper mean is 0.377)
+                    double UpperSum = 0;
+                    for (size_t K = 0; K < static_cast<size_t>(W) * static_cast<size_t>(H / 2); K++)
+                        UpperSum += 0.2126 * Exr::HalfToFloat(Half[K * 3]) + 0.7152 * Exr::HalfToFloat(Half[K * 3 + 1]) + 0.0722 * Exr::HalfToFloat(Half[K * 3 + 2]);
+                    const double UpperOut = UpperSum / (static_cast<double>(W) * static_cast<double>(H / 2));
+                    Counter("map_sky_upper_mean_before_calibration_x1000000") += static_cast<size_t>(UpperOut / Calibration * 1e6);
+                    Counter("map_sky_upper_mean_written_x1000000") += static_cast<size_t>(UpperOut * 1e6);
+                    Scene.Sky.LatLongExr = std::move(Exr);
+                    Scene.Sky.LatLongWidth = W, Scene.Sky.LatLongHeight = H, Scene.Sky.ExrScale = Applied;
+                    Scene.Sky.UpperMeanWritten = static_cast<float>(UpperOut);
+                    Scene.Sky.CalibrationBasis = CalibrationBasis;
+                    Scene.Sky.LatLongNote = std::format("{} ({}); brightest texel {:.1f} (largest channel {:.1f}, mean luminance {:.4g}) on face {} at world direction ({:.3f}, {:.3f}, {:.3f}), {}; texels times {}",
+                                                        Format, Scene.Sky.Image, Peak.Luminance, Peak.MaxChannel, Peak.Mean, Peak.Face, World[0], World[1], World[2], Angle, Multiplier);
+                    Counter("map_sky_latlong_written")++;
+                    Scene.Images.erase(Scene.Sky.Image);   // the cube's PNG is of no use now: nothing reads it
+                }
+            }
+            catch (const std::bad_alloc&)
+            {
+                // the cube or the lat-long did not fit in memory: a reported failure, the export goes on without a sky
+                Counter("map_sky_out_of_memory")++;
+                Scene.Sky.LatLongExr.clear();
+                Scene.Sky.LatLongNote = "the sky cube was not converted: out of memory";
+            }
+        }
         // M4a: a blend or layer whose surface word still holds several bits. The clip material's surface index is bits 20..24 of its surface word and equals the render surface's
         // bit number plus one (tested on mp_crash 96.1%, mp_crossfire 96.5%, mp_bloc 97.6%: m2c.md 1); a bit wins only by the thresholds in MapSurfaceFromCollision.h
         {

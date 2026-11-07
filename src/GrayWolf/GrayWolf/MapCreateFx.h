@@ -15,6 +15,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <span>
 #include <string>
 #include <vector>
@@ -29,6 +30,10 @@ namespace Maps
         std::string LoopNext;                        // loop sound: anchor "~name", next string LoopNext
         std::string DelayAnchor, DelayNext, DelayAfter;   // delayed sound: anchor DelayAnchor, then DelayNext, then the name, then DelayAfter
         std::string FxNext;                          // effect: the string before the anchor is "name", the anchor "~name", the next FxNext
+        std::string FxDelay;                         // effect: the string after FxNext; the optional keys follow it, one string each
+        // keys measured only together: the field-set instructions the whole combination adds. Any subset of its keys (one alone, or two) is unknown to the parser and fails closed
+        std::vector<std::pair<std::vector<std::string>, int>> FxKeyCombos;
+        std::map<std::string, int> FxExtraKeys;      // an optional effect key (sizescale, tintcolor): the field-set instructions it adds to the effect's
         uint8_t VectorOp = 0, PairPrefix = 0;        // a vector literal: VectorOp and three floats; the byte before a pair
         std::array<uint8_t, 2> Call{};               // the bytes after a pair that start its call
         std::vector<uint8_t> FieldSet;               // one field-set instruction
@@ -46,6 +51,8 @@ namespace Maps
     {
         std::vector<EffectPlacement> Placements;
         size_t Entries = 0, VectorPairs = 0;   // the anchors parsed, the tied-looking vector pairs
+        std::vector<std::string> UnknownKeys;  // the strings after an effect's "delay" that are neither a known optional key nor the next placement's own name: the file is rejected, the names say what to add
+        std::vector<std::string> UntiedGroups;  // "<name>: expected N field sets, found M" for each group that did not fit its anchor, to say what the next key or form is
         size_t Unparsed = 0;                   // anchors whose neighbours fit no kind, or whose name is unsafe: the file is rejected
         size_t Unties = 0;                     // groups that do not fit their anchor's kind: the file is rejected
         size_t Outside = 0, BadAngles = 0;     // placements rejected alone

@@ -194,6 +194,11 @@
     <ClCompile Include="ModToolsSky.cpp" />
     <ClCompile Include="SkyLighting.cpp" />
     <ClCompile Include="SkyBakeSelfTest.cpp" />
+    <ClCompile Include="ExrWriter.cpp" />
+    <ClCompile Include="SkyLatLong.cpp" />
+    <ClCompile Include="SkyCubeDds.cpp" />
+    <ClCompile Include="SkyLatLongSelfTest.cpp" />
+    <ClCompile Include="MapSkyGdt.cpp" />
     <ClCompile Include="ExrReaderSelfTest.cpp" />
     <ClCompile Include="FixRoundSelfTest.cpp" />
     <ClCompile Include="ExportWriters.Sound.cpp" />
@@ -497,6 +502,10 @@
     <ClInclude Include="IPAKCache.h" />
     <ClInclude Include="IPAKSupport.h" />
     <ClInclude Include="IWDCache.h" />
+    <ClInclude Include="ExrWriter.h" />
+    <ClInclude Include="SkyLatLong.h" />
+    <ClInclude Include="SkyCubeDds.h" />
+    <ClInclude Include="MapSkyGdt.h" />
     <ClInclude Include="ExrReader.h" />
     <ClInclude Include="ModToolsSky.h" />
     <ClInclude Include="SkyLighting.h" />

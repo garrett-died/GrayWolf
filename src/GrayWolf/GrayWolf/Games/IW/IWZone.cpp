@@ -376,6 +376,7 @@ bool IWZone::ReadLevel(Maps::MapScene& Scene, std::map<std::string, uint64_t>& M
             if (const int64_t SkyImg = Off(At<uint64_t>(Img, Sky + SkyImage)); SkyImg >= 0)
             {
                 Scene.Sky.Image = AssetName(DiskGame::Kind::Image, SkyImg + M.ImageNameAt);
+                Scene.Sky.ReaderImage = SkyImg;
                 Scene.Images[Scene.Sky.Image];
             }
 

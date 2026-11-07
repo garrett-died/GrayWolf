@@ -63,5 +63,8 @@ namespace H1Blend
     // colour image ("<stem>_dec", "<stem>_dec_k4" with a reveal; "_<hash>" when two distinct arts share a name). Returns the number of layer materials made.
     size_t AddLayerMaterials(Maps::MapScene& Scene, const std::function<int64_t(const std::string& Id, std::string& Via)>& SurfaceOfId, std::map<std::string, size_t>* Counters = nullptr);
 
+    // MWR's hash of a sampler or constant name (mwr-materials.md 2: lower-case the name, h = (h * 33) ^ c in u32; proven on colorMap a0ab1041, envMapParms 3d9994dc, revealParams 8c67ded5)
+    uint32_t NameHash(std::string_view Name);
+
     int SelfTest(std::string& Failures);
 }

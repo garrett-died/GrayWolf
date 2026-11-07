@@ -27,6 +27,9 @@ namespace Maps
         std::function<void(std::map<std::string, size_t>& Counters)> LaterCounters;
         // other files the writer made beside Path (the Radiant prefab files): their names, in Path's folder
         std::vector<std::string> Files;
+        // data files the writer made under <map>_radiant (source_data, model_export: the ssi and sky GDTs, the sky EXR), as paths from Path's folder with / separators: the publish step
+        // places each at the same path below <map>_radiant in the Mod Tools folder
+        std::vector<std::string> DataFiles;
     };
 
     class ISceneWriter

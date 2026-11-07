@@ -13,7 +13,7 @@
 # Alpha mode: opaque, cutout (the colour alpha is a test), blend (the colour alpha is the opacity), keep (the adapter default).
 # Labels: tested = the family counts in section 2.2 (techset names over 21,222 materials); hypothesis = the BO3 side choice, not run in the Mod Tools.
 rule|ui_2d|prefix=2d|SKIP:ui_2d|opaque|tested: 1,444 of 1,466 UI materials have flags 0x3c00; BO3 has no use for them on map geometry
-rule|sky|prefix=wc_sky|sky_hdr|opaque|tested: 6 materials, one cube image; hypothesis: BO3 sky is an EXR plus an xmodel, the material is the nearest
+rule|sky|prefix=wc_sky|SKIP:sky_cube|opaque|tested: 6 materials, one cube image (BC6H, six faces); M4e: the map writer resamples the cube into a lat-long EXR and writes the sky image, material (sky_latlong_hdr) and xmodel itself (MapSkyGdt), so the cube material is left out here
 rule|tools|prefix=wc_tools|tools_replace|opaque|tested: 10 materials
 rule|tools2|prefix=tools_|tools_replace|opaque|tested: 10 materials
 rule|effect_add|prefix=effect_;token=add|effect_lit_emissive_add|blend|hypothesis: BO3 has no effect_add / effect_blend, these are its nearest

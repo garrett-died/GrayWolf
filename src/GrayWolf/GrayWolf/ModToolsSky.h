@@ -121,6 +121,11 @@ namespace ModToolsSky
     // The same for a known root
     Catalog Resolve(const Location& Where, const std::atomic<bool>* Cancel = nullptr);
 
+    // The chain of ONE ssi entry of any name (the four above are the Mod Tools' own): source_data\*.gdt ssi Entry -> its skyboxmodel -> the xmodel's skinOverride -> that material's
+    // colorMap -> that image's baseImage -> the file. Out gets the same SkySource (Notes say each link). False with Why when a link is missing: the entry, its skyboxmodel, the xmodel,
+    // the material, the image or the file. Used to prove that a sky a map export wrote reads back the way the preview reads a stock one.
+    bool ResolveSsiEntry(const Location& Where, const std::string& SsiEntry, SkySource& Out, std::string& Why, const std::atomic<bool>* Cancel = nullptr);
+
     // The four states as made-up skies (ui-shot's lighting script, the self-tests): no Mod Tools and no file needed
     Catalog DemoCatalog();
 

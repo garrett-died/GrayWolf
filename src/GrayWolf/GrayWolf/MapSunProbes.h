@@ -51,6 +51,10 @@ namespace Maps
     // The bounds of the map's collision (the triangle soup's vertices and the world brushes' corners). The drawn world is not used: a sky mesh is far larger than the map.
     // False when the scene has no collision vertex.
     bool CollisionBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi);
+    // The bounds of everything the map writes: the collision above, the drawn world's vertices (a sky material's surfaces, drawn far out, left out) and the static instances' origins
+    // Why, when given, gets what set each extreme: x min, x max, y min, y max, z min, z max, each as "collision" or "render vertex of <mesh> (<material>) at (x, y, z)" or "static instance <name> of
+    // <model> at (x, y, z)".
+    bool WrittenBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi, std::array<std::string, 6>* Why = nullptr, const char* SkipModelContaining = nullptr);
 
     // The box of a sun volume: the bounds grown by Pad, every side clamped to +-Range.
     void SunBox(const std::array<float, 3>& Lo, const std::array<float, 3>& Hi, float Pad, float Range, std::array<double, 3>& A, std::array<double, 3>& B);
@@ -66,6 +70,16 @@ namespace Maps
     // of the effect or sound alias as the game's script names it, origin and angles. BO3 has no entity that plays a stock effect by itself: a GSC loop over the targetname spawns them.
     // Empty when the kind or the name is not SafeText (the writer counts it refused).
     std::string EffectPlacementEntity(size_t Entity, const EffectPlacement& E);
+
+    // A closed shell of six slabs in the stock `sky` material around the box A..B, Thickness thick, as a func_group of six brushes (the Mod Tools' own maps seal with
+    // sky brushes: zm_giant's geo prefab holds five brush shells of `sky`). Entity is the entity number. The slabs overlap nowhere and leave no gap: the x slabs span the
+    // outer y and z, the y slabs the inner x and outer z, the z slabs the inner x and y.
+    struct SkySlab
+    {
+        std::array<double, 3> Lo, Hi;
+    };
+    std::array<SkySlab, 6> SkyShell(const std::array<double, 3>& A, const std::array<double, 3>& B, double Thickness);
+    std::string SkyShellEntity(size_t Entity, const std::array<double, 3>& A, const std::array<double, 3>& B, double Thickness);
 
     int SunProbesSelfTest(std::string& Failures);
 }

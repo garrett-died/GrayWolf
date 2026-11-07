@@ -1,0 +1,4 @@
+{
+ "exr_scale": 0.04954,
+ "basis": "one factor for every MWR map: mp_crash's upper-half mean luminance of texels times hdrColorParms (30), 7.610, brought to the stock day sky level 0.377 (skybox_default_day_ll.exr, skybox_ethiopia_ll.exr: mean 0.195, upper half 0.377). Uncalibrated upper means times hdrColorParms: mp_crash 7.610, mp_crossfire 9.597, mp_strike (multiplier not measured here), mp_bog 0.00104 (a night map); so the maps keep their levels relative to each other and mp_crossfire comes out at 0.476, mp_bog at 0.00005. cb2[29].x of the game's sky shader (a scene constant) is not known and may differ per map: unknown"
+}

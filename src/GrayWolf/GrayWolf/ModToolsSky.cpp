@@ -560,6 +560,73 @@ namespace
     }
 }
 
+bool ResolveSsiEntry(const Location& Where, const std::string& SsiEntry, SkySource& Out, std::string& Why, const std::atomic<bool>* Cancel)
+{
+    const fs::path Root = fs::path(Strings::ToUnicodeString(Where.Root));
+    GdtResolver Resolver{ Cancel, {}, {} };
+    std::vector<std::string> Notes;
+    const auto Ssi = Resolver.Find({ { "ssi.gdf", SsiEntry } }, { Root / "source_data" / "ssi.gdt" }, Root / "source_data");
+    const auto SsiHit = Ssi.find({ "ssi.gdf", SsiEntry });
+    if (SsiHit == Ssi.end())
+    {
+        Why = "no ssi entry " + SsiEntry + " in source_data";
+        return false;
+    }
+    const std::string* Named = SsiHit->second.Get("skyboxmodel");
+    const std::string Model = Named ? Trim(*Named) : std::string();
+    if (Model.empty())
+    {
+        Why = "the ssi entry " + SsiEntry + " has no skyboxmodel";
+        return false;
+    }
+    Notes.push_back("ssi " + SsiEntry + " -> skyboxmodel " + Model);
+    const fs::path ModelDir = Root / "model_export";
+    const auto Xmodels = Resolver.Find({ { "xmodel.gdf", Model } }, { ModelDir / "t7_skybox.gdt" }, ModelDir);
+    const auto XmodelHit = Xmodels.find({ "xmodel.gdf", Model });
+    if (XmodelHit == Xmodels.end())
+    {
+        Why = "no xmodel entry " + Model + " in model_export";
+        return false;
+    }
+    const std::string Material = SkyMaterialOf(XmodelHit->second);
+    if (Material.empty())
+    {
+        Why = "the xmodel " + Model + " has no skinOverride naming a sky material";
+        return false;
+    }
+    Notes.push_back("material " + Material);
+    const auto Materials = Resolver.Find({ { "material.gdf", Material } }, Resolver.Hits, ModelDir);
+    const auto MaterialHit = Materials.find({ "material.gdf", Material });
+    const std::string* Color = MaterialHit == Materials.end() ? nullptr : MaterialHit->second.Get("colorMap");
+    if (Color == nullptr || Trim(*Color).empty())
+    {
+        Why = "the material " + Material + " was not found or has no colorMap";
+        return false;
+    }
+    const std::string Image = Trim(*Color);
+    const auto Images = Resolver.Find({ { "image.gdf", Image } }, Resolver.Hits, ModelDir);
+    const auto ImageHit = Images.find({ "image.gdf", Image });
+    const std::string* Base = ImageHit == Images.end() ? nullptr : ImageHit->second.Get("baseImage");
+    if (Base == nullptr || Trim(*Base).empty())
+    {
+        Why = "the image " + Image + " was not found or has no baseImage";
+        return false;
+    }
+    Notes.push_back("image " + Image + " baseImage " + *Base);
+    std::string Failure;
+    if (!ResolveFiles(Where.Root, LightState::Day, Model, Material, Image, *Base, Notes, Out, Failure))
+    {
+        Why = Failure;
+        return false;
+    }
+    if (Out.Fallback)
+    {
+        Why = "the chain fell back to the planner's cube faces: the entry's own image was not found";
+        return false;
+    }
+    return true;
+}
+
 Catalog Resolve(const Location& Where, const std::atomic<bool>* Cancel)
 {
     Catalog Cat;

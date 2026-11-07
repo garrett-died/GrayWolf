@@ -225,6 +225,21 @@
     <ClCompile Include="SkyBakeSelfTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="ExrWriter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SkyLatLong.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SkyCubeDds.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SkyLatLongSelfTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MapSkyGdt.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="ExrReaderSelfTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -412,6 +427,18 @@
     </ClInclude>
     <ClInclude Include="IWDCache.h">
       <Filter>Header Files\Packages</Filter>
+    </ClInclude>
+    <ClInclude Include="ExrWriter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SkyLatLong.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SkyCubeDds.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="MapSkyGdt.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ExrReader.h">
       <Filter>Header Files</Filter>

@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include <format>
+#include <set>
 
 namespace Maps
 {
@@ -111,7 +112,51 @@ namespace Maps
                 const std::string Name = T[I].Text.substr(1);
                 if (I >= 1 && T[I - 1].Text == Name && CleanName(T[I - 1]) && After != nullptr && After->Text == L.FxNext)
                 {
-                    Entries.push_back({ "fx", Name, L.FieldSetsFx });
+                    // optional keys follow the effect's "delay" string, one string each (a key is a closed set named by the layout); each adds its field-set instructions
+                    // The keys of THIS placement only: they end where the next placement starts (its anchor, and for an effect the name string before it, which is that effect's own
+                    // and may spell a key). A string in between that is no known key fails the file closed and its name is reported.
+                    int Extra = 0;
+                    bool Unknown = false;
+                    std::set<std::string> Seen;
+                    size_t J = I + 2;
+                    if (J < T.size() && T[J].Text == L.FxDelay)
+                    {
+                        size_t Limit = I + 1;
+                        while (Limit < T.size() && !(T[Limit].Prev == L.AnchorPrefix && T[Limit].Next == 0)) Limit++;
+                        if (Limit < T.size() && Limit > 0 && T[Limit].Text.size() > 1 && T[Limit].Text[0] == '~' && T[Limit - 1].Text == T[Limit].Text.substr(1)) Limit--;
+                        for (J++; J < Limit; J++)
+                        {
+                            const auto Key = L.FxExtraKeys.find(T[J].Text);
+                            bool InCombo = false;
+                            for (const auto& Combo : L.FxKeyCombos) InCombo = InCombo || std::find(Combo.first.begin(), Combo.first.end(), T[J].Text) != Combo.first.end();
+                            if ((Key == L.FxExtraKeys.end() && !InCombo) || T[J].Prev != 0 || T[J].Next != 0 || !Seen.insert(T[J].Text).second)
+                            {
+                                R.UnknownKeys.push_back(T[J].Text);
+                                Unknown = true;
+                                break;
+                            }
+                            if (Key != L.FxExtraKeys.end()) Extra += Key->second;
+                        }
+                        // a combination counts only when all its keys are there; some of them alone are not a measured form
+                        for (const auto& Combo : L.FxKeyCombos)
+                        {
+                            size_t Present = 0;
+                            for (const std::string& K : Combo.first) Present += Seen.count(K);
+                            if (Present == Combo.first.size()) Extra += Combo.second;
+                            else if (Present != 0)
+                            {
+                                for (const std::string& K : Combo.first)
+                                    if (Seen.count(K) != 0) R.UnknownKeys.push_back(K + " (without the rest of its combination)");
+                                Unknown = true;
+                            }
+                        }
+                    }
+                    if (Unknown)
+                    {
+                        R.Unparsed++;
+                        continue;
+                    }
+                    Entries.push_back({ "fx", Name, L.FieldSetsFx + Extra });
                     continue;
                 }
                 if (After != nullptr && After->Text == L.LoopNext && SafeName(Name))
@@ -156,7 +201,11 @@ namespace Maps
         {
             const size_t From = Pairs[K].At + 26, To = K + 1 < Pairs.size() ? Pairs[K + 1].At - 1 : Bytecode.size();
             const std::span<const uint8_t> Group = Bytecode.subspan(From, To - From);
-            if (CountOf(Group, L.Call) != 1 || CountOf(Group, L.FieldSet) != static_cast<size_t>(Entries[K].FieldSets)) R.Unties++;
+            if (CountOf(Group, L.Call) != 1 || CountOf(Group, L.FieldSet) != static_cast<size_t>(Entries[K].FieldSets))
+            {
+                R.Unties++;
+                R.UntiedGroups.push_back(std::format("{} ({}): expected {} field sets, found {} and {} call marker(s)", Entries[K].Name, Entries[K].Kind, Entries[K].FieldSets, CountOf(Group, L.FieldSet), CountOf(Group, L.Call)));
+            }
         }
         if (R.Unties != 0)
         {
@@ -233,7 +282,7 @@ namespace Maps
         L.AnchorPrefix = 0x8f;
         L.LoopNext = "soundalias";
         L.DelayAnchor = "~delay_min", L.DelayNext = "delay_max", L.DelayAfter = "soundalias";
-        L.FxNext = "fxid";
+        L.FxNext = "fxid", L.FxDelay = "delay", L.FxExtraKeys = { { "sizescale", 1 } }, L.FxKeyCombos = { { { "tintcolor", "tintalpha", "emissive" }, 3 } };
         L.VectorOp = 0x56, L.PairPrefix = 0x89, L.Call = { 0x6f, 0x9e };
         L.FieldSet = { 0x88, 0x00, 0x52, 0x42, 0x9c, 0x97, 0x5b };
         L.FieldSetsLoop = 1, L.FieldSetsDelay = 3, L.FieldSetsFx = 2;
@@ -372,6 +421,104 @@ namespace Maps
             Anchor(Quote, "~fire\"x");
             Put(Quote, "soundalias");
             Check(ParseCreateFx(L, Quote, One).Placements.empty(), "a name with a quote is refused");
+        }
+        {
+            // an effect with an optional key (mp_bog): the key's string follows "delay" and its field-set instructions are added to the effect's two
+            std::vector<uint8_t> KS = { 0xf2, 0 };
+            Put(KS, "spark");
+            Anchor(KS, "~spark");
+            Put(KS, "fxid");
+            Put(KS, "delay");
+            Put(KS, "sizescale");
+            Put(KS, "plain");
+            Anchor(KS, "~plain");
+            Put(KS, "fxid");
+            Put(KS, "delay");
+            Put(KS, "fog");
+            Anchor(KS, "~fog");
+            Put(KS, "fxid");
+            Put(KS, "delay");
+            Put(KS, "tintcolor");
+            Put(KS, "tintalpha");
+            Put(KS, "emissive");
+            std::vector<uint8_t> KC = { 0x34 };
+            Group(KC, { 270, 0, 0 }, { 1, 2, 3 }, 3);
+            Group(KC, { 0, 0, 0 }, { 4, 5, 6 }, 2);
+            Group(KC, { 0, 90, 0 }, { 7, 8, 9 }, 5);
+            const CreateFxResult K = ParseCreateFx(L, KS, KC);
+            Check(!K.Mismatch && K.Placements.size() == 3 && K.Unties == 0, "effects with sizescale (+1) and tintcolor (+3) tie to their longer groups", std::format("{} unties {}", K.Placements.size(), K.Unties));
+            if (K.Placements.size() == 3)
+                Check(K.Placements[0].Name == "spark" && K.Placements[1].Name == "plain" && K.Placements[2].Name == "fog" && K.Placements[2].Origin[0] == 7.0f, "the keyed effects keep their own names and origins");
+            std::vector<uint8_t> KW = { 0x34 };
+            Group(KW, { 270, 0, 0 }, { 1, 2, 3 }, 2);   // sizescale named, but the group has only two sets
+            Group(KW, { 0, 0, 0 }, { 4, 5, 6 }, 2);
+            Group(KW, { 0, 90, 0 }, { 7, 8, 9 }, 5);
+            const CreateFxResult KB = ParseCreateFx(L, KS, KW);
+            Check(KB.Mismatch && KB.Placements.empty() && KB.Unties == 1, "a keyed effect whose group has the plain count is rejected", std::format("unties {}", KB.Unties));
+            std::vector<uint8_t> KP = { 0x34 };
+            Group(KP, { 270, 0, 0 }, { 1, 2, 3 }, 2);   // a plain effect group where the key says three
+            Group(KP, { 0, 0, 0 }, { 4, 5, 6 }, 2);
+            Group(KP, { 0, 90, 0 }, { 7, 8, 9 }, 2);
+            Check(ParseCreateFx(L, KS, KP).Unties == 2, "two keyed effects with plain groups are two unties");
+        }
+        {
+            // an optional key is read inside its own placement only: an effect NAMED sizescale or tintcolor, right after another effect's "delay", is that effect's own name
+            std::vector<uint8_t> NS = { 0xf2, 0 };
+            Put(NS, "plain");
+            Anchor(NS, "~plain");
+            Put(NS, "fxid");
+            Put(NS, "delay");
+            Put(NS, "sizescale");
+            Anchor(NS, "~sizescale");
+            Put(NS, "fxid");
+            Put(NS, "delay");
+            Put(NS, "tintcolor");
+            Anchor(NS, "~tintcolor");
+            Put(NS, "fxid");
+            Put(NS, "delay");
+            std::vector<uint8_t> NC = { 0x34 };
+            Group(NC, { 0, 0, 0 }, { 1, 2, 3 }, 2);
+            Group(NC, { 0, 0, 0 }, { 4, 5, 6 }, 2);
+            Group(NC, { 0, 0, 0 }, { 7, 8, 9 }, 2);
+            const CreateFxResult N = ParseCreateFx(L, NS, NC);
+            Check(!N.Mismatch && N.Placements.size() == 3 && N.Unties == 0 && N.UnknownKeys.empty(), "effects named sizescale and tintcolor are placements, not the previous effect's keys", std::format("{} unties {} mismatch {}", N.Placements.size(), N.Unties, N.Mismatch));
+            if (N.Placements.size() == 3) Check(N.Placements[1].Name == "sizescale" && N.Placements[2].Name == "tintcolor", "their names stay their own");
+            // an unknown key fails the file closed and names itself
+            std::vector<uint8_t> UK = { 0xf2, 0 };
+            Put(UK, "plain");
+            Anchor(UK, "~plain");
+            Put(UK, "fxid");
+            Put(UK, "delay");
+            Put(UK, "bogus_key");
+            std::vector<uint8_t> One = { 0x34 };
+            Group(One, { 0, 0, 0 }, { 1, 2, 3 }, 3);
+            const CreateFxResult K = ParseCreateFx(L, UK, One);
+            Check(K.Mismatch && K.Placements.empty() && K.UnknownKeys.size() == 1 && K.UnknownKeys[0] == "bogus_key", "an unknown key rejects the file and is named");
+            // the tint keys are tied only as the measured combination: one alone, or two, fail closed and are named
+            for (const std::vector<const char*>& Keys : { std::vector<const char*>{ "tintalpha" }, { "tintcolor", "emissive" }, { "emissive" } })
+            {
+                std::vector<uint8_t> TS = { 0xf2, 0 };
+                Put(TS, "plain");
+                Anchor(TS, "~plain");
+                Put(TS, "fxid");
+                Put(TS, "delay");
+                for (const char* Key : Keys) Put(TS, Key);
+                std::vector<uint8_t> Any = { 0x34 };
+                Group(Any, { 0, 0, 0 }, { 1, 2, 3 }, 2);
+                const CreateFxResult T = ParseCreateFx(L, TS, Any);
+                Check(T.Mismatch && T.Placements.empty() && !T.UnknownKeys.empty() && T.UnknownKeys[0].rfind(Keys[0], 0) == 0, "a subset of the tint combination is untied and named", Keys[0]);
+            }
+            // a key given twice is not a measured form either
+            std::vector<uint8_t> DS = { 0xf2, 0 };
+            Put(DS, "plain");
+            Anchor(DS, "~plain");
+            Put(DS, "fxid");
+            Put(DS, "delay");
+            Put(DS, "sizescale");
+            Put(DS, "sizescale");
+            std::vector<uint8_t> Two = { 0x34 };
+            Group(Two, { 0, 0, 0 }, { 1, 2, 3 }, 4);
+            Check(ParseCreateFx(L, DS, Two).Mismatch, "a key twice in one placement fails closed");
         }
         // a scriptfile cut out of a zone: header, name, zlib stack, bytecode
         std::vector<uint8_t> Zone(100, 0xAA);
