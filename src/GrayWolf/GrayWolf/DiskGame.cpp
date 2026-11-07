@@ -555,6 +555,15 @@ namespace
                           Progress& P, const ProgressFn& OnProgress, const std::function<bool()>& Cancelled, RunMonitor& Mon,
                           ImageRoles::Book* Roles)
     {
+        // Once the free space floor is reached Context::Wants refuses every asset, so a dependency zone opened now gives nothing: every round would still open one zone per
+        // pending asset's candidate (a map's 1,538 images on a 6,945-zone install read 41 GB of D: for no file). The dependencies are then reported unresolved, with the reason.
+        if (DiskGuard::Reached())
+        {
+            Mon.Log(std::to_string(Pending.size()) + " dependencies not pulled: the free space floor was reached, no dependency zone is opened");
+            for (const auto& [A, Not] : Pending) T.Unresolved.push_back(Describe(A, "not pulled: the free space floor was reached (--min-free-gb)"));
+            T.Counters["deps_not_pulled_disk_floor"] += Pending.size();
+            return;
+        }
         P.ZoneName = "indexing the install";
         P.Current.reset();
         P.Dependencies = true;
@@ -588,8 +597,9 @@ namespace
         // A zone read in one round and kept, parked, for the next, which may ask it again (what a
         // zone of the same round needed from it): read once, not twice.
         std::map<size_t, std::unique_ptr<IDiskZone>> Parked;
-        for (int Round = 1; !Pending.empty() && !Cancelled(); Round++)
+        for (int Round = 1; !Pending.empty() && !Cancelled() && !DiskGuard::Reached(); Round++)
         {
+            T.Counters["deps_rounds"]++;
             std::map<AssetId, std::vector<size_t>> Candidates;
             for (const auto& [A, Not] : Pending)
             {
@@ -654,7 +664,7 @@ namespace
                     Not.insert(From);
                     LastWhy[A] = Why;
                 };
-                if (Cancelled()) break;
+                if (Cancelled() || DiskGuard::Reached()) break;   // the rest of the plan is not opened: the floor makes every export of it empty
                 std::string Why;
                 std::unique_ptr<IDiskZone> Zone;
                 if (const auto Kept = Parked.find(Z); Kept != Parked.end())
@@ -674,6 +684,7 @@ namespace
                 }
                 if (Why.empty())
                 {
+                    T.Counters["deps_zones_opened"]++;
                     P.ZoneName = From + " (dependencies)";
                     P.Current.reset();
                     P.Done = P.Count = 0;
@@ -763,13 +774,15 @@ namespace
             }
             for (auto It = Next.begin(); It != Next.end();)
                 It = L.Exported.count(It->first) ? Next.erase(It) : std::next(It);
-            if (Cancelled())
+            if (Cancelled() || DiskGuard::Reached())
                 for (const auto& [A, Not] : Pending)
                     if (!L.Exported.count(A)) Next[A];
             Pending.swap(Next);
         }
         Parked.clear();
-        for (const auto& [A, Not] : Pending) T.Unresolved.push_back(Describe(A, "cancelled"));
+        const bool Floored = DiskGuard::Reached();
+        if (Floored) T.Counters["deps_not_pulled_disk_floor"] += Pending.size();
+        for (const auto& [A, Not] : Pending) T.Unresolved.push_back(Describe(A, Floored ? "not pulled: the free space floor was reached (--min-free-gb)" : "cancelled"));
         if (!T.Unresolved.empty()) Mon.Log(std::to_string(T.Unresolved.size()) + " dependencies unresolved (see the report)");
         for (const auto& [K, V] : Deps.Kinds)
             if (V.Written) T.Pulled[K] += V.Written;
@@ -1142,6 +1155,13 @@ Totals Export(const IDiskGame& Game, const ExportOptions& Options, const std::ve
     std::vector<IDiskGame::AnimZone> AnimZones;
     for (size_t I = 0; Any && I < Zones.size() && !Cancelled(); I++)
     {
+        if (DiskGuard::Reached())
+        {
+            // no asset is accepted any more: a zone opened now would only be read for nothing
+            T.Counters["zones_not_opened_disk_floor"] += Zones.size() - I;
+            Mon.Log(std::to_string(Zones.size() - I) + " zones not opened: the free space floor was reached");
+            break;
+        }
         const auto& Path = Zones[I];
         P.Zone = I;
         P.ZoneName = fs::path(Path).stem().string();
