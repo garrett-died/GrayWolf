@@ -7,6 +7,10 @@
 
 #include "Games/H1/BlendLayers.h"
 #include "MapBlend.h"
+#include "MapSurfaceFromCollision.h"
+#include "MapCreateFx.h"
+#include "MapSunProbes.h"
+#include "FastFile.h"
 #include "Games/H1/LayerBits.h"
 #include "CoDAssets.h"
 #include "DiskGame.h"
@@ -407,6 +411,8 @@ namespace
         // is written under an unresolved key, never as BO3's colour or intensity.
         M.Lights.Up = 32, M.Lights.Def = 0x88, M.Lights.ColorUnit = 15500.03f, M.Lights.ColorKey = "color_div_15500_03";
         M.ImageNameAt = ImageNameAt;
+        // the reflection probes (mwr-materials.md 7; the records read from mp_crash: count 22 at +0xb0, the records pointer at +0xc0, 0x20 bytes each, origin first, record 0 all zero)
+        M.ProbeCount = 0xb0, M.ProbeRecords = 0xc0, M.ProbeStride = 0x20;
         // the layers of a blend: the world's vertex layer data (size u32 at gfx_map +0x150, pointer at +0x158) and a surface's slice offset (u32 at 0) and vertex count (u16 at 16)
         // (mwr-materials.md 12.3); the shape and the decoding are Games/H1/BlendLayers.h's
         M.Blend.DataSize = 0x150, M.Blend.Data = 0x158, M.Blend.SurfaceSlice = 0, M.Blend.SurfaceVertices = 16;
@@ -429,6 +435,25 @@ namespace
         // the AABB tree: 24,449 records of 32 bytes at ClipInfo +0x48 (count at +0x40) on mp_crash; midpoint, material u16 at 12, child count u16 at 14, half size, partition at 28
         M.ClipBrushes.TreeCount = 0x10 + 0x40, M.ClipBrushes.Trees = 0x10 + 0x48, M.ClipBrushes.TreeSize = 0x20, M.ClipBrushes.TreeMaterial = 0xc, M.ClipBrushes.TreeChildren = 0xe, M.ClipBrushes.TreePartition = 0x1c;
         return M;
+    }
+
+    // The createfx script's facts for this game (MapCreateFx.h): measured on patch_mp_crash, checked on mp_bog and mp_crossfire (m4.md). The scriptfile's header holds three u32
+    // 32, 28 and 24 bytes before the name; every placement's anchor string follows the byte 0x8f; a vector literal is 0x56 and three floats, a pair follows 0x89 and is followed
+    // by the call 0x6f 0x9e; a field-set instruction is 88 00 52 42 9c 97 5b (1 per loop sound, 2 per effect, 3 per delayed sound on mp_crash: 230 of 230 groups).
+    static Maps::CreateFxLayout H1CreateFxLayout()
+    {
+        Maps::CreateFxLayout L;
+        L.ScriptPrefix = "maps/createfx/", L.ScriptSuffix = "_fx";
+        L.HeaderBack = { 32, 28, 24 };
+        L.AnchorPrefix = 0x8f;
+        L.LoopNext = "soundalias";
+        L.DelayAnchor = "~delay_min", L.DelayNext = "delay_max", L.DelayAfter = "soundalias";
+        L.FxNext = "fxid";
+        L.VectorOp = 0x56, L.PairPrefix = 0x89, L.Call = { 0x6f, 0x9e };
+        L.FieldSet = { 0x88, 0x00, 0x52, 0x42, 0x9c, 0x97, 0x5b };
+        L.FieldSetsLoop = 1, L.FieldSetsDelay = 3, L.FieldSetsFx = 2;
+        L.AngleLimit = 720.0f;
+        return L;
     }
 
     bool MwrZone::ReadMap(Maps::MapScene& Scene, std::map<std::string, uint64_t>& Models)
@@ -456,6 +481,83 @@ namespace
                 return Layer < Ids.size() ? Ids[Layer] : std::string();
             }, Evidence);
             for (const auto& [Name, N] : Evidence) Counter(Name) += N;
+        }
+        // M4d: the effects and sounds the map's createfx script places. The script is in the map's patch zone (patch_<map>.ff beside the map's), not in the map's: a compiled
+        // scriptfile whose string stack and vector literals give the placements in code order (MapCreateFx.h; the pairing is by order, not a decoded call).
+        {
+            const fs::path Own = FastFilePath();
+            const fs::path Patch = Own.parent_path() / ("patch_" + Own.stem().string() + ".ff");
+            std::error_code Ec;
+            if (!fs::exists(Patch, Ec))
+                Counter("map_createfx_no_patch_zone")++;
+            else
+            {
+                std::vector<uint8_t> PatchZone, Stack, Code;
+                std::string Why;
+                if (!FastFile::Decompress(Patch.string(), PatchZone, Why))
+                    Counter("map_createfx_patch_zone_unreadable")++;
+                else if (const Maps::CreateFxLayout Layout = H1CreateFxLayout(); !Maps::FindScriptFile(Layout, PatchZone, Layout.ScriptPrefix + Own.stem().string() + Layout.ScriptSuffix, Stack, Code, Why))
+                    Counter("map_createfx_script_not_found")++;
+                else
+                {
+                    // the map's collision bounds, padded, say where an origin can be
+                    Maps::CreateFxBounds Bounds;
+                    std::array<float, 3> Lo{}, Hi{};
+                    if (Maps::CollisionBounds(Scene, Lo, Hi))
+                    {
+                        Bounds.Valid = true;
+                        for (size_t A = 0; A < 3; A++) Bounds.Lo[A] = Lo[A] - 512.0f, Bounds.Hi[A] = Hi[A] + 512.0f;
+                    }
+                    else
+                        Counter("map_createfx_no_bounds")++;
+                    Maps::CreateFxResult Fx = Maps::ParseCreateFx(Layout, Stack, Code, Bounds);
+                    Counter("map_createfx_entries") += Fx.Entries;
+                    Counter("map_createfx_vector_pairs") += Fx.VectorPairs;
+                    if (Fx.Unparsed) Counter("map_createfx_anchors_unparsed") += Fx.Unparsed;
+                    if (Fx.Unties) Counter("map_createfx_groups_untied") += Fx.Unties;
+                    if (Fx.Mismatch) Counter("map_createfx_file_rejected")++;
+                    if (Fx.Outside) Counter("map_createfx_origin_outside_bounds") += Fx.Outside;
+                    if (Fx.BadAngles) Counter("map_createfx_angles_out_of_range") += Fx.BadAngles;
+                    // an independent look at the origins: how many lie within 64 and within 256 units of a collision vertex (the soup and the brushes' corners). A placement in the air
+                    // far from every surface is not proof of an error, a high share near one is evidence the origins are real positions.
+                    {
+                        std::vector<float> Corners = Scene.Collision.Vertices;
+                        for (const Maps::Brush& B : Scene.Collision.Brushes) Corners.insert(Corners.end(), B.Vertices.begin(), B.Vertices.end());
+                        size_t Near64 = 0, Near256 = 0;
+                        for (const Maps::EffectPlacement& E : Fx.Placements)
+                        {
+                            double Best = 1e30;
+                            for (size_t K = 0; K + 2 < Corners.size(); K += 3)
+                            {
+                                const double Dx = Corners[K] - E.Origin[0], Dy = Corners[K + 1] - E.Origin[1], Dz = Corners[K + 2] - E.Origin[2];
+                                Best = std::min(Best, Dx * Dx + Dy * Dy + Dz * Dz);
+                            }
+                            Near64 += Best <= 64.0 * 64.0, Near256 += Best <= 256.0 * 256.0;
+                        }
+                        Counter("map_createfx_placements_kept") += Fx.Placements.size();
+                        Counter("map_createfx_near_collision_vertex_64") += Near64;
+                        Counter("map_createfx_near_collision_vertex_256") += Near256;
+                    }
+                    Scene.Effects = std::move(Fx.Placements);
+                }
+            }
+        }
+        // the sun (M4b): the com_map light of type 1 (colour HDR, direction toward the sun: mp_crash (-0.321, -0.557, 0.766) = the worldspawn sundirection angles (-50, 240))
+        for (const Maps::Light& L : Scene.Lights)
+            if (L.Kind == Maps::Light::Type::Sun)
+            {
+                Scene.Sun.Present = true;
+                for (int A = 0; A < 3; A++) Scene.Sun.Toward[A] = L.Dir[A], Scene.Sun.Color[A] = L.Color[A];
+                break;
+            }
+        // M4a: a blend or layer whose surface word still holds several bits. The clip material's surface index is bits 20..24 of its surface word and equals the render surface's
+        // bit number plus one (tested on mp_crash 96.1%, mp_crossfire 96.5%, mp_bloc 97.6%: m2c.md 1); a bit wins only by the thresholds in MapSurfaceFromCollision.h
+        {
+            Maps::SurfaceFromCollisionConfig Rule;
+            Rule.Enabled = true, Rule.Shift = 20, Rule.Mask = 0x1f, Rule.Offset = -1, Rule.MinShare = 0.9, Rule.MinTriangles = 8;
+            std::map<std::string, size_t> Resolved;
+            Maps::ResolveSurfaceFromCollision(Scene, Rule, Resolved);
+            for (const auto& [Name, N] : Resolved) Counter(Name) += N;
         }
         // the tool materials this game's clip contents name, as data of the profile (flag_names.txt, clip_tool rows)
         if (const SurfaceTypes::Names* Names = SurfaceTypes::For("h1"))

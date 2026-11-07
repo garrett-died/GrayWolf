@@ -57,6 +57,9 @@
 #include "MapCollisionMeshes.h"
 #include "MapRenderMeshes.h"
 #include "MapBlend.h"
+#include "MapSurfaceFromCollision.h"
+#include "MapSunProbes.h"
+#include "MapCreateFx.h"
 #include "Games/H1/BlendLayers.h"
 #include "Games/IW/BlendSlices.h"
 #include "MapRadiantRules.h"
@@ -1037,6 +1040,9 @@ static int SelfTest(std::string& Failures)
     Failed += Maps::RadiantTexturesSelfTest(Failures);
     Failed += Maps::BlendSelfTest(Failures);
     Failed += H1Blend::SelfTest(Failures);
+    Failed += Maps::SurfaceFromCollisionSelfTest(Failures);
+    Failed += Maps::SunProbesSelfTest(Failures);
+    Failed += Maps::CreateFxSelfTest(Failures);
     Failed += BlendSlices::SelfTest(Failures);
 
     return Failed;

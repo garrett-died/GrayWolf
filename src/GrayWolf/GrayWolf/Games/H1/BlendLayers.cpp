@@ -307,6 +307,7 @@ namespace H1Blend
             Maps::Material Layer;
             Layer.Name = NameOf[Key];
             Layer.Techset = "wc_layer";
+            Layer.IsLayer = true;
             const auto Bind = [&](Slot S, const std::string& Image) {
                 if (Image.empty()) return;
                 Layer.Textures.push_back({ SemanticOf(S, 0), Image });

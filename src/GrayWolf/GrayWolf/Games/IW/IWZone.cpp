@@ -337,6 +337,38 @@ bool IWZone::ReadLevel(Maps::MapScene& Scene, std::map<std::string, uint64_t>& M
     AddStaticModels(Scene, Models, Off(At<uint64_t>(Img, World + M.SModels)), At<uint32_t>(Img, World + M.SModelCount), M.SModelSize, M.SModelModel);
     AddDynamicEntities(Scene, Models, M.Clip, M.DynCounts, M.DynLists, M.DynSize, M.DynDestroyed, M.DynPose);
     AddPrimaryLights(Scene, M.Lights, M.Com);
+    // reflection probes: a count (u32) and the records (pointer), each ProbeStride bytes with the origin as three floats at its start. A record of all zero bytes is the
+    // game's default probe and is no placement. Whatever size a record holds is not read (Probe::SizeRead stays false).
+    if (M.ProbeCount >= 0 && M.ProbeRecords >= 0 && M.ProbeStride >= 12)
+        if (const uint32_t N = At<uint32_t>(Img, World + M.ProbeCount); N != 0 && N < 4096)
+            if (const int64_t R = Off(At<uint64_t>(Img, World + M.ProbeRecords)); R >= 0 && static_cast<uint64_t>(R) + static_cast<uint64_t>(N) * static_cast<uint64_t>(M.ProbeStride) <= Img.size())
+            {
+                for (uint32_t K = 0; K < N; K++)
+                {
+                    const int64_t P = R + static_cast<int64_t>(K) * M.ProbeStride;
+                    bool Zero = true;
+                    for (int64_t B = 0; B < M.ProbeStride; B++) Zero = Zero && Img[static_cast<size_t>(P + B)] == 0;
+                    if (Zero)
+                    {
+                        Counter("map_probes_default_zero")++;
+                        continue;
+                    }
+                    Maps::Probe Out;
+                    bool Finite = true;
+                    for (int J = 0; J < 3; J++)
+                    {
+                        Out.Origin[J] = At<float>(Img, P + J * 4);
+                        Finite = Finite && std::isfinite(Out.Origin[J]);
+                    }
+                    if (!Finite)
+                    {
+                        Counter("map_probes_origin_not_finite")++;
+                        continue;
+                    }
+                    Scene.Probes.push_back(Out);
+                }
+                Counter("map_probes") += Scene.Probes.size();
+            }
 
     // ---- the sky: the first sky's image, for the import script
     if (At<int32_t>(Img, World + WorldSkyCount) > 0)

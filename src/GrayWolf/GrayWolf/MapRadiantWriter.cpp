@@ -12,6 +12,7 @@
 #include "MapMaterials.h"
 #include "MapRadiantGeometry.h"
 #include "MapRadiantRules.h"
+#include "MapSunProbes.h"
 #include "SurfaceTypes.h"
 #include "MapRadiantTextures.h"
 #include "MaterialGdt.h"
@@ -1379,6 +1380,7 @@ namespace
                                                             { "map_radiant_hull_faces_on_side", Stats.HullFacesMatched },
                                                             { "map_radiant_hull_faces_on_no_side", Stats.HullFacesUnmatched },
                                                             { "map_radiant_lights", Stats.Lights },
+
                                                             { "map_radiant_placements_polar", Stats.PlacementsPolar },
                                                             { "map_radiant_placements_polar_noise", Stats.PlacementsPolarNoise },
                                                             { "map_radiant_keys_unresolved", Stats.KeysUnresolved },
@@ -1484,6 +1486,11 @@ namespace
                      { "coverage_below_10", T->Coverage[0] }, { "coverage_below_50", T->Coverage[1] }, { "coverage_below_90", T->Coverage[2] },
                      { "coverage_90_up", T->Coverage[3] } })
                 Result.Counters.emplace_back(std::string(Prefix) + Key, N);
+            // M4: only for a game that has the data (a scene without probes, sun or effects reports none of these)
+            for (const auto& [Key, N] : std::initializer_list<std::pair<const char*, size_t>>{
+                     { "map_radiant_probes", Stats.Probes }, { "map_radiant_probes_no_size", Stats.ProbesNoSize }, { "map_radiant_sun_volumes", Stats.SunVolumes },
+                     { "map_radiant_ssi_stock_values", Stats.SsiStockValues }, { "map_radiant_effect_placements", Stats.EffectPlacements }, { "map_radiant_effect_placements_refused", Stats.EffectPlacementsRefused } })
+                if (N != 0) Result.Counters.emplace_back(Key, N);
             // the prefab files: counts by part (the file is <map>_prefab_<part>.map), and what the main map keeps
             for (const RadiantPrefabFile& F : Stats.PrefabFiles) Result.Files.push_back(F.File);
             if (!Prefabs.empty())
@@ -2124,6 +2131,99 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         Stats.Lights++;
     }
 
+    // The reflection probes, the sun and the script-placed effects the scene holds (all empty for a game whose reader fills none: the output is then unchanged). Nothing here
+    // knows a game: the readers fill MapScene (Probes, Sun, Effects).
+    for (size_t K = 0; K < Scene.Probes.size(); K++)
+    {
+        Blocks.push_back({ Out.size(), PrefabPart::Lights });
+        Out += ReflectionProbeEntity(EntityNumber++, K + 1, Scene.Probes[K]);
+        Stats.Entities++;
+        Stats.Probes++;
+        if (!Scene.Probes[K].SizeRead) Stats.ProbesNoSize++;
+        if (K < 3)
+            Stats.OwnerCheckLines.push_back(std::format("reflection probe {}: look at ({} {} {}) in the lights prefab; its size was not read, so Radiant's default size shows (set size_min / size_max by eye)", K + 1, Scene.Probes[K].Origin[0],
+                                                        Scene.Probes[K].Origin[1], Scene.Probes[K].Origin[2]));
+    }
+    if (Scene.Sun.Present)
+    {
+        double Pitch = 0, Yaw = 0;
+        std::array<float, 3> Lo{}, Hi{};
+        SsiStock Stock;
+        std::string StockWhy;
+        const bool HaveStock = LoadSsiStock(Stock, StockWhy);
+        if (!SunAngles(Scene.Sun.Toward, Pitch, Yaw) || !CollisionBounds(Scene, Lo, Hi))
+            Stats.Unresolved.push_back("sun: the map has a sun but its direction or the collision bounds are not usable: no volume_sun and no ssi entry written");
+        else
+        {
+            SsiEntry Ssi;
+            // a name no stock entry has: the map's, with a prefix (and a suffix if a stock entry still has it)
+            Ssi.Name = "graywolf_" + Map;
+            while (std::find(Stock.StockNames.begin(), Stock.StockNames.end(), Ssi.Name) != Stock.StockNames.end()) Ssi.Name += "_gw";
+            Ssi.Pitch = Pitch, Ssi.Yaw = Yaw;
+            if (HaveStock) Ssi.Stock = Stock.Values;
+            const float Max = std::max({ Scene.Sun.Color[0], Scene.Sun.Color[1], Scene.Sun.Color[2] });
+            if (Max > 0 && std::isfinite(Max))
+            {
+                Ssi.HasColor = true;
+                for (int A = 0; A < 3; A++) Ssi.ColorSRGB[A] = std::clamp(Scene.Sun.Color[A] / Max, 0.0f, 1.0f);
+            }
+            const std::string Entry = SsiGdtEntry(Ssi);
+            if (Entry.empty())
+                Stats.Unresolved.push_back("sun: the map's name is not usable in an ssi entry (" + Ssi.Name + "): no volume_sun and no ssi entry written");
+            else
+            {
+                std::array<double, 3> BoxLo{}, BoxHi{};
+                SunBox(Lo, Hi, 256.0f, 65536.0f, BoxLo, BoxHi);
+                std::error_code SunEc;
+                fs::create_directories(Root / "source_data", SunEc);
+                const fs::path SsiFile = Root / "source_data" / ("ssi_" + Map + ".gdt");
+                std::ofstream SsiOut(SsiFile, std::ios::binary);
+                SsiOut << Gdt::Document({ Entry }, "\n");
+                SsiOut.close();
+                if (SunEc || !SsiOut.good() || !fs::exists(SsiFile, SunEc))
+                {
+                    Error = "the ssi entry could not be written: " + SsiFile.string();
+                    return false;
+                }
+                Blocks.push_back({ Out.size(), PrefabPart::BrushEntities });
+                Out += SunVolumeEntities(EntityNumber, BoxLo, BoxHi, "graywolf_sun_target", Ssi.Name);
+                EntityNumber += 2;
+                Stats.Entities += 2;
+                Stats.SunVolumes++;
+                Stats.OwnerCheckLines.push_back(std::format("sun: the volume_sun box (collision bounds {} {} {} to {} {} {} plus 256, clamped to +-65536) with its info_null target is in the brush entities prefab; its four lighting states name ssi entry {} "
+                                                            "(source_data/ssi_{}.gdt, pitch {:.1f}, yaw {:.1f}): check that Radiant lists the entry and that the sun stands where the sky says",
+                                                            Lo[0], Lo[1], Lo[2], Hi[0], Hi[1], Hi[2], Ssi.Name, Map, Pitch, Yaw));
+                if (HaveStock)
+                {
+                    std::string Values;
+                    for (const auto& [K, V] : Stock.Values) Values += (Values.empty() ? "" : ", ") + K + " " + V;
+                    Stats.Unresolved.push_back(std::format("ssi_values_from_stock_median: ssi entry {} takes {} from the median of the {} stock ssi entries ({}), not from the game: the brightness is a starting value to tune in Radiant. The sun's angles "
+                                                           "(pitch {:.2f}, yaw {:.2f}) and colour ratios{} are the game's; the game's own sun intensity unit is not proven to be BO3 stops. No skyboxmodel is written (the sky is not converted)",
+                                                           Ssi.Name, Values, Stock.Entries, Stock.Source, Pitch, Yaw, Ssi.HasColor ? " (sun colour divided by its largest channel; sRGB or linear: unknown)" : " (not read)"));
+                    Stats.OwnerCheckLines.push_back("sun brightness: stops, evmin, evmax, evcmp, bounceCount, dynamicShadow and penumbra_inches of the ssi entry are the median of the stock BO3 ssi entries, a starting value for you to tune, NOT read from the game");
+                    Stats.SsiStockValues++;
+                }
+                else
+                    Stats.Unresolved.push_back("sun: " + StockWhy + ": the ssi entry has no stops or exposure fields, so Radiant uses its own defaults (brighter than any stock sun)");
+            }
+        }
+    }
+    for (const EffectPlacement& E : Scene.Effects)
+    {
+        const std::string Entity = EffectPlacementEntity(EntityNumber, E);
+        if (Entity.empty())
+        {
+            Stats.EffectPlacementsRefused++;
+            continue;
+        }
+        EntityNumber++;
+        Blocks.push_back({ Out.size(), PrefabPart::Effects });
+        Out += Entity;
+        Stats.Entities++;
+        if (Stats.EffectPlacements++ < 3)
+            Stats.OwnerCheckLines.push_back(std::format("script-placed {} '{}': look at ({} {} {}) in the effects prefab (a script_struct, targetname graywolf_createfx)", E.Kind, E.Name, E.Origin[0], E.Origin[1], E.Origin[2]));
+    }
+
     // the placements, then the world geometry left, as misc_models; the models they name as files
     std::set<std::string> Named;
     const auto Place = [&](const Instance& I) {
@@ -2354,6 +2454,87 @@ int RadiantWriterSelfTest(std::string& Failures)
     const fs::path Dir = fs::temp_directory_path() / ("graywolf_selftest_radiant_" + std::to_string(GetCurrentProcessId()));
     fs::remove_all(Dir, Ec);
     fs::create_directories(Dir, Ec);
+    {
+        // M4: probes, sun and script-placed effects come from the scene alone. A scene that holds none of them writes none (the other games' output is unchanged).
+        const auto Slurp = [](const fs::path& File) {
+            std::ifstream In(File, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(In), std::istreambuf_iterator<char>());
+        };
+        const auto Fill = [](bool WithData) {
+            MapScene S;
+            S.Name = "m4scene";
+            S.Game = "test";
+            S.MapEnts = "{\n\"classname\" \"worldspawn\"\n}\n";
+            Mesh World;
+            Surface Sf;
+            Sf.Material = "m";
+            Sf.Vertices.resize(3);
+            Sf.Vertices[1].Pos[0] = 100, Sf.Vertices[2].Pos[1] = 200, Sf.Vertices[2].Pos[2] = 50;
+            Sf.Indices = { 0, 1, 2 };
+            World.Surfaces.push_back(Sf);
+            S.Objects.push_back(World);
+            // a far-off sky mesh must not size the sun box: only the collision does
+            Mesh SkyMesh;
+            Surface SkySurface;
+            SkySurface.Material = "sky";
+            SkySurface.Vertices.resize(3);
+            SkySurface.Vertices[0].Pos[0] = -126000, SkySurface.Vertices[1].Pos[0] = 123000, SkySurface.Vertices[2].Pos[2] = 26000;
+            SkySurface.Indices = { 0, 1, 2 };
+            SkyMesh.Surfaces.push_back(SkySurface);
+            S.Objects.push_back(SkyMesh);
+            S.Collision.Vertices = { -100, -200, -10, 300, 400, 50, 0, 0, 0 };
+            if (WithData)
+            {
+                Probe P;
+                P.Origin[0] = 432, P.Origin[1] = -1454, P.Origin[2] = 279;
+                S.Probes.push_back(P);
+                S.Sun.Present = true;
+                S.Sun.Toward[0] = -0.3213938f, S.Sun.Toward[1] = -0.5566704f, S.Sun.Toward[2] = 0.7660444f;
+                S.Sun.Color[0] = 34, S.Sun.Color[1] = 34, S.Sun.Color[2] = 26.8f;
+                EffectPlacement E;
+                E.Kind = "fx", E.Name = "smoke_x", E.Origin[0] = 1;
+                S.Effects.push_back(E);
+            }
+            return S;
+        };
+        for (const bool WithData : { true, false })
+        {
+            const MapScene S = Fill(WithData);
+            const fs::path Map = Dir / (WithData ? "m4data" : "m4none") / "m4scene.map";
+            fs::create_directories(Map.parent_path(), Ec);
+            RadiantStats Stats;
+            std::string Error;
+            const bool Ok = WriteRadiant(S, Map.string(), Stats, Error, nullptr, { PrefabPart::Lights, PrefabPart::Effects, PrefabPart::Entities, PrefabPart::BrushEntities });
+            Check(Ok, "writes the M4 scene", Error);
+            std::string All = Slurp(Map);
+            for (const RadiantPrefabFile& F : Stats.PrefabFiles) All += Slurp(Map.parent_path() / F.File);
+            const fs::path Ssi = Map.parent_path() / "m4scene_radiant" / "source_data" / "ssi_m4scene.gdt";
+            if (WithData)
+            {
+                const std::string Lights = Slurp(Map.parent_path() / "m4scene_prefab_lights.map"), Effects = Slurp(Map.parent_path() / "m4scene_prefab_effects.map");
+                Check(Stats.Probes == 1 && Stats.ProbesNoSize == 1 && Stats.SunVolumes == 1 && Stats.EffectPlacements == 1, "the M4 counters", std::format("{} {} {} {}", Stats.Probes, Stats.ProbesNoSize, Stats.SunVolumes, Stats.EffectPlacements));
+                Check(Lights.find("\"classname\" \"reflection_probe\"") != std::string::npos && Lights.find("\"origin\" \"432 -1454 279\"") != std::string::npos && Lights.find("size_min") == std::string::npos,
+                      "the probe is in the lights prefab at its origin with no invented size", Lights);
+                Check(Effects.find("\"targetname\" \"graywolf_createfx\"") != std::string::npos && Effects.find("\"script_string\" \"smoke_x\"") != std::string::npos, "the effect placement is in the effects prefab", Effects);
+                Check(All.find("\"classname\" \"volume_sun\"") != std::string::npos && All.find("\"classname\" \"info_null\"") != std::string::npos && All.find("\"target\" \"graywolf_sun_target\"") != std::string::npos &&
+                          All.find("( -356 -456 -266 )") != std::string::npos && All.find("65536") == std::string::npos,
+                      "the volume_sun and its info_null target are written over the collision bounds, not the sky mesh");
+                bool Counted = false;
+                for (const std::string& Line : Stats.Unresolved) Counted = Counted || Line.rfind("ssi_values_from_stock_median", 0) == 0;
+                Check(Counted && Stats.SsiStockValues == 1, "the stock-median row is reported");
+                const std::string Gdt = Slurp(Ssi);
+                Check(Gdt.find("\"graywolf_m4scene\"") != std::string::npos && Gdt.find("\"pitch\" \"130\"") != std::string::npos && Gdt.find("\"yaw\" \"240\"") != std::string::npos && Gdt.find("\"colorSRGB\" \"1 1 0.7882 1\"") != std::string::npos &&
+                          Gdt.find("\"stops\" \"11\"") != std::string::npos && Gdt.find("\"evmax\" \"12.5\"") != std::string::npos,
+                      "the ssi entry has the sun's angles and colour ratios and the stock median brightness", Gdt);
+            }
+            else
+            {
+                Check(Stats.Probes == 0 && Stats.SunVolumes == 0 && Stats.EffectPlacements == 0 && All.find("volume_sun") == std::string::npos && All.find("reflection_probe") == std::string::npos &&
+                          All.find("graywolf_createfx") == std::string::npos && !fs::exists(Ssi),
+                      "a scene without probes, sun or effects writes none of them and no ssi file");
+            }
+        }
+    }
     const auto Box = [](float X0, float Y0, float Z0, float X1, float Y1, float Z1) {
         Brush B;
         B.Contents = 0x2081;   // solid, weaponClip, detail

@@ -426,9 +426,13 @@ void Builder::Add(const Materials::Description& Given, const fs::path& Dir, cons
             if (!D.SurfaceVia.empty())
             {
                 // the value rests on an intersection of the level's blends, not on this material's own word: said with its evidence (hypothesis)
-                Counter("surface_from_layer_id")++;
-                M.Notes.push_back({ "material.surface_from_layer_id", "game=" + Game + ", surface=" + Value + ", " + D.SurfaceVia,
-                                    "the first layer's surface was inferred by intersecting the words of the blends that hold its layer id; a layer with no bit of its own in a single-bit partner's blend would be handed the partner's bit" });
+                const bool FromCollision = D.SurfaceVia.rfind("kind=collision", 0) == 0, SameArt = D.SurfaceVia.rfind("kind=same_art", 0) == 0;
+                const std::string Code = FromCollision ? "surface_from_collision" : SameArt ? "surface_from_same_art" : "surface_from_layer_id";
+                Counter(Code)++;
+                M.Notes.push_back({ "material." + Code, "game=" + Game + ", surface=" + Value + ", " + D.SurfaceVia,
+                                    FromCollision ? "the word holds several surfaces; the collision triangles that sit on this material's triangles name one of them in the stated share (hypothesis: the clip surface is the dominant layer's, not proven to be layer 0's)"
+                                    : SameArt     ? "the word holds several surfaces; the same colour image in a plain material of the level has exactly one bit, which is one of them (hypothesis: one art, one surface)"
+                                                  : "the first layer's surface was inferred by intersecting the words of the blends that hold its layer id; a layer with no bit of its own in a single-bit partner's blend would be handed the partner's bit" });
             }
         }
     }

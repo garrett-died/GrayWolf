@@ -99,6 +99,7 @@ namespace Maps
         std::vector<std::string> MeshLines;
         // <map>.ownercheck.txt: what to open in Radiant and where to look (M2c)
         std::vector<std::string> OwnerCheckLines;
+        size_t Probes = 0, ProbesNoSize = 0, SunVolumes = 0, EffectPlacements = 0, EffectPlacementsRefused = 0, SsiStockValues = 0;   // M4: reflection probes (and those with no size read), volume_sun entities, script-placed effects written
         size_t Lights = 0, PlacementsPolar = 0, PlacementsPolarNoise = 0, KeysUnresolved = 0;
         // what was not written or not resolved, one line each (<map>.unresolved.txt)
         std::vector<std::string> Unresolved;

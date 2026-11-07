@@ -189,6 +189,15 @@
     <ClCompile Include="MapBlend.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MapSurfaceFromCollision.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MapSunProbes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MapCreateFx.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="MapRenderMeshes.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

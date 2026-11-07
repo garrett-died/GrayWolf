@@ -121,6 +121,8 @@ public:
         DynPoseLayout DynPose;
         LightLayout Lights;
         int64_t ImageNameAt = 0;   // GfxImage's name, for the sky
+        // reflection probes: GfxWorld's u32 count and record pointer, the record size (origin = three floats at its start); -1: the game's probes are not read
+        int64_t ProbeCount = -1, ProbeRecords = -1, ProbeStride = 0;
         // clipMap_t's brushes (MapCollision.h; none when BrushSize is 0) in the asset of type Clip
         // (col_map_sp when unset), and the MapTriggers in MapEnts (-1: not read) with its records' shapes
         Maps::ClipLayout ClipBrushes;

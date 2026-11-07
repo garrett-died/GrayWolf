@@ -153,6 +153,8 @@ namespace Maps
             float Sharpness = -1.0f;
         };
         std::vector<BlendLayer> Layers;
+        // a material a game's reader made for one layer of a blend (above its base): it is drawn as a decal and has no collision of its own
+        bool IsLayer = false;
     };
 
     // An image's pixels: PNG bytes embedded in the .glb, or files (absolute paths, which may be
@@ -164,6 +166,30 @@ namespace Maps
         std::vector<uint8_t> Png;
         std::string File, Gltf;
         bool Empty() const { return Png.empty() && File.empty() && Gltf.empty(); }
+    };
+
+    // A reflection probe the game keeps (Modern Warfare Remastered: GfxWorld draw data, 22 on mp_crash). Size: the half extents on each side of Origin when the record holds them
+    // (SizeRead), else not read (never a made-up value).
+    struct Probe
+    {
+        float Origin[3] = { 0, 0, 0 };
+        float SizeMin[3] = { 0, 0, 0 }, SizeMax[3] = { 0, 0, 0 };
+        bool SizeRead = false;
+    };
+
+    // The map's sun as a game gives it, written as a volume_sun and an ssi entry (MapSunProbes.h). Not Sky::Sun, which other games fill for the preview only.
+    struct SunData
+    {
+        bool Present = false;
+        float Toward[3] = { 0, 0, 0 };   // unit vector from the world toward the sun, game space
+        float Color[3] = { 0, 0, 0 };    // as the game gives it (HDR, intensity premultiplied): only its ratios are used
+    };
+
+    // An effect or sound the map's script places (MWR createfx: kind "fx", "loopsound", "delaysound"), written as a script_struct
+    struct EffectPlacement
+    {
+        std::string Kind, Name;
+        float Origin[3] = { 0, 0, 0 }, Angles[3] = { 0, 0, 0 };
     };
 
     struct Sky
@@ -244,6 +270,9 @@ namespace Maps
         std::map<std::string, Image> Images;        // by name
         float AmbientColor[3] = { 0, 0, 0 };
         Maps::Sky Sky;
+        std::vector<Probe> Probes;   // reflection probes the game keeps (empty: none read)
+        SunData Sun;                 // the map's sun (Present false: none read)
+        std::vector<EffectPlacement> Effects;   // script-placed effects (empty: none read)
         std::string MapEnts;                        // the entity string, as the game keeps it
         std::map<std::string, std::string> EntityKeys;   // a key the entity string numbers (MW3, Ghosts on), by number
         Maps::Collision Collision;                  // the clip map's brushes, when the game reads them

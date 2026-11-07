@@ -277,7 +277,8 @@ GrayWolf.exe disk-export --game bo4 --install <game> --out <dir> --type model,im
   gloss, occlusion and specular maps are not dropped. Entries carry every key the Mod Tools write,
   and Black Ops 4's tints and gloss ranges where the techset's layout is proven. A material matched
   approximately is listed in `graywolf_approximations.tsv`. Modern Warfare Remastered gets surface types, techsets from a rule table,
-  unpacked gloss and occlusion, reveal, and lights; its layered blends are first layer only for now.
+  unpacked gloss and occlusion, reveal, lights, probes, a sun volume and script-placed effects; in a Radiant map its layered blends
+  are separate layer meshes with their own materials. Its sun brightness is a stock median to tune, and its sky and LUT are not written yet.
 - **Images**: packed maps are unpacked per game from the material's own slots (normal/gloss/occlusion
   images, fused colour and specular, roughness to gloss, single channels) and named from the slot
   they fill. Files are `.tif`, as stock.

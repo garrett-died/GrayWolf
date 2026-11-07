@@ -196,7 +196,17 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
   `decalLayerSort` per layer is a hypothesis. Nothing here has been seen in Radiant.
   A blend's surface word is the union of its layers, so the first layer's bit is found by intersecting other blends of that layer,
   listed as `material.surface_from_layer_id`, with the blends that prove it. The rule is a hypothesis. A blend or layer still holding two bits stays
-  a `material.surface_type` failure: 58 on `mp_shipment`.
+  a `material.surface_type` failure: 47 on `mp_shipment`, down from 58. Collision triangles settle two of those, listed as
+  `material.surface_from_collision`: a surface wins with at least 90% of the material's twinned triangles and at least eight of them, and must be one of
+  the material's own bits. A layer material with no collision evidence can take the surface of the same art in a plain material, which settles nine.
+  The rest stay failures rather than guesses.
+- Modern Warfare Remastered maps get a `volume_sun` around the collision bounds, an `info_null` target, an `ssi` entry `graywolf_<map>` and
+  `reflection_probe` entities. Sun angles and colour ratios come from the game. Its brightness has no known conversion to stops, so stops, EV range and
+  shadow values are the median of the 94 stock entries, listed as `ssi_values_from_stock_median`: a starting value to tune, not a value read from the map.
+  Probes are at the game's origins; the record holds no size, so size is not read. The sky and the LUT are not written yet.
+- Script-placed effects come from `maps/createfx/<map>_fx`: 230 on `mp_crash`, 187 on `mp_crossfire`, written as entities in the effects prefab. A placement
+  is tied to its name by the shape of its instruction group, not by a full bytecode decode. A script whose groups do not fit is rejected whole and
+  reported rather than risk effects at the wrong place, which is what happens to all 294 on `mp_bog` for now. The effect assets themselves are not exported yet.
 - `layerSortDecal` stays `Debris (top)` on every Modern Warfare Remastered decal: neither the game's sort key nor the hand-made GDTs give
   a table. Lights are read from the world's records, 32 of 33 on `mp_crash`; `Right` handedness is not checked against a stock light.
 - Modern Warfare Remastered textures with no Black Ops III use yet (detail, parallax, decal layers, a few unnamed semantics) are listed as
