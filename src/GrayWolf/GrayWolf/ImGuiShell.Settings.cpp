@@ -231,8 +231,11 @@ namespace ShellUi
                                   "the map's textures smaller; Full keeps every texture as it is. Textures exported as PNG or TGA are not resized." },
                 { "map_cast", "Besides the .glb that Blender imports, also write the map as a Cast scene for Maya and the Cast plugins. Safe; it only "
                               "adds files." },
-                { "map_radiant", "Also write the map as a Radiant .map for the Black Ops III Mod Tools: its collision brushes, entities and model "
-                                 "placements. Experimental: that these load in Radiant is not yet confirmed. It only adds files." },
+                { "map_radiant", "Also write the map as a Radiant .map for the Black Ops III Mod Tools: its drawn surfaces, collision, entities and "
+                                 "model placements. Experimental: that these load in Radiant is not yet confirmed. It only adds files." },
+                { "map_geometry_only", "Writes a map's shapes without its textures, and without opening the other zones it depends on. Much quicker and "
+                                       "smaller, for checking a map's layout. Materials keep their names but have no images, so leave this off for "
+                                       "a map you want to use." },
                 { "material_gdt", "Also write Black Ops III Mod Tools material entries (GDT) for the exported materials, so the Mod Tools can use "
                                   "them. Only useful if you are going to use the Mod Tools. Experimental. It only adds files." },
                 { "sound_aliases", "Also write the zone's sound aliases as a Black Ops III Mod Tools alias CSV beside the sounds. Only useful for "

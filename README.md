@@ -39,7 +39,8 @@
   (`zonekit/profiles/<game>`), generated from the game's own zone loaders and checked against
   them; the zone is then served to GrayWolf's asset readers.
 - **Two front ends, one use case**: a Dear ImGui asset browser (Load Game panel, model, anim and
-  map preview, image thumbnails, an audio player) and a command line
+  map preview, image thumbnails, an audio player, text, CSV and hex viewers, Black Ops III skies from
+  the Mod Tools behind the preview, one Settings page, and a choice of theme) and a command line
   (`GrayWolf.exe disk-export --game <id> --install <dir> --out <dir>`, `GrayWolf.exe --help`).
   Both run the same export.
 - **Hashed names back**: name packages (`package_index`) turn the hashed asset names of the recent
