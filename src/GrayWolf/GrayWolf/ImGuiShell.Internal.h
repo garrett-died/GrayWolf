@@ -7,10 +7,12 @@
 
 #include "ModelPreview.h"      // PreviewGeometry
 #include "ModelPreviewGPU.h"   // PreviewGpuMesh, PreviewRenderer, PreviewTarget, PreviewLighting
+#include "SkyLighting.h"      // the Lighting menu's logic and its bakes
 #include "PreviewLoader.h"     // models built off the UI thread
 #include "SeAnimReader.h"      // SeAnimClip
 #include "AudioPlayer.h"       // real audio playback (miniaudio) with cursor + waveform
 #include "FxPreviewPanel.h"    // an effect (fx JSON) playing in 3D
+#include "ImGuiShell.TextView.h" // a script, a config or a CSV
 #include "ImGuiTheme.h"         // the look, the tabs' names
 #include "AssetGrid/AssetGrid.h" // the Assets tab's grid view
 #include "AssetGrid/GridShot.h" // ui-grid-shot
@@ -35,12 +37,14 @@
 #include <unordered_map>
 #include <vector>
 
+class LoadGamePanel;   // ImGuiLoadGamePanel.h
+
 namespace ShellUi
 {
     // GPU resources for one loaded model; copies share them.
     using GpuMesh = PreviewGpuMesh;
 
-    // Kind: 0 model · 1 image · 2 audio · 3 anim · 4 map · 5 fx.
+    // Kind: 0 model · 1 image · 2 audio · 3 anim · 4 map · 5 fx · 6 text (a script, a config, a CSV).
     // Root: the listed folder the file was found under; Written: its last write time (the newer of two
     // copies of one asset is the one shown); Game: the export's game folder (<out>/<game>/models/..., GameOfPath),
     // empty when the path has none
@@ -83,6 +87,9 @@ namespace ShellUi
         // Batch joins Models (a path already listed is skipped), its header reads queued. Returns
         // how many rows were sorted before (SortByName's SortedPrefix).
         size_t Merge(std::vector<Item>& Batch);
+        // Rows whose fields are complete as given: no file behind them, no header read queued (the demo
+        // list of ui-shot, ImGuiShell.Demo.cpp). Returns how many rows were sorted before, as Merge does.
+        size_t AddUnscanned(std::vector<Item>& Batch);
         // Sorted by name; the first SortedPrefix entries are sorted already: only the rest is, then merged in.
         void SortByName(size_t SortedPrefix);
         // The header readers and the folder walks stop (the app is closing).
@@ -136,11 +143,11 @@ namespace ShellUi
     // The Assets tab's own state: the filters, the presets, the rows shown, the list or the grid.
     struct AssetsTab
     {
-        char Filter[128] = "";
+        char Filter[512] = "";
         int SortCol = 0; bool SortAsc = true;
         // Numeric filters (0 = unbounded on that side).
         int fMinBones=0, fMaxBones=0, fMinMeshes=0, fMaxMeshes=0, fMinMats=0, fMaxMats=0, fMinKB=0, fMaxKB=0;
-        int TypeFilter = 0; // 0 all · 1 models · 2 images · 3 audio · 4 anims · 5 maps · 6 fx (driven by the tabs)
+        int TypeFilter = 0; // 0 all · 1 models · 2 images · 3 audio · 4 anims · 5 maps · 6 fx · 7 text (driven by the pills)
         // The game shown (empty: every game) and the rows grouped by game (sorted by it first). Games:
         // the games listed, rebuilt when Models changes.
         std::string GameFilter;
@@ -186,6 +193,7 @@ namespace ShellUi
         PreviewRenderer Renderer;
         PreviewTarget Vrt;   // the 3D view, shown with ImGui::Image
         FxPreviewPanel FxPanel;   // the selected effect's view
+        TextViewer Text;          // the selected text asset (Kind 6)
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> ImageSRV; int ImageW = 0, ImageH = 0;
         // The shown image's zoom, reset to 100% when the shown SRV changes.
         float ImageZoom = 1.0f;
@@ -215,6 +223,10 @@ namespace ShellUi
         const std::shared_ptr<ShotResult> LastShot = std::make_shared<ShotResult>();
         // The 3D view's lighting controls, kept in the settings (the defaults are the renderer's own).
         PreviewLighting Lighting;
+        // the Lighting menu: the BO3 skies of the Mod Tools, Fullbright; the background colour seen where the sky is off (kept in the settings)
+        SkyLighting::Service Sky;
+        float ToolbarWidth = 1.0e9f;   // the width the toolbar over the 3D view may use (set by the view each frame; it breaks into rows)
+        float Background[3] = { kPreviewBackground[0], kPreviewBackground[1], kPreviewBackground[2] };
         PreviewQuality Quality = LoadPreviewQuality();   // ambient occlusion, anti-aliasing, still frames (PreviewPost.h)
     };
 
@@ -259,6 +271,15 @@ namespace ShellUi
         int SelectWhenListedFrames = 0;   // given up after this many frames without it
         // ui-record: a window brought forward, a Load Game step (JSON), both applied in the next frame
         std::string FocusWindow, LoadGameScript;
+        // the Settings page: open, just opened (it takes the focus), the search, a group to scroll to
+        bool SettingsOpen = false, SettingsJustOpened = false;
+        char SettingsQuery[128] = "";
+        std::string SettingsJump;
+        bool FiltersOpenRequest = false;   // ui-shot: the Filters panel opened
+        int LeftPage = 0;               // the left panel: 0 Extract (a game, its assets, Export), 1 Library (the exports, preview)
+        // ui-shot tests: a window to float at a position (off screen on purpose), a window size to take
+        std::string FloatWindow; float FloatX = 0, FloatY = 0; int FloatFrames = 0; int RequestW = 0, RequestH = 0;
+        bool DemoInstalls = false;      // ui-shot's demo: Load Game shows made-up installs (applied in the next frame)
         bool LoadGameWorking = false;   // Load Game's worker runs: ui-record holds its frames
         bool LoadGameIndicator = false; // and shows a spinner or progress bar for it (else a silent wait)
         size_t ShotSelected = 0; int ShotSelectWait = 0;   // ui-grid-shot --select: the names selected so far, frames left before the next
@@ -275,6 +296,7 @@ namespace ShellUi
     };
 
     // ImGuiShell.Catalog.cpp
+    bool IsTextAsset(const std::string& Path, const std::string& LowerExtension);
     // Sorted by name, the selection, the picks and the anim's model kept on the same files.
     void SortModels(ShellState& S, size_t SortedPrefix = 0);
     // Lists Dir's assets instead of the current ones (Replace) or with them.
@@ -288,6 +310,18 @@ namespace ShellUi
 
     // ImGuiShell.Assets.cpp
     bool NameMatches(const std::string& Query, const std::string& Name);
+    // The types the search text names with type: terms (a bit per Item::Kind; 0: none, so every type), and the
+    // text rewritten for a set of them (the Filters panel and the search box are the same state)
+    unsigned TypeMaskOf(const std::string& Text);
+    // What the type: terms of the search come to. Named: there are some. Impossible: they name no type
+    // that exists, or exclude each other, so nothing can match (the mask is 0 then, which must not be read as
+    // "every type"); Why says so in words.
+    struct TypeSelection { bool Named = false, Impossible = false; unsigned Mask = 0; std::string Why; };
+    TypeSelection TypeSelectionOf(const std::string& Text);
+    // Rewrites the search text's type: terms for Mask (0: none). False, and the text unchanged, when the
+    // result would not fit the box.
+    bool SetTypeMask(AssetsTab& A, unsigned Mask);
+    void SetTypeFilter(AssetsTab& A, int Index);   // 0 all, else 1 + Item::Kind (ui-shot's type, ui-grid-shot --type)
     std::string FormatSize(long long Bytes);
     void RefreshPresets(AssetsTab& A);
     // The Assets window; OpenHelp is set by its "?" button.
@@ -303,6 +337,52 @@ namespace ShellUi
     // The Viewport window (dispatches on the selected asset kind).
     void DrawViewportPanel(ShellState& S);
 
+    // ImGuiShell.Settings.cpp: the Settings page. Every setting is an Entry with its explanation.
+    namespace SettingsPage
+    {
+        enum class Kind { Toggle, Choice, Path, Custom };
+        struct Option { const char* Value; const char* Label; };
+        struct Entry
+        {
+            const char* Section; const char* Group; Kind K; const char* Key; const char* Label; const char* Help; const char* Default;
+            std::vector<Option> Options;
+        };
+        const std::vector<Entry>& Entries();
+        bool Matches(const Entry& E, const std::string& Query);   // case-insensitive, in its words
+        // The plain words for a game's own setting (DiskGame::Setting::Key); null when there are none
+        const char* DiskSettingHelp(const std::string& Key);
+        bool SelfTest(std::string& Report);   // settings-selftest: unique keys, every entry explained
+        void Draw(ShellState& S, LoadGamePanel& LoadGame);   // while S.SettingsOpen
+    }
+
+    // ImGuiShell.Search.cpp: the search box's grammar (term, key:term, "exact", !not)
+    namespace Search
+    {
+        // Begin..End: the term as typed (with its ! and key), so the Filters panel can rewrite the text with the same
+        // cutting; Empty: a key or ! with nothing after it ("type:"), kept for that and never matched
+        struct Term { std::string Key, Value; bool Negated = false, Exact = false, Empty = false; size_t Begin = 0, End = 0; };
+        struct Query { std::vector<Term> Terms; };
+        Query Parse(const std::string& Text);
+        bool Matches(const Query& Q, const Item& It);
+        bool SelfTest(std::string& Report);
+    }
+
+    // ImGuiShell.Windows.cpp: floating windows kept inside the main window
+    void KeepWindowsVisible();   // once a frame, after NewFrame
+    // Where a floating window goes: the pure part of KeepWindowsVisible (ui-selftest checks it)
+    struct WindowPlan { ImVec2 Pos, Size; };
+    ImVec2 FittedSize(const ImVec2& Wanted, const ImVec2& WorkMin, const ImVec2& WorkMax);
+    WindowPlan PlanWindow(const ImVec2& Pos, const ImVec2& Size, const ImVec2& Wanted, const ImVec2& WorkMin, const ImVec2& WorkMax, bool Dragging);
+    bool WindowSelfTest(std::string& Report);
+    std::vector<std::string> HiddenWindows();   // the floating windows whose title bar is out of sight now
+
+    // ImGuiShell.Demo.cpp: made-up rows for screenshots (ui-shot's "demo"), nothing on disk behind them
+    // Adds Count rows (models, images, sounds, anims, maps, effects) named from word lists.
+    void AddDemoRows(ShellState& S, int Count);
+    bool IsDemoRow(const Item& Row);
+    // Shows a demo row: a model or map as a sphere, an image as a gradient; other kinds show nothing.
+    void LoadDemoSelection(ShellState& S, int i);
+
     // ImGuiShell.Media.cpp
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> LoadImageSRV(ID3D11Device* Dev, const std::string& Path, const std::string& Ext, int& OutW, int& OutH);
     void DrawZoomableImage(ID3D11ShaderResourceView* SRV, int W, int H, float& Zoom);
@@ -311,7 +391,7 @@ namespace ShellUi
     // ImGuiShell.Screenshots.cpp
     std::string ScreenshotDir();
     void OpenScreenshotDir();
-    void DrawScreenshotSettingsMenu();
+    void DrawScreenshotSettings();   // the Settings page's screenshot folder
     void RenderMeshToRT(ViewportState& V, ID3D11Device* Dev, ID3D11DeviceContext* Ctx, int W, int H);
     void DrawScreenshotBar(ViewportState& V, std::string ModelName);
     // GH_UI_SHOT's triggers, after the frame is drawn and before Present.
@@ -319,8 +399,10 @@ namespace ShellUi
 
     // ImGuiShell.Menus.cpp
     // The main menu bar and the update banner; true when the app is to quit.
-    bool DrawMainMenuBar(bool& OpenHelp);
+    bool DrawMainMenuBar(bool& OpenHelp, bool& OpenSettings);
     void DrawStatusBar(const ShellState& S);
+    // The row under the menu bar: Extract and Library, the two steps of the work
+    void DrawWorkflowBar(ShellState& S);
     void BuildDockLayout(unsigned int DockId);
     void DrawFilterHelp(bool OpenHelp);
 }

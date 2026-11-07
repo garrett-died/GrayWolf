@@ -55,6 +55,9 @@ LoadGamePanel::~LoadGamePanel()
 
 void LoadGamePanel::Persist()
 {
+    // spaces and the quotes of a pasted "Copy as path" are not part of a folder
+    SetBuf(GameBuf, sizeof(GameBuf), TrimPath(GameBuf));
+    SetBuf(DiskOutBuf, sizeof(DiskOutBuf), TrimPath(DiskOutBuf));
     SettingsManager::SetSetting("game_folder", GameBuf);
     SettingsManager::SetSetting("disk_out", DiskOutBuf);
     std::string Kinds;
@@ -86,6 +89,29 @@ void LoadGamePanel::DoScan()
     Status = Installs.empty()
         ? "no game detected - set the folder manually"
         : (std::to_string(Installs.size()) + " game(s) detected");
+}
+
+void LoadGamePanel::UseDemoInstalls()
+{
+    std::vector<GameInstalls::Install> Fake;
+    const auto& Readers = DiskGame::Games();
+    const char* Names[] = { "Sample Game One", "Sample Game Two", "Sample Game Three" };
+    const char* Sources[] = { "Steam", "Battle.net", "Xbox" };
+    for (size_t i = 0; i < 3 && i < Readers.size(); i++)
+    {
+        GameInstalls::Install I;
+        I.Path = std::string("C:\\Demo\\") + Names[i];
+        I.Display = I.Label = Names[i];
+        I.DiskId = Readers[i]->Id();
+        I.Source = Sources[i];
+        Fake.push_back(std::move(I));
+    }
+    std::lock_guard<std::mutex> Lock(Mutex);
+    Installs = std::move(Fake);
+    InstallIndex = -1;
+    ScannedOnce = true;
+    AutoScanStarted = true;
+    Status = "3 game(s) detected";
 }
 
 void LoadGamePanel::ApplyInstall(const GameInstalls::Install& I)
@@ -348,12 +374,21 @@ void LoadGamePanel::DrawGameCard(ID3D11Device* Dev)
     }
 }
 
-void LoadGamePanel::Draw(ID3D11Device* Dev)
+void LoadGamePanel::Draw(ID3D11Device* Dev, bool Visible)
 {
     JoinIfDone();
     std::string Picked;
-    if (UiAsync::Picked("loadgame.folder", Picked)) { SetBuf(GameBuf, sizeof(GameBuf), Picked); Persist(); }
-    if (UiAsync::Picked("loadgame.output", Picked)) { SetBuf(DiskOutBuf, sizeof(DiskOutBuf), Picked); Persist(); }
+    // a dialog that ends while a run reads these is dropped with a notice (the run was started with its own copy)
+    if (UiAsync::Picked("loadgame.folder", Picked))
+    {
+        if (WorkerRuns()) UiAsync::Notify("The game folder was not changed: an export or a load is running", true);
+        else { SetBuf(GameBuf, sizeof(GameBuf), Picked); Persist(); }
+    }
+    if (UiAsync::Picked("loadgame.output", Picked))
+    {
+        if (WorkerRuns()) UiAsync::Notify("The export folder was not changed: an export or a load is running", true);
+        else { SetBuf(DiskOutBuf, sizeof(DiskOutBuf), Picked); Persist(); }
+    }
 
     // One automatic scan on the first frame, on the worker so the window still paints: the sweep
     // takes about two seconds.
@@ -364,6 +399,7 @@ void LoadGamePanel::Draw(ID3D11Device* Dev)
     }
 
     DrewIndicator = false;
+    if (!Visible) return;
     // its tab first in the dock, whichever window came in first: a game is where one starts
     ImGuiWindowClass First;
     First.TabItemFlagsOverrideSet = ImGuiTabItemFlags_Leading;

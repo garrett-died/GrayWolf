@@ -103,6 +103,8 @@ struct CliOptions
     std::string UiRecord;      // ui-record <dir>: the shell hidden, a script played, its frames + audio written (UiRecord.h)
     std::string UiRecordScript; // --script <json>: the steps
     int UiRecordFps = 30;      // --fps: frames a second
+    float UiShotDpi = 1.0f;    // ui-shot --dpi: the scale (1.0 = 100%, 1.5 = 150%)
+    std::string UiShot;      // ui-shot <script.json>: the shell hidden, one PNG per step that names a shot (--out, --size)
     std::string AnimRigs;      // anim-rigs <dir>: each anim's rig as the browser picks it (AnimRigs.h)
     bool AnimRigsNoFetch = false;   // --no-fetch: no reference model exported
     std::string AudioProbe;    // --audio-probe <file>: decode via AudioPlayer and print duration/rate/peaks
@@ -115,6 +117,9 @@ struct CliOptions
                                        // result is browsable with the existing --ui <dir>
     bool Lods = false;       // --lods: export every available model LOD
     bool Gpu = false;        // --gpu: use the offscreen D3D11 renderer for model previews
+    bool SkyBakeSelfTest = false;  // sky-bake-selftest: the BO3 sky chain, axes, cache and bake
+    bool ExrSelfTest = false;      // exr-selftest: the EXR reader (NONE, ZIPS, ZIP, PIZ) on files built in memory
+    bool UiSelfTest = false; // ui-selftest: the Settings page entries and their explanations
     bool CerberusSelfTest = false; // --cerberus-selftest: verify ported CRC32/Salsa20
     bool SeAnimSelfTest = false;   // --seanim-selftest: round-trip a synthetic .seanim + verify pose eval
     bool CastSelfTest = false;     // cast-selftest: a synthetic model/anim as .cast and SE, read back alike

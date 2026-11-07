@@ -1,0 +1,7 @@
+{
+  "steps": [
+    { "focus": "Assets", "demo": 240, "view": "list", "type": "text", "select_first": "text:gsc", "label": "text", "shot": "text-gsc" },
+    { "select_first": "text:csv", "label": "csv", "shot": "text-csv-grid" },
+    { "theme": "hydrax", "select_first": "text:gsc", "shot": "text-hydrax" }
+  ]
+}

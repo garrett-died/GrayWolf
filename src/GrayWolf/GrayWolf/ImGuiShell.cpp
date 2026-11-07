@@ -6,7 +6,8 @@
 #include "ImGuiLoadGamePanel.h" // the Extract tab: a game exported from its files
 #include "UiAsync.h"           // dialogs, shell opens and disk lookups off the frame
 #include "SettingsManager.h"   // the list or the grid, the anims' rig
-#include "ImGuiTheme.h"        // the fonts and colours
+#include "ImGuiTheme.h"
+#include "GameBadges.h"        // the fonts and colours
 
 #include "imgui.h"
 #include "imgui_internal.h"   // FindWindowByName
@@ -73,10 +74,11 @@ namespace
     }
 
     // The fonts at the window's DPI and the shell's theme.
-    void SetUpFontsAndStyle(HWND Hwnd)
+    void SetUpFontsAndStyle(HWND Hwnd, float DpiOverride)
     {
         float Dpi = 1.0f;
-        if (HMODULE U = GetModuleHandleW(L"user32.dll"))
+        if (DpiOverride > 0.0f) Dpi = DpiOverride;   // ui-shot: the same pixels on every machine
+        else if (HMODULE U = GetModuleHandleW(L"user32.dll"))
         {
             using GetDpiFn = UINT(WINAPI*)(HWND);
             if (auto Fn = reinterpret_cast<GetDpiFn>(GetProcAddress(U, "GetDpiForWindow")))
@@ -94,13 +96,14 @@ namespace
 ShellUi::ShellState::ShellState(ID3D11Device* Device, ID3D11DeviceContext* Context, const std::string& Dir, const GridShotOptions* Mode)
     : Dev(Device), Ctx(Context), ModelsDir(Dir), ShotMode(Mode), Viewport(Device, Context)
 {
+    LeftPage = ModelsDir.empty() ? 0 : 1;   // opened on a folder (ui <dir>): its Library first, not the game's Extract
     if (!ModelsDir.empty()) Catalog.ListFolder(ModelsDir);
     Assets.GridView = SettingsManager::GetSetting("assets_view", "grid") == "grid";
     if (ShotMode)
     {
         Assets.GridView = !ShotMode->List;
-        Assets.TypeFilter = ShotMode->Type;
         std::snprintf(Assets.Filter, sizeof(Assets.Filter), "%s", ShotMode->Search.c_str());
+        SetTypeFilter(Assets, ShotMode->Type);
         if (!ShotMode->AnimRig.empty()) Assets.GridRig = ShotMode->AnimRig;
         Shot = std::make_unique<GridShot>(*ShotMode, Device, Context);
     }
@@ -164,7 +167,8 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.IniFilename = nullptr;
-    SetUpFontsAndStyle(Hwnd);
+    if (Record && Record->Shots) Theme::PinDefault();   // a screenshot run starts from the default look, not the saved one
+    SetUpFontsAndStyle(Hwnd, Record ? Record->Dpi : 0.0f);
 
     ImGui_ImplWin32_Init(Hwnd);
     ImGui_ImplDX11_Init(Dev.Get(), Ctx.Get());
@@ -193,24 +197,48 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         if (S.Recorder) S.Recorder->FrameBegin(S);
+        S.Viewport.Sky.Tick(S.Viewport.Lighting);   // a sky bake finished, the Mod Tools folder changed
         ImGui::NewFrame();
 
-        bool OpenHelp = false;
-        if (DrawMainMenuBar(OpenHelp)) State.Quit = true;
+        bool OpenHelp = false, OpenSettings = LoadGame.ConsumeSettingsRequest();
+        if (DrawMainMenuBar(OpenHelp, OpenSettings)) State.Quit = true;
+        if (OpenSettings && !S.SettingsOpen) { S.SettingsOpen = true; S.SettingsJustOpened = true; }
+        if (S.RequestW > 0)   // ui-shot's "size": the main window resized, as a user does
+        {
+            RECT Want{ 0, 0, S.RequestW, S.RequestH };
+            AdjustWindowRect(&Want, WS_OVERLAPPEDWINDOW, FALSE);
+            SetWindowPos(Hwnd, nullptr, 0, 0, Want.right - Want.left, Want.bottom - Want.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            S.RequestW = S.RequestH = 0;
+        }
+        if (S.FloatFrames > 0)   // ui-shot's "float": undocked first, then put where it was asked
+        {
+            if (ImGuiWindow* W = ImGui::FindWindowByName(S.FloatWindow.c_str()))
+            {
+                if (S.FloatFrames == 4) ImGui::DockContextQueueUndockWindow(ImGui::GetCurrentContext(), W);
+                else if (S.FloatFrames <= 2) ImGui::SetWindowPos(W, ImVec2(S.FloatX, S.FloatY), ImGuiCond_Always);
+            }
+            S.FloatFrames--;
+        }
+        DrawWorkflowBar(S);
         DrawStatusBar(S);
+        KeepWindowsVisible();   // a floating window left past the edge is brought back
         BuildDockLayout(ImGui::DockSpaceOverViewport());
         DrawAssetsPanel(S, OpenHelp);
         DrawViewportPanel(S);
         DrawFilterHelp(OpenHelp);
+        if (S.SettingsOpen) SettingsPage::Draw(S, LoadGame);   // over the panels, the work area filled
 
-        // (kept until the window exists: the first frame has drawn none yet)
-        if (const std::string Id = "###" + S.FocusWindow; !S.FocusWindow.empty() && ImGui::FindWindowByName(Id.c_str()) != nullptr)
+        // a window brought forward by name: the left pages are ours, the rest ImGui's (kept until the window exists)
+        if (S.FocusWindow == "Assets") { S.LeftPage = 1; S.FocusWindow.clear(); }
+        else if (S.FocusWindow == "Load Game") { S.LeftPage = 0; S.FocusWindow.clear(); }
+        else if (const std::string Id = "###" + S.FocusWindow; !S.FocusWindow.empty() && ImGui::FindWindowByName(Id.c_str()) != nullptr)
         {
             ImGui::SetWindowFocus(Id.c_str());
             S.FocusWindow.clear();
         }
+        if (S.DemoInstalls) { LoadGame.UseDemoInstalls(); S.DemoInstalls = false; }
         if (!S.LoadGameScript.empty()) { LoadGame.Script(S.LoadGameScript); S.LoadGameScript.clear(); }
-        LoadGame.Draw(Dev.Get());
+        LoadGame.Draw(Dev.Get(), S.LeftPage == 0);
         S.LoadGameWorking = S.Recorder && LoadGame.Working();
         S.LoadGameIndicator = LoadGame.ShowedProgress();
 
@@ -228,7 +256,7 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
             S.SelectWhenListedDir = Dir;
             S.SelectWhenListedFrames = 600;
         }
-        if (LoadGame.ConsumeShowAssets()) ImGui::SetWindowFocus(Theme::LibraryWindow);
+        if (LoadGame.ConsumeShowAssets()) S.LeftPage = 1;
 
         UiAsync::DrawOverlay();   // a dialog's dimmed layer, the notices
         ImGui::Render();
@@ -252,6 +280,8 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
 
     S.Catalog.Stop();
     UiAsync::Shutdown();
+    ShellUi::TextViewer::Shutdown();   // its reading worker: waited for a little, then let go
+    GameBadges::Shutdown();   // its install lookup is joined, not left to run into the exit
 
     S.Assets.Grid.reset();   // its workers stop before the device goes
     if (S.Recorder) S.Recorder->Finish();   // its frames on disk, audio.wav written

@@ -1,0 +1,11 @@
+{
+  "steps": [
+    { "focus": "Assets", "demo": 240, "view": "list", "select_first": "model", "label": "library-model", "shot": "library-model" },
+    { "select_first": "image", "label": "library-image", "shot": "library-image" },
+    { "view": "grid", "label": "library-grid", "shot": "library-grid" },
+    { "view": "list", "type": "image", "label": "library-type-image", "shot": "library-type-image" },
+    { "filter": "type:\"model\" type:\"anim\" crate", "shot": "library-two-types" },
+    { "filter": "type:image game:sample", "label": "library-search", "shot": "library-search" },
+    { "theme": "hydrax", "type": "text", "shot": "library-hydrax" }
+  ]
+}

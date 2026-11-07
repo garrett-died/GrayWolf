@@ -90,6 +90,9 @@ int RunGltfSelfTest(const CliOptions& Options);
 int RunExportMapGlb(const CliOptions& Options);
 int RunOpenMap(const CliOptions& Options);
 int RunCerberusSelfTest(const CliOptions& Options);
+int RunUiSelfTest(const CliOptions& Options);
+int RunExrSelfTest(const CliOptions& Options);
+int RunSkyBakeSelfTest(const CliOptions& Options);
 int RunSeAnimSelfTest(const CliOptions& Options);
 int RunCastSelfTest(const CliOptions& Options);
 int RunMakeTestSeAnim(const CliOptions& Options);
@@ -105,6 +108,7 @@ int RunRenderGlbPng(const CliOptions& Options);
 int RunUiMode(const CliOptions& Options);
 int RunUiGridShot(const CliOptions& Options);
 int RunUiRecord(const CliOptions& Options);
+int RunUiShot(const CliOptions& Options);
 int RunPreviewWindow(const CliOptions& Options);
 int RunRenderModelCli(const CliOptions& Options);
 int RunRenderFxCli(const CliOptions& Options);   // FxPreviewCli.cpp

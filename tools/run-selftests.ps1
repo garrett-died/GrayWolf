@@ -24,7 +24,12 @@ $tests = @(
     @{ Name = 'cast-selftest';     Args = @('cast-selftest') },
     @{ Name = 'gltf-selftest';     Args = @('gltf-selftest', (Join-Path $Out 'selftest.glb')) },
     @{ Name = 'salsa20-selftest';  Args = @('salsa20-selftest') },
-    @{ Name = 'cerberus-selftest'; Args = @('cerberus-selftest') }
+    @{ Name = 'cerberus-selftest'; Args = @('cerberus-selftest') },
+    @{ Name = 'ui-selftest'; Args = @('ui-selftest') },
+    @{ Name = 'exr-selftest';      Args = @('exr-selftest') },
+    @{ Name = 'sky-bake-selftest'; Args = @('sky-bake-selftest') },
+    # the shell rendered hidden with a made-up list: no window, a PNG written (ui-shot exits 5 when none was)
+    @{ Name = 'ui-shot';           Args = @('ui-shot', (Join-Path $PSScriptRoot 'ui-shots\extract.json'), '--out', (Join-Path $Out 'ui-shot'), '--size', '900x600') }
 )
 
 $failed = @()

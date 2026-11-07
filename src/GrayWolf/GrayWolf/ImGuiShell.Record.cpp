@@ -3,6 +3,7 @@
 // ui-record (UiRecord.h): a script played on the shell, one fixed time step a frame, every frame
 // written as a PNG, the audio player's sound pulled at the same pace into audio.wav.
 #include "ImGuiShell.Internal.h"
+#include "PreviewEnvironmentUi.h"   // RequestLightingMenu
 #include "ModelPreview.h"   // SavePreviewPng
 
 #include "DirectXTex.h"     // CaptureTexture
@@ -95,8 +96,8 @@ namespace ShellUi
 
         int TypeIndex(const std::string& Name)
         {
-            static const char* Types[] = { "all", "model", "image", "audio", "anim", "map", "fx" };
-            for (int i = 0; i < 7; i++) if (Name == Types[i] || Name == std::string(Types[i]) + "s") return i;
+            static const char* Types[] = { "all", "model", "image", "audio", "anim", "map", "fx", "text" };
+            for (int i = 0; i < 8; i++) if (Name == Types[i] || Name == std::string(Types[i]) + "s") return i;
             return 0;
         }
     }
@@ -116,6 +117,7 @@ namespace ShellUi
         nlohmann::json Camera;        // the camera step waiting for the selection to show
         bool Holding = false, Done = false, Failed = false;
         std::string Error, Timeline;
+        std::string PendingShot;      // ui-shot: the PNG's name the step asked for, written once the step has settled
         // per step, in real seconds: how long it took (its waits and holds) and how long Load Game
         // worked with no spinner or progress bar shown (steps.tsv, ux-check.py reads it)
         struct StepTime { std::string Label; double Start = 0, Seconds = 0, Silent = 0; };
@@ -133,7 +135,7 @@ namespace ShellUi
         bool Loading(const ShellState& S) const
         {
             const ViewportState& V = S.Viewport;
-            if (S.Catalog.Walking() || S.SelectFirstModel || V.Loader.Busy() || V.AnimRigLoading) return true;
+            if (S.Catalog.Walking() || S.SelectFirstModel || V.Loader.Busy() || V.AnimRigLoading || V.Sky.Busy()) return true;
             if (S.LoadGameWorking || !S.SelectWhenListed.empty() || !S.LoadGameScript.empty()) return true;
             if (S.Assets.GridView && S.Assets.Grid && !S.Assets.Grid->Settled()) return true;
             const int Kind = S.Selected >= 0 && S.Selected < (int)S.Catalog.Models.size() ? S.Catalog.Models[S.Selected].Kind : -1;
@@ -168,11 +170,54 @@ namespace ShellUi
                 CloseStep();
                 Times.push_back({ St.value("label", "step " + std::to_string(Next)), Now() });
                 ViewportState& V = S.Viewport;
-                Settle = 3;
+                Settle = O.Shots ? 8 : 3;   // a shot waits for the panels to find their size
+                if (St.contains("theme") && !Theme::ApplyByName(St["theme"].get<std::string>())) Fail("unknown theme: " + St["theme"].get<std::string>());
+                if (St.contains("page"))   // "settings" opens the Settings page, "main" closes it
+                {
+                    const bool Open = St["page"].get<std::string>() == "settings";
+                    if (Open && !S.SettingsOpen) S.SettingsJustOpened = true;
+                    S.SettingsOpen = Open;
+                }
+                if (St.contains("settings_search")) std::snprintf(S.SettingsQuery, sizeof(S.SettingsQuery), "%s", St["settings_search"].get<std::string>().c_str());
+                if (St.contains("settings_jump")) S.SettingsJump = St["settings_jump"].get<std::string>();
+                if (St.contains("float"))   // a window undocked and put at x, y (off screen on purpose): KeepWindowsVisible must bring it back
+                {
+                    const auto& F = St["float"];
+                    S.FloatWindow = F.value("window", std::string("Viewport"));
+                    S.FloatX = F.value("x", 0.0f); S.FloatY = F.value("y", 0.0f);
+                    S.FloatFrames = 4;
+                }
+                if (St.contains("size"))    // the main window made this size (WxH)
+                    if (int W = 0, H = 0; sscanf_s(St["size"].get<std::string>().c_str(), "%dx%d", &W, &H) == 2) { S.RequestW = W; S.RequestH = H; }
+                if (St.contains("demo")) AddDemoRows(S, St["demo"].get<int>());
+                // the Lighting menu: made-up skies ("demo_sky": a cache folder, "" for the run's own) or the Mod Tools of a folder
+                // ("modtools"), then "lighting": morning, day, sunset, night, fullbright, off (Fullbright off) or an environment id; "sky": the chip;
+                // "backdrop_blur": 0..1; "background": "#rrggbb"; "lighting_menu": the menu shown open
+                if (St.contains("demo_sky"))
+                {
+                    const std::string Cache = St["demo_sky"].get<std::string>();
+                    V.Sky.Configure(true, Cache.empty() ? (std::filesystem::path(O.OutDir) / "sky-cache").string() : Cache);
+                }
+                if (St.contains("sky_cache")) V.Sky.Configure(false, St["sky_cache"].get<std::string>());
+                if (St.contains("modtools")) V.Sky.SetFolder(St["modtools"].get<std::string>());
+                if (St.contains("lighting"))
+                {
+                    const std::string Want = St["lighting"].get<std::string>();
+                    ModToolsSky::LightState State;
+                    if (SkyLighting::ParseState(Want, State)) V.Sky.PickState(State, V.Lighting);
+                    else if (Want == "fullbright") V.Sky.SetFullbright(true, V.Lighting);
+                    else if (Want == "off") V.Sky.SetFullbright(false, V.Lighting);
+                    else V.Sky.PickEnvironment(Want, V.Lighting);
+                }
+                if (St.contains("sky")) V.Lighting.Backdrop = St["sky"].get<bool>();
+                if (St.contains("backdrop_blur")) V.Lighting.BackdropBlur = V.Lighting.SkyBackdropBlur = std::clamp(St["backdrop_blur"].get<float>(), 0.0f, 1.0f);   // 0: the sky sharp
+                if (St.contains("background") && !SkyLighting::ParseColor(St["background"].get<std::string>(), V.Background)) Fail("not a colour: " + St["background"].get<std::string>());
+                if (St.contains("lighting_menu")) RequestLightingMenu(St["lighting_menu"].get<bool>());
                 if (St.contains("label"))
                     Timeline += std::to_string(Written) + "\t" + St["label"].get<std::string>() + "\n";
-                if (St.contains("type")) S.Assets.TypeFilter = TypeIndex(St["type"].get<std::string>());
+                if (St.contains("type")) SetTypeFilter(S.Assets, TypeIndex(St["type"].get<std::string>()));
                 if (St.contains("filter")) std::snprintf(S.Assets.Filter, sizeof(S.Assets.Filter), "%s", St["filter"].get<std::string>().c_str());
+                if (St.contains("filters_open")) S.FiltersOpenRequest = St["filters_open"].get<bool>();
                 if (St.contains("view")) S.Assets.GridView = St["view"].get<std::string>() == "grid";
                 if (St.contains("select"))
                 {
@@ -180,6 +225,18 @@ namespace ShellUi
                     const int k = Find(S, Name, St.value("game", std::string()));
                     if (k < 0) Fail("not listed: " + Name);
                     else { S.MultiSel.clear(); LoadSelection(S, k); S.ScrollToSelected = true; }   // a plain click
+                }
+                if (St.contains("select_first"))   // the first row of a kind (the demo's names are made up)
+                {
+                    // "model", or "text:gsc" for the first of a kind with that format
+                    const std::string Want = St["select_first"].get<std::string>();
+                    const size_t Colon = Want.find(':');
+                    const int Kind = std::max(0, TypeIndex(Want.substr(0, Colon)) - 1);
+                    const std::string Format = Colon == std::string::npos ? std::string() : Want.substr(Colon + 1);
+                    int k = 0;
+                    while (k < (int)S.Catalog.Models.size() && (S.Catalog.Models[k].Kind != Kind || (!Format.empty() && S.Catalog.Models[k].Format != Format))) k++;
+                    if (k >= (int)S.Catalog.Models.size()) Fail("no row of kind " + St["select_first"].get<std::string>());
+                    else { S.MultiSel.clear(); LoadSelection(S, k); S.ScrollToSelected = true; }
                 }
                 if (St.contains("merge"))   // models shown as one, as Ctrl+clicks and Merge do
                 {
@@ -206,6 +263,11 @@ namespace ShellUi
                 if (St.contains("focus")) S.FocusWindow = St["focus"].get<std::string>();
                 if (St.contains("loadgame")) S.LoadGameScript = St["loadgame"].dump();
                 if (St.contains("wait")) WaitFrames = std::max(1, (int)std::lround(St["wait"].get<double>() * O.Fps));
+                if (O.Shots && St.contains("shot"))
+                {
+                    PendingShot = St["shot"].get<std::string>();
+                    WaitFrames = std::max(WaitFrames, 1);
+                }
             }
         }
     };
@@ -263,6 +325,9 @@ namespace ShellUi
         }
         // a held frame moves time on by next to nothing (ImGui wants a step above 0)
         ImGui::GetIO().DeltaTime = P->Holding || P->Next == 0 ? 1e-5f : 1.0f / (float)P->O.Fps;
+        // ui-shot: the owner's pointer is never seen (the hidden window is not the foreground one, and
+        // the backend does not read it then; this makes sure)
+        if (P->O.Shots) ImGui::GetIO().AddMousePosEvent(-FLT_MAX, -FLT_MAX);
         ViewportState& V = S.Viewport;
         if (!P->Holding && P->Camera.is_object())
         {
@@ -278,6 +343,31 @@ namespace ShellUi
     {
         if (P->Done) return true;
         if (P->Next == 0 || P->Holding) { P->Held++; return false; }
+
+        if (P->O.Shots)   // ui-shot: a PNG for a step that names one, none otherwise, no audio
+        {
+            if (!P->PendingShot.empty())
+            {
+                // no floating window may be out of sight in a shot (ImGuiShell.Windows.cpp)
+                for (const std::string& Name : HiddenWindows()) P->Fail("window out of sight in " + P->PendingShot + ": " + Name);
+                auto Shot = std::make_unique<DirectX::ScratchImage>();
+                ComPtr<ID3D11Texture2D> Pixels;
+                if (FAILED(Swap->GetBuffer(0, __uuidof(ID3D11Texture2D), &Pixels)) || FAILED(DirectX::CaptureTexture(P->Dev.Get(), P->Ctx.Get(), Pixels.Get(), *Shot)))
+                {
+                    P->Fail("capture of " + P->PendingShot + " failed");
+                    P->Done = true;
+                    return true;
+                }
+                P->Writer->Push(std::move(Shot), (std::filesystem::path(P->O.OutDir) / (P->PendingShot + ".png")).string());
+                P->Written++;
+                P->Timeline += std::to_string(P->Written) + "\t" + P->PendingShot + "\n";
+                P->PendingShot.clear();
+            }
+            P->WaitFrames--;
+            if (P->WaitFrames <= 0 && P->Next >= P->Steps.size()) P->Done = true;
+            else P->RunSteps(S);
+            return P->Done;
+        }
 
         auto Img = std::make_unique<DirectX::ScratchImage>();
         ComPtr<ID3D11Texture2D> Back;

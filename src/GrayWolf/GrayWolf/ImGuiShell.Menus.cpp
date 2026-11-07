@@ -6,8 +6,7 @@
 #include "UiAsync.h"           // shell opens off the frame
 #include "Strings.h"
 #include "SettingsManager.h"   // exportsnd
-#include "ImGuiUpdates.h"      // Settings > Updates, the new-version banner
-#include "ImGuiBlender.h"      // Settings > Blender
+#include "ImGuiUpdates.h"      // the new-version banner
 
 #include "imgui.h"
 #include "imgui_internal.h"   // DockBuilder* for the initial layout
@@ -16,49 +15,19 @@
 
 namespace ShellUi
 {
-    // Settings > Sounds: the format every export writes sounds in (setting exportsnd, what
-    // --audio-format sets for one run; ExportWriters::WriteSound)
-    static void DrawSoundSettingsMenu()
-    {
-        if (!ImGui::BeginMenu("Settings")) return;   // appended to the Settings menu ImGuiUpdates opens
-        if (ImGui::BeginMenu("Sounds"))
-        {
-            // Opus by default (ExportWriters::SoundFormatSetting)
-            const std::string Current = Strings::ToUpper(SettingsManager::GetSetting("exportsnd", "OPUS"));
-            const struct { const char* Value; const char* Label; const char* Tip; } Formats[] = {
-                { "OPUS", "Opus (default: small, lossy)",
-                  "The game's own Opus packets kept as they are when it stores Opus; any other sound decoded and encoded "
-                  "(64 kb/s a channel, 48 kHz). About a tenth of WAV's size." },
-                { "WAV", "WAV (lossless)", "As the game keeps them (PCM, ADPCM, MP3), or decoded to 16-bit PCM. The largest files." },
-                { "FLAC", "FLAC (lossless, compressed)", "Lossless, about half of WAV's size." },
-            };
-            for (const auto& F : Formats)
-            {
-                if (ImGui::MenuItem(F.Label, nullptr, Current == F.Value)) SettingsManager::SetSetting("exportsnd", F.Value);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", F.Tip);
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::EndMenu();
-    }
-
-    bool DrawMainMenuBar(bool& OpenHelp)
+    bool DrawMainMenuBar(bool& OpenHelp, bool& OpenSettings)
     {
         bool Quit = false;
         if (ImGui::BeginMainMenuBar())
         {
             if (ImGui::BeginMenu("File")) { if (ImGui::MenuItem("Exit")) Quit = true; ImGui::EndMenu(); }
-            DrawUpdatesMenu();
-            DrawBlenderSettingsMenu();
-            DrawScreenshotSettingsMenu();
-            DrawSoundSettingsMenu();
+            // one place for every setting: a page, not a menu (the former Settings menus, the Options popup)
+            if (ImGui::MenuItem("Settings")) OpenSettings = true;
             if (ImGui::BeginMenu("Help"))
             {
                 if (ImGui::MenuItem("Search syntax")) OpenHelp = true;
                 ImGui::Separator();
-                if (ImGui::MenuItem("Open session log")) UiAsync::OpenInShell(AppLog::SessionPath());
-                bool Verbose = AppLog::Verbose();
-                if (ImGui::MenuItem("Verbose log (every step timed)", nullptr, &Verbose)) AppLog::SetVerbose(Verbose);
+                if (ImGui::MenuItem("Open the session log")) UiAsync::OpenInShell(AppLog::SessionPath());
                 ImGui::EndMenu();
             }
             ImGui::EndMainMenuBar();
@@ -66,6 +35,31 @@ namespace ShellUi
         // a newer GrayWolf: Download / Later, then Restart now (the helper replaces the files)
         if (DrawUpdateBanner()) Quit = true;
         return Quit;
+    }
+
+    void DrawWorkflowBar(ShellState& S)
+    {
+        ImGuiViewport* Vp = ImGui::GetMainViewport();
+        if (ImGui::BeginViewportSideBar("##workflow", Vp, ImGuiDir_Up, ImGui::GetFrameHeight() * 1.35f,
+                                        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar))
+        {
+            if (ImGui::BeginMenuBar())
+            {
+                const struct { const char* Label; const char* Tip; } Steps[] = {
+                    { "1  Extract from a game", "Load a game, search its assets, pick what you want and press Export" },
+                    { "2  Library: browse and preview", "Your exports: search, filter, click an asset to preview it, Ctrl+click to view several together" },
+                };
+                for (int i = 0; i < 2; i++)
+                {
+                    if (Theme::Pill(Steps[i].Label, S.LeftPage == i)) S.LeftPage = i;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Steps[i].Tip);
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("\xC2\xB7  then click an asset to preview it on the right");
+                ImGui::EndMenuBar();
+            }
+        }
+        ImGui::End();
     }
 
     // Bottom status bar (trims the work area before the dockspace claims the rest). Uses the
@@ -119,15 +113,19 @@ namespace ShellUi
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("Search syntax", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
-            ImGui::TextUnformatted("Search matches the asset name");
+            ImGui::TextUnformatted("Search matches the asset name, or a column");
             ImGui::Separator();
             ImGui::BulletText("space   =   AND  (every term must appear)");
             ImGui::BulletText("!term   =   the term must NOT appear");
+            ImGui::BulletText("key:term   =   look in one column: name, type, game, format");
+            ImGui::BulletText("\"term\"   =   the whole value, not part of it");
+            ImGui::BulletText("several \"exact\" terms of one key   =   any of them");
             ImGui::BulletText("case-insensitive");
             ImGui::Spacing(); ImGui::TextDisabled("Examples");
             ImGui::BulletText("richtofen              names containing \"richtofen\"");
             ImGui::BulletText("zombie !head           \"zombie\" and not \"head\"");
-            ImGui::BulletText("moon militarypolice    both terms");
+            ImGui::BulletText("type:image game:bo3    images of one game");
+            ImGui::BulletText("type:\"model\" type:\"anim\" crate   models or anims named like crate");
             ImGui::Spacing();
             ImGui::TextDisabled("Tip: sort by any column by clicking its header.");
             ImGui::TextDisabled("Number ranges (bones, meshes, materials, size) are under Filters in the toolbar.");

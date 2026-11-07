@@ -15,11 +15,15 @@
 #include <nlohmann/json.hpp>   // filter presets
 
 #include <algorithm>
+#include <array>
+#include <intrin.h>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 
 namespace ShellUi
 {
@@ -62,6 +66,82 @@ namespace ShellUi
         else if (V >= 100) snprintf(Buf, sizeof Buf, "%.0f %s", V, Units[U]);
         else             snprintf(Buf, sizeof Buf, "%.1f %s", V, Units[U]);
         return Buf;
+    }
+
+
+    // The types the Filters panel offers, as the search box's "type:" terms name them
+    namespace
+    {
+        constexpr int TypeCount = 7;
+        const char* const TypeKey[TypeCount] = { "model", "image", "audio", "anim", "map", "fx", "text" };
+        const char* const TypeLabel[TypeCount] = { "Models", "Images", "Audio", "Anims", "Maps", "FX", "Text" };
+
+        // The search text cut into its terms by the search's own parser (Search::Parse), so the box and the
+        // Filters panel never disagree on what a quote does. A type: term is one whose key is type.
+        struct SplitTerm { std::string Text; bool IsType; };
+        std::vector<SplitTerm> TermsOf(const std::string& Text)
+        {
+            std::vector<SplitTerm> Out;
+            for (const Search::Term& T : Search::Parse(Text).Terms)
+                Out.push_back({ Text.substr(T.Begin, T.End - T.Begin), T.Key == "type" });
+            return Out;
+        }
+    }
+
+    TypeSelection TypeSelectionOf(const std::string& Text)
+    {
+        TypeSelection Sel;
+        const Search::Query All = Search::Parse(Text);
+        Search::Query Q;
+        for (const Search::Term& T : All.Terms)
+            if (T.Key == "type") Q.Terms.push_back(T);
+        if (Q.Terms.empty()) return Sel;
+        Sel.Named = true;
+        unsigned Mask = 0;
+        for (int k = 0; k < TypeCount; k++)
+        {
+            Item It;
+            It.Kind = k;
+            if (Search::Matches(Q, It)) Mask |= 1u << k;
+        }
+        if (Mask == 0)
+        {
+            Sel.Impossible = true;
+            std::string Known;
+            for (int k = 0; k < TypeCount; k++) Known += std::string(k ? ", " : "") + TypeKey[k];
+            // a value that is no type at all, else terms that exclude one another
+            for (const Search::Term& T : Q.Terms)
+            {
+                if (T.Negated || T.Empty) continue;
+                bool Any = false;
+                for (int k = 0; k < TypeCount; k++) Any = Any || ExportNaming::Lower(TypeKey[k]).find(T.Value) != std::string::npos;
+                if (!Any) { Sel.Why = "type:" + T.Value + " is not a type (the types are " + Known + ")"; break; }
+            }
+            if (Sel.Why.empty())
+                Sel.Why = "the type: terms in the search exclude every type (use type:\"a\" type:\"b\" in quotes to allow either)";
+        }
+        else Sel.Mask = Mask == (1u << TypeCount) - 1 ? 0 : Mask;
+        return Sel;
+    }
+
+    unsigned TypeMaskOf(const std::string& Text) { return TypeSelectionOf(Text).Mask; }
+
+    bool SetTypeMask(AssetsTab& A, unsigned Mask)
+    {
+        std::string Out;
+        for (const SplitTerm& T : TermsOf(A.Filter))
+            if (!T.IsType) Out += (Out.empty() ? "" : " ") + T.Text;
+        for (int k = 0; k < TypeCount; k++)
+            if (Mask & (1u << k)) Out += std::string(Out.empty() ? "" : " ") + "type:\"" + TypeKey[k] + "\"";
+        if (Out.size() >= sizeof(A.Filter)) return false;   // would not fit: left as it is, never cut
+        std::memcpy(A.Filter, Out.c_str(), Out.size() + 1);
+        return true;
+    }
+
+    void SetTypeFilter(AssetsTab& A, int Index)
+    {
+        A.TypeFilter = Index;
+        SetTypeMask(A, Index > 0 && Index <= TypeCount ? 1u << (Index - 1) : 0u);
     }
 
     namespace fs = std::filesystem;
@@ -140,19 +220,14 @@ namespace ShellUi
             A.ViewVersion = S.Catalog.ModelsVersion;
             A.ViewHeaders = S.Catalog.HeaderVersion;
             A.ViewBuiltAt = ImGui::GetTime();
+            const Search::Query Q = Search::Parse(A.Filter);
             A.View.clear(); A.View.reserve(Models.size());
             for (int i = 0; i < (int)Models.size(); i++)
             {
                 const Item& M = Models[i];
-                if (A.TypeFilter == 1 && M.Kind != 0) continue;
-                if (A.TypeFilter == 2 && M.Kind != 1) continue;
-                if (A.TypeFilter == 3 && M.Kind != 2) continue;
-                if (A.TypeFilter == 4 && M.Kind != 3) continue;
-                if (A.TypeFilter == 5 && M.Kind != 4) continue;
-                if (A.TypeFilter == 6 && M.Kind != 5) continue;
                 if (A.HideModelTextures && M.Kind == 1 && M.ModelTexture) continue;
                 if (!A.GameFilter.empty() && M.Game != A.GameFilter) continue;
-                if (A.Filter[0] && !NameMatches(A.Filter, M.Name)) continue;
+                if (!Q.Terms.empty() && !Search::Matches(Q, M)) continue;
                 if ((A.fMinBones  > 0 && (int)M.Bones  < A.fMinBones)  || (A.fMaxBones  > 0 && (int)M.Bones  > A.fMaxBones))  continue;
                 if ((A.fMinMeshes > 0 && (int)M.Meshes < A.fMinMeshes) || (A.fMaxMeshes > 0 && (int)M.Meshes > A.fMaxMeshes)) continue;
                 if ((A.fMinMats   > 0 && (int)M.Mats   < A.fMinMats)   || (A.fMaxMats   > 0 && (int)M.Mats   > A.fMaxMats))   continue;
@@ -253,16 +328,17 @@ namespace ShellUi
         }
 
         // Search box: full-row hint field, an inline clear (x) shown only when there's text, then the help (?).
-        void DrawSearchBox(AssetsTab& A, bool& OpenHelp)
+        void DrawSearchBox(AssetsTab& A, bool& OpenHelp, bool TakesCtrlF)
         {
             const float BtnW = ImGui::GetFrameHeight();
             const float Sp   = ImGui::GetStyle().ItemSpacing.x;
             const bool  HasText = A.Filter[0] != '\0';
             float Reserve = BtnW + Sp;                      // "?" button
             if (HasText) Reserve += BtnW + Sp;              // "x" clear button
-            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_F)) ImGui::SetKeyboardFocusHere();
+            // not while the Settings page covers this panel: Ctrl+F there is the settings search's
+            if (TakesCtrlF && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_F)) ImGui::SetKeyboardFocusHere();
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - Reserve);
-            static const std::string Hint = std::string(Theme::Icon::Search) + "  Search assets by name\xE2\x80\xA6  (Ctrl+F, Esc clears)";
+            static const std::string Hint = std::string(Theme::Icon::Search) + "  Search assets: name, type:image, \"exact\", !not\xE2\x80\xA6  (Ctrl+F)";
             ImGui::InputTextWithHint("##filter", Hint.c_str(), A.Filter, sizeof(A.Filter), ImGuiInputTextFlags_EscapeClearsAll);
             if (HasText)
             {
@@ -272,25 +348,6 @@ namespace ShellUi
             ImGui::SameLine(0, 2);
             if (Theme::IconButton("help", Theme::Icon::Help, "Search syntax")) OpenHelp = true;
             (void)BtnW;
-        }
-
-        // Type selector: a row of pills, each its kind's icon and name; the active one in the accent
-        void DrawTypeTabs(AssetsTab& A)
-        {
-            const float Em = ImGui::GetFontSize();
-            // Indices 4/5 (Anims/Maps) come after 0-3 to keep TypeFilter's meanings (1=Models, 2=Images, 3=Audio).
-            static const std::string Segs[] = { "All",
-                std::string(Theme::Icon::Model) + "  Models", std::string(Theme::Icon::Image) + "  Images",
-                std::string(Theme::Icon::Audio) + "  Audio", std::string(Theme::Icon::Anim) + "  Anims",
-                std::string(Theme::Icon::Map) + "  Maps", std::string(Theme::Icon::Fx) + "  FX" };
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, Em * 0.9f);
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, ImGui::GetStyle().ItemSpacing.y));
-            for (int i = 0; i < 7; i++)
-            {
-                if (i > 0) ImGui::SameLine();
-                if (Theme::Pill(Segs[i].c_str(), A.TypeFilter == i)) A.TypeFilter = i;
-            }
-            ImGui::PopStyleVar(2);
         }
 
         // Numeric filters (min-max ranges; 0 = no limit). Each value is a segmented stepper:
@@ -361,20 +418,59 @@ namespace ShellUi
             }
         }
 
-        // The game shown, then a Filters button (its count of filters set) opening the rest: the model
-        // textures hidden, the numeric ranges, the presets
+        // The game shown, then the Filters button, the one place for the type, the model textures hidden, the
+        // numeric ranges and the presets; what is set is on the button (the types by name or count)
         void DrawFilters(ShellState& S)
         {
             AssetsTab& A = S.Assets;
             DrawGameFilter(S);
             if (A.Games.size() >= 2 || !A.GameFilter.empty()) ImGui::SameLine();
+            const TypeSelection TypeSel = TypeSelectionOf(A.Filter);
+            const unsigned Types = TypeSel.Mask;
+            const int TypesOn = (int)__popcnt(Types);
             const int Set = (A.HideModelTextures ? 1 : 0) + (A.fMinBones > 0) + (A.fMaxBones > 0) + (A.fMinMeshes > 0) + (A.fMaxMeshes > 0)
                           + (A.fMinMats > 0) + (A.fMaxMats > 0) + (A.fMinKB > 0) + (A.fMaxKB > 0);
-            char Label[64];
-            snprintf(Label, sizeof(Label), Set ? "%s  Filters (%d)###filters" : "%s  Filters###filters", Theme::Icon::Sliders, Set);
-            if (Theme::Pill(Label, Set > 0)) ImGui::OpenPopup("filters_popup");
+            std::string Label = std::string(Theme::Icon::Sliders) + "  Filters";
+            if (TypesOn == 1)
+                for (int k = 0; k < TypeCount; k++)
+                    if (Types & (1u << k)) Label += std::string("  \xC2\xB7  ") + TypeLabel[k];
+            if (TypesOn > 1) Label += "  \xC2\xB7  " + std::to_string(TypesOn) + " types";
+            if (TypeSel.Impossible) Label += "  \xC2\xB7  no such type";
+            if (Set) Label += "  \xC2\xB7  " + std::to_string(Set) + " more";
+            Label += "###filters";
+            const bool Clicked = Theme::Pill(Label.c_str(), Set > 0 || TypesOn > 0 || TypeSel.Impossible);
+            const ImVec2 Below(ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y);   // the panel opens under its button
+            if (Clicked) ImGui::OpenPopup("filters_popup");
+            if (std::exchange(S.FiltersOpenRequest, false)) ImGui::OpenPopup("filters_popup");   // ui-shot: shown open
+            ImGui::SetNextWindowPos(Below, ImGuiCond_Appearing);
             if (ImGui::BeginPopup("filters_popup"))
             {
+                // the types, each with how many are listed: none ticked is every type
+                std::array<size_t, TypeCount> Counts{};
+                for (const Item& M : S.Catalog.Models)
+                    if (M.Kind >= 0 && M.Kind < TypeCount) Counts[(size_t)M.Kind]++;
+                ImGui::SeparatorText("Type");
+                unsigned Mask = Types;
+                for (int k = 0; k < TypeCount; k++)
+                {
+                    bool On = (Mask & (1u << k)) != 0;
+                    const std::string Item = std::string(TypeLabel[k]) + "  (" + std::to_string(Counts[(size_t)k]) + ")##type" + std::to_string(k);
+                    if (ImGui::Checkbox(Item.c_str(), &On)) { if (On) Mask |= 1u << k; else Mask &= ~(1u << k); SetTypeMask(A, Mask); }
+                }
+                ImGui::BeginDisabled(Types == 0 && !TypeSel.Impossible);
+                if (ImGui::SmallButton("All types")) SetTypeMask(A, 0);
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                ImGui::TextDisabled("(none ticked: every type; this writes type: into the search box)");
+                if (TypeSel.Impossible)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, Theme::AccentText);
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
+                    ImGui::TextUnformatted(("Nothing can match: " + TypeSel.Why + ". \"All types\" removes the type: terms.").c_str());
+                    ImGui::PopTextWrapPos();
+                    ImGui::PopStyleColor();
+                }
+                ImGui::SeparatorText("More");
                 ImGui::Checkbox("Hide model textures (the models' _images folders)", &A.HideModelTextures);
                 DrawNumericFilters(A);
                 DrawPresets(A);
@@ -421,6 +517,16 @@ namespace ShellUi
             }
             ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("%d / %d assets", (int)A.View.size(), (int)S.Catalog.Models.size());
+            if (const TypeSelection Sel = TypeSelectionOf(A.Filter); Sel.Impossible)
+            {
+                // why the list is empty: the type: terms name no type, so this is not "all types"
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, Theme::AccentText);
+                ImGui::TextUnformatted(("\xC2\xB7  nothing can match: " + Sel.Why).c_str());
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove the type terms")) SetTypeMask(A, 0);
+            }
             if (!S.MultiSel.empty())
             {
                 ImGui::SameLine();
@@ -452,6 +558,10 @@ namespace ShellUi
                 else if (A.GridView && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) { CurPos = (CurPos < 0) ? 0 : std::max(CurPos - 1, 0); Moved = true; }
                 if (Moved) { LoadSelection(S, View[CurPos]); S.ScrollToSelected = true; }
             }
+            // Ctrl+A picks every row shown (HydraX's: Ctrl+A selects all filtered), for View together and Copy
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive()
+                && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A))
+                S.MultiSel.insert(View.begin(), View.end());
             // Ctrl+C copies the selection's name(s) - same focus/active-item gate as the nav above, but
             // not gated on View: a multi-pick can still include rows the current type tab is hiding.
             if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive()
@@ -542,10 +652,11 @@ namespace ShellUi
             // everything visible.
             // Game: only with assets of more than one game listed.
             ImGui::TableSetColumnEnabled(1, A.Games.size() > 1);                                          // Game
-            ImGui::TableSetColumnEnabled(3, A.TypeFilter == 0 || A.TypeFilter == 1 || A.TypeFilter == 4); // Bones
-            ImGui::TableSetColumnEnabled(4, A.TypeFilter == 0 || A.TypeFilter == 1 || A.TypeFilter == 5); // Meshes
-            ImGui::TableSetColumnEnabled(5, A.TypeFilter == 0 || A.TypeFilter == 1); // Mats
-            ImGui::TableSetColumnEnabled(6, A.TypeFilter == 0 || A.TypeFilter == 2 || A.TypeFilter == 5); // Dim
+            const unsigned Types = TypeMaskOf(A.Filter);   // the types the search names: their columns, or all of them
+            ImGui::TableSetColumnEnabled(3, Types == 0 || (Types & 0x09) != 0); // Bones: models, anims
+            ImGui::TableSetColumnEnabled(4, Types == 0 || (Types & 0x11) != 0); // Meshes: models, maps
+            ImGui::TableSetColumnEnabled(5, Types == 0 || (Types & 0x01) != 0); // Mats: models
+            ImGui::TableSetColumnEnabled(6, Types == 0 || (Types & 0x12) != 0); // Dim: images, maps
             ImGui::TableHeadersRow();
 
             if (ImGuiTableSortSpecs* Ss = ImGui::TableGetSortSpecs())
@@ -564,7 +675,7 @@ namespace ShellUi
             {
                 const int idx = View[Row];
                 const Item& M = Models[idx];
-                const char* Ty = (M.Kind == 0) ? "model" : (M.Kind == 1) ? "image" : (M.Kind == 2) ? "audio" : (M.Kind == 3) ? "anim" : (M.Kind == 4) ? "map" : "fx";
+                const char* Ty = (M.Kind == 0) ? "model" : (M.Kind == 1) ? "image" : (M.Kind == 2) ? "audio" : (M.Kind == 3) ? "anim" : (M.Kind == 4) ? "map" : (M.Kind == 5) ? "fx" : "text";
                 ImGui::PushID(idx); // names can repeat (e.g. shared texture stems) - disambiguate the row
                 ImGui::TableNextRow();
                 if (S.ScrollToSelected && S.Selected == idx) { ImGui::SetScrollHereY(); S.ScrollToSelected = false; }
@@ -605,13 +716,10 @@ namespace ShellUi
     void DrawAssetsPanel(ShellState& S, bool& OpenHelp)
     {
         AssetsTab& A = S.Assets;
-        // opened on a folder (ui <dir>): its assets tab comes first, not Load Game's
-        static int FramesShown = 0;
-        if (FramesShown++ == 1 && !S.ModelsDir.empty()) ImGui::SetNextWindowFocus();
+        if (S.LeftPage != 1) return;   // the Extract page is shown (DrawWorkflowBar); a folder given on the command line starts on this one
         ImGui::Begin(Theme::LibraryWindow);
         DrawFolderBar(S);
-        DrawSearchBox(A, OpenHelp);
-        DrawTypeTabs(A);
+        DrawSearchBox(A, OpenHelp, !S.SettingsOpen);
         DrawFilters(S);
 
         // Built with the last known sort before keyboard nav reads it, so Up/Down walk what is on

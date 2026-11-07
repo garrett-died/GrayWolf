@@ -1,0 +1,11 @@
+{
+  "steps": [
+    { "theme": "graywolf", "demo": 240, "view": "list", "select_first": "model", "page": "settings", "label": "settings", "shot": "settings-top" },
+    { "settings_jump": "Images", "label": "images", "shot": "settings-images" },
+    { "settings_jump": "Model formats", "shot": "settings-models" },
+    { "settings_jump": "A game's own choices", "shot": "settings-games" },
+    { "settings_search": "mod tools", "shot": "settings-modtools" },
+    { "settings_search": "blender", "shot": "settings-search" },
+    { "settings_search": "", "theme": "hydrax", "settings_jump": "Theme", "shot": "settings-hydrax" }
+  ]
+}

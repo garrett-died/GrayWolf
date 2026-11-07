@@ -1,0 +1,6 @@
+{
+  "steps": [
+    { "theme": "graywolf", "demo": 240, "view": "list", "select_first": "model", "label": "graywolf", "shot": "theme-graywolf" },
+    { "theme": "hydrax", "label": "hydrax", "shot": "theme-hydrax" }
+  ]
+}

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 
+#include "ImGuiTheme.h"        // the accent
 #include "CellRenderers.h"
 #include "GridServices.h"
 #include "AudioPlayer.h"       // ReadWaveform
@@ -48,7 +49,7 @@ namespace
         const ImVec2 C(Max.x - R * 2.0f, Max.y - R * 2.0f);
         const float T = (float)Time * 6.0f;
         DL->PathArcTo(C, R, T, T + 4.2f, 16);
-        DL->PathStroke(IM_COL32(245, 165, 36, 220), 0, 2.0f);
+        DL->PathStroke(((Theme::AccentU32 & 0x00FFFFFFu) | (220u << 24)), 0, 2.0f);
     }
 
     class ImageCells : public IAssetCellRenderer

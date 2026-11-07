@@ -88,7 +88,7 @@ namespace ShellUi
             const ImVec2 C((Min.x + Max.x) * 0.5f, (Min.y + Max.y) * 0.5f);
             const float R = ImGui::GetFontSize() * 1.1f, T = (float)ImGui::GetTime() * 6.0f;
             DL->PathArcTo(C, R, T, T + 4.2f, 32);
-            DL->PathStroke(IM_COL32(245, 165, 36, 230), 0, 3.0f);
+            DL->PathStroke(((Theme::AccentU32 & 0x00FFFFFFu) | (230u << 24)), 0, 3.0f);
             const char* Text = "Loading\xE2\x80\xA6";
             const ImVec2 Ts = ImGui::CalcTextSize(Text);
             DL->AddText(ImVec2(C.x - Ts.x * 0.5f, C.y + R + 8.0f), IM_COL32(220, 220, 225, 255), Text);
@@ -128,6 +128,7 @@ namespace ShellUi
             else if (Sel.Kind == 2)             ImGui::TextDisabled("sound  \xC2\xB7  %s", FormatSize(Sel.SizeBytes).c_str());
             else if (Sel.Kind == 3)             ImGui::TextDisabled("animation  \xC2\xB7  %s", FormatSize(Sel.SizeBytes).c_str());
             else if (Sel.Kind == 5)             ImGui::TextDisabled("%s", V.FxPanel.Summary().c_str());
+            else if (Sel.Kind == 6 && V.Text.Loaded()) ImGui::TextDisabled("%s  \xC2\xB7  %s", V.Text.Summary().c_str(), FormatSize(Sel.SizeBytes).c_str());
             Theme::PopFont();
             if (Sel.Kind == 4) DrawOpenInBlender(Sel.Path);   // a map export: its .blend, or its import
             ImGui::Spacing();
@@ -398,6 +399,7 @@ namespace ShellUi
                 {
                     const ImVec2 Back = ImGui::GetCursorScreenPos();
                     const float Pad = ImGui::GetStyle().ItemSpacing.x;
+                    V.ToolbarWidth = std::max(100.0f, (ViewMax.x - ViewMin.x) - 2.0f * Pad - 8.0f - 4.0f);   // less the plate's padding and the scrollbar's strip
                     ImGui::SetCursorScreenPos(ImVec2(ViewMin.x + Pad, ViewMin.y + Pad));
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(Theme::Base.x, Theme::Base.y, Theme::Base.z, 0.78f));
                     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
@@ -444,6 +446,8 @@ namespace ShellUi
         Lighting.Lights = SettingsManager::GetSettingFloat("preview_lights", Lighting.Lights, 0.0f, 3.0f);
         Lighting.Specular = SettingsManager::GetSetting("preview_specular", "true") != "false";
         LoadPreviewEnvironmentSettings(Lighting);
+        SkyLighting::ParseColor(SettingsManager::GetSetting(SkyLighting::kBackgroundKey, ""), Background);
+        Sky.Init(Lighting);   // the remembered Fullbright and sky state
         Lighting.Shadow = LoadPreviewShadowSettings();
         ShowDetails = SettingsManager::GetSetting("viewport_details", "false") == "true";
     }
@@ -468,8 +472,8 @@ namespace ShellUi
     {
         const auto& Models = S.Catalog.Models;
         ViewportState& V = S.Viewport;
-        static const char* KindNames[] = { "model", "image", "audio", "anim", "map", "fx" };
-        AppLog::Timer Preview(std::string("preview ") + KindNames[Models[i].Kind % 6] + " " + Models[i].Path, spdlog::level::info, 300);
+        static const char* KindNames[] = { "model", "image", "audio", "anim", "map", "fx", "text" };
+        AppLog::Timer Preview(std::string("preview ") + KindNames[Models[i].Kind % 7] + " " + Models[i].Path, spdlog::level::info, 300);
         S.Selected = i;
         V.ImageSRV.Reset(); V.ImageW = V.ImageH = 0;
         V.Audio.Unload(); // stop / release any audio from the previous selection
@@ -477,6 +481,8 @@ namespace ShellUi
         V.AnimRigPaths.clear(); V.AnimRigLabel.clear(); V.AnimRigScore = 0; V.AnimRigManual = false;
         const Item& Sel = Models[i];
         if (Sel.Kind != 0 && Sel.Kind != 4) { V.Loader.Forget(); V.Mesh = GpuMesh{}; }
+        V.Text.Unload();
+        if (IsDemoRow(Sel)) { V.FxPanel.Unload(); LoadDemoSelection(S, i); return; }   // ui-shot's made-up rows
         if (Sel.Kind == 5) V.FxPanel.Load(Sel.Path); else V.FxPanel.Unload();
 
         if (Sel.Kind == 3) // anim: no mesh of its own - the model it plays on is picked for it (DrawAnimControls)
@@ -506,6 +512,10 @@ namespace ShellUi
         {
             AppLog::Timer Decode("audio decode");
             V.Audio.Load(Sel.Path, Sel.Format);
+        }
+        else if (Sel.Kind == 6) // text: read on a worker (the first 4 MB), the last few kept
+        {
+            V.Text.Request(Sel.Path, Sel.Format);
         }
         else if (Sel.Kind == 4) // map: one standalone .glb scene, no multi-part assembly
         {
@@ -605,6 +615,7 @@ namespace ShellUi
             DrawAudioPlayer(V.Audio, S.Catalog.Models[S.Selected].Format);
         }
         else if (SelKind == 5) V.FxPanel.Draw(); // an effect: FxPreviewPanel
+        else if (SelKind == 6) V.Text.Draw();   // reading, or the document, or why not
         else if (SelKind == 3) {} // anim with no model picked yet (or it failed to load) - the picker
                                    // UI above already covers this; nothing more to show here.
         else DrawEmptyView();

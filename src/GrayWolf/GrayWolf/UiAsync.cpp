@@ -25,6 +25,17 @@ namespace
     std::atomic<HWND> OwnerWindow{ nullptr };
     std::atomic<int> Running{ 0 };
 
+    // Explorer (the process of the desktop's shell window) may bring the window it opens to the front. Only that
+    // process is given the right, never every process. Hypothesis: the previous ASFW_ANY call was a guess made when a
+    // window opened behind the shell, and this narrower grant is not checked on a visible desktop (no window is
+    // shown in the tests).
+    void AllowExplorerForeground()
+    {
+        DWORD Pid = 0;
+        if (const HWND Shell = GetShellWindow(); Shell != nullptr) GetWindowThreadProcessId(Shell, &Pid);
+        if (Pid != 0) AllowSetForegroundWindow(Pid);
+    }
+
     // The dialog up, or closed and not yet collected by its caller (the UI thread's alone).
     struct DialogJob
     {
@@ -199,6 +210,7 @@ void OpenInShell(const std::string& Path, bool Reveal)
         }
         if (Reveal)
         {
+            AllowExplorerForeground();
             PIDLIST_ABSOLUTE Item = nullptr;
             HRESULT Hr = SHParseDisplayName(W.c_str(), nullptr, &Item, 0, nullptr);
             if (SUCCEEDED(Hr)) Hr = SHOpenFolderAndSelectItems(Item, 0, nullptr, 0);
@@ -206,10 +218,14 @@ void OpenInShell(const std::string& Path, bool Reveal)
             if (FAILED(Hr)) Notify("could not show " + Path + " in its folder (hr " + std::to_string((long)Hr) + ")", true);
             return;
         }
+        // the window Explorer opens may take the front: this process owns the foreground, and a launch from a worker
+        // thread is not always allowed to show over it (it then opened behind the shell). Only Explorer, and the
+        // program started, are given the right, not every process (not verified on a visible desktop: see AllowExplorerForeground)
+        AllowExplorerForeground();
         SHELLEXECUTEINFOW Sei{};
         Sei.cbSize = sizeof(Sei);
         // this thread ends with the call: the launch completes before it returns
-        Sei.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE;
+        Sei.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE | SEE_MASK_NOCLOSEPROCESS;
         Sei.hwnd = Owner;
         Sei.lpFile = W.c_str();
         Sei.nShow = SW_SHOWNORMAL;
@@ -217,6 +233,12 @@ void OpenInShell(const std::string& Path, bool Reveal)
         {
             const DWORD Error = GetLastError();
             if (Error != ERROR_CANCELLED) Notify("could not open " + Path + " (error " + std::to_string(Error) + ")", true);
+        }
+        else if (Sei.hProcess != nullptr)
+        {
+            // a program was started: its window may come to the front
+            if (const DWORD Pid = GetProcessId(Sei.hProcess); Pid != 0) AllowSetForegroundWindow(Pid);
+            CloseHandle(Sei.hProcess);
         }
     });
 }

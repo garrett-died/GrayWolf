@@ -1,0 +1,6 @@
+{
+  "steps": [
+    { "focus": "Assets", "demo": 240, "view": "list", "select_first": "model", "filter": "type:\"model\"", "filters_open": true, "label": "filters", "shot": "filters-open" },
+    { "theme": "hydrax", "shot": "filters-open-hydrax" }
+  ]
+}

@@ -204,6 +204,18 @@
     <ClCompile Include="MapMeshSelfTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="ExrReader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ModToolsSky.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SkyBakeSelfTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ExrReaderSelfTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="MapSceneExport.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -388,6 +400,12 @@
     </ClInclude>
     <ClInclude Include="IWDCache.h">
       <Filter>Header Files\Packages</Filter>
+    </ClInclude>
+    <ClInclude Include="ExrReader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ModToolsSky.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ZipInflate.h">
       <Filter>Header Files\Packages</Filter>

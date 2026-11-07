@@ -13,4 +13,9 @@ struct UiRecordOptions
     int Width = 1920, Height = 1080;
     int Fps = 30;
     double HoldTimeout = 180;   // seconds a selection may load before recording goes on anyway
+    // ui-shot: no frame sequence. Only a step with a "shot" name is written, as <OutDir>/<name>.png,
+    // once the step has settled (nothing loading, a few frames drawn), and the settings file is not
+    // written (GRAYWOLF_SETTINGS_READONLY).
+    bool Shots = false;
+    float Dpi = 0;   // the fonts' and sizes' scale; 0: the window's (the screen's), ui-shot: 1 unless asked
 };

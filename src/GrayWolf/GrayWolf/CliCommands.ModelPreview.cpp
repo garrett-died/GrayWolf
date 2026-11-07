@@ -34,6 +34,8 @@
 #include "UiRecord.h"             // ui-record
 #include "ImGuiShell.h"
 #include "ModelPreviewGPU.h"
+#include "SkyLighting.h"
+#include "SettingsManager.h"
 #include "CerberusCrypto.h"
 #include "OatInProcess.h"
 #include "GltfSceneWriter.h"
@@ -83,6 +85,16 @@ int RunExportMapGlb(const CliOptions& Options)
 
 
 // Verifies the ported Cerberus script crypto (CRC32 + Salsa20) against known-answer vectors.
+int RunUiSelfTest(const CliOptions& Options)
+{
+    SetEnvironmentVariableA("GRAYWOLF_SETTINGS_READONLY", "1");   // the tests set settings in memory only
+    std::string Report;
+    const bool Ok = UiSelfTest(Report);
+    CliReport(Options, std::format("result={}\n{}", Ok ? "ok" : "error", Report));
+    return Ok ? 0 : 5;
+}
+
+
 int RunCerberusSelfTest(const CliOptions& Options)
 {
     std::string Report;
@@ -844,6 +856,37 @@ int RunUiRecord(const CliOptions& Options)
 }
 
 
+// The shell hidden (no window is shown, nothing takes the focus or reads the mouse or keyboard),
+// the script's steps played on it and one PNG written for each step that names a "shot", in --out.
+// The settings file is never written (the run's settings are in memory); the steps can ask for a
+// demo list (made-up rows) instead of a folder of exports. UiRecord.h, ImGuiShell.Demo.cpp.
+int RunUiShot(const CliOptions& Options)
+{
+    SetEnvironmentVariableA("GRAYWOLF_SETTINGS_READONLY", "1");   // before the shell sets anything
+    SkyLighting::SetShotModeDefault(true);   // no Mod Tools search of the machine; the script names a folder or uses the made-up skies
+    SettingsManager::SetRunSetting(SkyLighting::kStateKey, "");   // nor the lighting the machine remembered
+    SettingsManager::SetRunSetting(SkyLighting::kFullbrightKey, "false");
+    SettingsManager::SetRunSetting(SkyLighting::kBackgroundKey, "");
+    SettingsManager::SetRunSetting(SkyLighting::kFolderKey, "");
+    WraithX::InitializeAPI(); // WIC, for the PNGs
+    UiRecordOptions Record;
+    Record.Shots = true;
+    Record.Script = Options.UiShot;
+    Record.OutDir = Options.Out.empty() ? "ui-shots" : Options.Out;
+    Record.Fps = 30;
+    Record.Dpi = std::clamp(Options.UiShotDpi, 0.5f, 4.0f);
+    if (sscanf_s(Options.UiGridSize.c_str(), "%dx%d", &Record.Width, &Record.Height) != 2 || Record.Width < 320 || Record.Height < 240)
+    {
+        CliReport(Options, "result=error\nerror=--size is WxH (at least 320x240)\n");
+        return 2;
+    }
+    const bool Ok = RunImGuiShell(std::string(), nullptr, &Record);
+    std::ifstream In(std::filesystem::path(Record.OutDir) / "record.txt");
+    CliReport(Options, std::format("result={}\n{}", Ok ? "ok" : "error", std::string(std::istreambuf_iterator<char>(In), std::istreambuf_iterator<char>())));
+    return Ok ? 0 : 5;
+}
+
+
 // Opens an interactive Direct3D 11 window (raw Win32, DPI-crisp, MFC-free) to orbit/zoom the
 // given .semodel part(s). Blocks until the window is closed.
 int RunPreviewWindow(const CliOptions& Options)
@@ -921,6 +964,10 @@ void AddModelPreviewCommands(CliCommandBuilders& B)
     B["cerberus-selftest"] = [](CLI::App& App, CliOptions& Options) {
         App.add_subcommand("cerberus-selftest", "Verify ported CRC32/Salsa20 (Cerberus crypto)")
             ->callback([&Options] { Options.CerberusSelfTest = true; });
+    };
+    B["ui-selftest"] = [](CLI::App& App, CliOptions& Options) {
+        App.add_subcommand("ui-selftest", "Check the Settings page: unique keys, every setting explained")
+            ->callback([&Options] { Options.UiSelfTest = true; });
     };
     B["seanim-selftest"] = [](CLI::App& App, CliOptions& Options) {
         App.add_subcommand("seanim-selftest", "Round-trip a synthetic .seanim + verify pose evaluation")
@@ -1001,6 +1048,12 @@ void AddModelPreviewCommands(CliCommandBuilders& B)
         Sub->add_option("--script", Options.UiRecordScript, "JSON steps: label, type, filter, view, select (+game), merge, rig, camera, orbit, seek, play, wait")->required()->check(CLI::ExistingFile);
         Sub->add_option("--size", Options.UiGridSize, "Window size WxH (default 1920x1080)");
         Sub->add_option("--fps", Options.UiRecordFps, "Frames a second, each one that step of time (default 30)");
+    };
+    B["ui-shot"] = [](CLI::App& App, CliOptions& Options) {
+        auto* Sub = App.add_subcommand("ui-shot", "Render the shell hidden, offscreen, and write a PNG per scripted step that names a shot (--out <dir>, --size WxH)");
+        Sub->add_option("script", Options.UiShot, "JSON steps: demo, focus, page, theme, type, filter, view, select, shot (the PNG's name)")->required()->check(CLI::ExistingFile);
+        Sub->add_option("--size", Options.UiGridSize, "Window size WxH (default 1920x1080)");
+        Sub->add_option("--dpi", Options.UiShotDpi, "Display scale (default 1.0; 1.5 is a 150% screen)");
     };
     B["anim-rigs"] = [](CLI::App& App, CliOptions& Options) {
         auto* Sub = App.add_subcommand("anim-rigs", "Each anim of a folder with the model the browser plays it on and its score (AnimRigs.h)");

@@ -190,6 +190,11 @@
     <ClCompile Include="CoDCDNDownloader.cpp" />
     <ClCompile Include="GameCommand.cpp" />
     <ClCompile Include="ExportWriters.cpp" />
+    <ClCompile Include="ExrReader.cpp" />
+    <ClCompile Include="ModToolsSky.cpp" />
+    <ClCompile Include="SkyLighting.cpp" />
+    <ClCompile Include="SkyBakeSelfTest.cpp" />
+    <ClCompile Include="ExrReaderSelfTest.cpp" />
     <ClCompile Include="FixRoundSelfTest.cpp" />
     <ClCompile Include="ExportWriters.Sound.cpp" />
     <ClCompile Include="AnimOwners.cpp" />
@@ -264,6 +269,14 @@
     <ClCompile Include="XAnimBinReader.cpp" />
     <ClCompile Include="SkeletalPreview.cpp" />
     <ClCompile Include="ImGuiShell*.cpp" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(Configuration)'=='Dev'">
+    <!-- test hooks (environment variables the exit and window tests set) exist in the Dev configuration only (DevAsan is Dev with AddressSanitizer), never in Release -->
+    <ClCompile Update="ImGuiShell.GameBadges.cpp;ImGuiShell.Windows.cpp">
+      <PreprocessorDefinitions>GW_TEST_HOOKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
     <ClCompile Include="AudioPlayer.cpp" />
     <ClCompile Include="CerberusCrypto.cpp" />
     <ClCompile Include="LuaExport.cpp" />
@@ -476,6 +489,9 @@
     <ClInclude Include="IPAKCache.h" />
     <ClInclude Include="IPAKSupport.h" />
     <ClInclude Include="IWDCache.h" />
+    <ClInclude Include="ExrReader.h" />
+    <ClInclude Include="ModToolsSky.h" />
+    <ClInclude Include="SkyLighting.h" />
     <ClInclude Include="ZipInflate.h" />
     <ClInclude Include="IWDSupport.h" />
     <ClInclude Include="PAKCache.h" />
