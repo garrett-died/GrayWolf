@@ -834,6 +834,9 @@ int SelfTest(std::string& Failures)
     }
     // Force: no target takes the conversion's keys out; a target sets what it needs and Unforce restores the run settings
     {
+        // what the run settings were before (a saved graywolf.json may already hold export_xmbin true or an image format)
+        const std::string ImgBefore = SettingsManager::GetSetting("exportimg", "");
+        const std::string XmbinBefore = SettingsManager::GetSetting("export_xmbin", "");
         ExportOptions O;
         Context C;
         C.Kinds = { Kind::Map };
@@ -854,7 +857,8 @@ int SelfTest(std::string& Failures)
         Check(Models.Settings.count("map_radiant") == 0, "a target without maps does not force the Radiant map", "");
         Check(SettingsManager::GetSetting("exportimg", "") == "TIFF" && SettingsManager::GetSetting("export_xmbin", "") == "true", "a target forces TIFF and XMODEL_BIN", "");
         Unforce();
-        Check(SettingsManager::GetSetting("export_xmbin", "") != "true", "Unforce gives the run settings back", "");
+        Check(SettingsManager::GetSetting("exportimg", "") == ImgBefore && SettingsManager::GetSetting("export_xmbin", "") == XmbinBefore, "Unforce gives the run settings back",
+              SettingsManager::GetSetting("exportimg", "") + " / " + SettingsManager::GetSetting("export_xmbin", ""));
     }
     // staging folders: removed only by their own name and marker; a stale one (its process gone) at start, never a live one or a lookalike
     {
