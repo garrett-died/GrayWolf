@@ -572,10 +572,32 @@ std::string LocalPackagesVersion(const std::string& PackageDir)
     return J["version"].get<std::string>();
 }
 
+std::string RepoSettingValue(const std::string& Stored)
+{
+    if (Stored.empty() || Lower(Stored) == "kenshin9977/graywolf") return DefaultRepo;
+    return Stored;
+}
+
+int SelfTest(std::string& Failures)
+{
+    int Failed = 0;
+    const auto Check = [&](bool Ok, const char* What) {
+        if (Ok) return;
+        Failed++;
+        Failures += std::string("updater: ") + What + "\n";
+    };
+    Check(RepoSettingValue("Kenshin9977/GrayWolf") == DefaultRepo, "the original project's repository, as earlier builds stored it, becomes the default");
+    Check(RepoSettingValue("kenshin9977/GRAYWOLF") == DefaultRepo, "the same, in another case");
+    Check(RepoSettingValue("someone/GrayWolf") == "someone/GrayWolf" && RepoSettingValue("Kenshin9977/GrayWolf-dev") == "Kenshin9977/GrayWolf-dev", "a custom value stays");
+    Check(RepoSettingValue("") == DefaultRepo, "a missing value gets the default");
+    Check(RepoSettingValue(DefaultRepo) == DefaultRepo, "the default stays itself");
+    return Failed;
+}
+
 Config FromSettings()
 {
     Config C;
-    C.Repo = SettingsManager::GetSetting("update_repo", "Kenshin9977/GrayWolf");
+    C.Repo = SettingsManager::GetSetting("update_repo", DefaultRepo);
     C.ApiBase = Env("GRAYWOLF_UPDATE_API");
     if (C.ApiBase.empty()) C.ApiBase = DefaultApi;
     while (!C.ApiBase.empty() && C.ApiBase.back() == '/') C.ApiBase.pop_back();
@@ -616,9 +638,14 @@ CheckResult Check(const Config& C)
     if (R.Status == 404)
     {
         Out.Result = Status::Unavailable;
-        Out.Message = Http.HasToken()
-            ? "updates unavailable: no release published in " + C.Repo
-            : "updates unavailable (private repository): set GRAYWOLF_GITHUB_TOKEN, or turn update_use_gh_token on";
+        // the repository itself answers: it exists and has no release; if it does not, it is private (or missing)
+        const Response Repo = Http.Get(C.ApiBase + "/repos/" + C.Repo, L"application/vnd.github+json");
+        if (Repo.Sent && Repo.Status == 200)
+            Out.Message = "updates unavailable: no release found in " + C.Repo;
+        else
+            Out.Message = Http.HasToken()
+                ? "updates unavailable: no release published in " + C.Repo
+                : "updates unavailable (private repository): set GRAYWOLF_GITHUB_TOKEN, or turn update_use_gh_token on";
         return Out;
     }
     if (R.Status != 200)

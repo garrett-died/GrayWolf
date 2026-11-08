@@ -15,9 +15,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Kenshin9977/GrayWolf/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Kenshin9977/GrayWolf?style=flat-square&color=f5a524"></a>
-  <a href="https://github.com/Kenshin9977/GrayWolf/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Kenshin9977/GrayWolf/total?style=flat-square&color=f5a524"></a>
-  <a href="https://github.com/Kenshin9977/GrayWolf/actions/workflows/build.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/Kenshin9977/GrayWolf/build.yml?style=flat-square"></a>
+  <a href="https://github.com/garrett-died/GrayWolf/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/garrett-died/GrayWolf?style=flat-square&color=f5a524"></a>
+  <a href="https://github.com/garrett-died/GrayWolf/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/garrett-died/GrayWolf/total?style=flat-square&color=f5a524"></a>
+  <a href="https://github.com/garrett-died/GrayWolf/actions/workflows/build.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/garrett-died/GrayWolf/build.yml?style=flat-square"></a>
   <br>
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square">
   <img alt="Written in C++" src="https://img.shields.io/badge/written%20in-C%2B%2B-00599c?style=flat-square">
@@ -26,7 +26,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Kenshin9977/GrayWolf/releases/latest"><img alt="Download GrayWolf" src="https://img.shields.io/badge/Download-GrayWolf-f5a524?style=for-the-badge&logo=github&logoColor=white" height="40"></a>
+  <a href="https://github.com/garrett-died/GrayWolf/releases/latest"><img alt="Download GrayWolf" src="https://img.shields.io/badge/Download-GrayWolf-f5a524?style=for-the-badge&logo=github&logoColor=white" height="40"></a>
 </p>
 
 <p align="center">
@@ -48,8 +48,8 @@
 
 ## Download
 
-From the [latest release](https://github.com/Kenshin9977/GrayWolf/releases/latest)'s assets
-(Windows 10 or 11, x64; signed), take either:
+From the [latest release](https://github.com/garrett-died/GrayWolf/releases/latest)'s assets
+(Windows 10 or 11, x64; this fork's test builds are not code-signed), take either:
 
 - **The installer**, `GrayWolf-<version>-x64-setup.exe`: installs for your user only, no
   administrator rights, in `%LocalAppData%\Programs\GrayWolf`, with a Start menu entry and an
@@ -381,7 +381,7 @@ line: `GrayWolf.exe open-map <map .glb, .blend or folder> [--reimport] [--backgr
 
 ## Updates
 
-At start, the GUI checks the latest release of [Kenshin9977/GrayWolf](https://github.com/Kenshin9977/GrayWolf)
+At start, the GUI checks the latest release of [garrett-died/GrayWolf](https://github.com/garrett-died/GrayWolf)
 in the background:
 
 - **Hash name packages** (the `package_index` folder, which turns hashed asset names back into
@@ -406,7 +406,9 @@ needs a GitHub token: set `GRAYWOLF_GITHUB_TOKEN`, or tick **Use the GitHub CLI'
 
 ## Credits and license
 
-GrayWolf is a modified version of [Greyhoundx](https://github.com/dest1yo/Greyhoundx) by dest1yo,
+This repository is a fork of [Kenshin9977/GrayWolf](https://github.com/Kenshin9977/GrayWolf), the
+original GrayWolf by Kenshin9977, whose work it builds on; its releases and updater point at this
+fork. GrayWolf is a modified version of [Greyhoundx](https://github.com/dest1yo/Greyhoundx) by dest1yo,
 itself a fork of [Greyhound](https://github.com/Scobalula/Greyhound) by Scobalula, which is based
 on Wraith Archon by DTZxPorter. It was renamed once little of the original code was left.
 It uses [OpenAssetTools](https://github.com/Laupetin/OpenAssetTools) for the `*-oat` games and runs

@@ -73,6 +73,7 @@
 #include "FBXWriter.h"
 #include "WraithModel.h"
 #include "Games/Common/MeshDecode.h"
+#include "Updater.h"
 
 // Assertions that need neither game files nor a window, so they can run anywhere.
 // Returns the number of failures and appends each one to Failures.
@@ -1049,6 +1050,7 @@ static int SelfTest(std::string& Failures)
     Failed += SkyConv::SelfTest(Failures);
     Failed += Maps::SkyGdtSelfTest(Failures);
     Failed += BlendSlices::SelfTest(Failures);
+    Failed += Updater::SelfTest(Failures);
 
     return Failed;
 }

@@ -18,7 +18,7 @@ vcpkg install opus directxtex[dx11] directxtk spdlog casclib libflac libogg mini
 ## Sources
 
 ```
-git clone https://github.com/Kenshin9977/GrayWolf.git GrayWolf
+git clone https://github.com/garrett-died/GrayWolf.git GrayWolf
 cd GrayWolf
 git submodule update --init --depth 1
 ```

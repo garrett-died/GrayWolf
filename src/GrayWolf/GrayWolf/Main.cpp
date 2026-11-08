@@ -386,7 +386,7 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
             { "ffmpeg_exe", "" },
             // Updates (Updater.h): at GUI start, hash packages installed and a newer app announced
             { "auto_update", "true" },
-            { "update_repo", "Kenshin9977/GrayWolf" },
+            { "update_repo", "garrett-died/GrayWolf" },
             { "update_use_gh_token", "false" },
             { "keepsndpath", "true" },
             { "skipblankaudio", "false" },
@@ -430,6 +430,14 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
             { "remove_mdl_basename", "false" },
             { "unit", "Centimeter" }
         });
+
+        // A graywolf.json written by an earlier build holds the original project's repository as update_repo (its default
+        // was saved); it moves to this fork's, once. Any other stored value stays. SetSetting saves the file as every setting is.
+        {
+            const std::string StoredRepo = SettingsManager::GetSetting("update_repo");
+            const std::string RepoNow = Updater::RepoSettingValue(StoredRepo);
+            if (RepoNow != StoredRepo) SettingsManager::SetSetting("update_repo", RepoNow);
+        }
 
 #ifndef _DEBUG
         int argc = __argc;

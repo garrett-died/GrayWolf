@@ -25,6 +25,15 @@ namespace Updater
         bool Force = false;      // packages: install even when not newer, unmanaged or linked
     };
 
+    // The repository the updater follows when the setting is absent.
+    constexpr const char* DefaultRepo = "garrett-died/GrayWolf";
+    // The value update_repo should hold given what the settings file stored: an empty (missing) value gets
+    // the default, the original project's repository (Kenshin9977/GrayWolf, any case, which earlier builds
+    // wrote into the file as their default) is replaced by the default, anything else is kept.
+    std::string RepoSettingValue(const std::string& Stored);
+    // Self-test of RepoSettingValue (no network, no settings file).
+    int SelfTest(std::string& Failures);
+
     // From the settings and the environment.
     Config FromSettings();
 

@@ -35,7 +35,7 @@ void DrawUpdatesSettings()
     }
     ImGui::EndDisabled();
     ImGui::TextDisabled("Installed version: %s", Updater::AppVersion().c_str());
-    ImGui::TextDisabled("Repository: %s", SettingsManager::GetSetting("update_repo", "Kenshin9977/GrayWolf").c_str());
+    ImGui::TextDisabled("Repository: %s", SettingsManager::GetSetting("update_repo", "garrett-died/GrayWolf").c_str());
     if (!V.Line.empty()) ImGui::TextDisabled("%s", V.Line.c_str());
 }
 

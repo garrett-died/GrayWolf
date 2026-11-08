@@ -186,6 +186,9 @@ jobs:
     needs: build
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
+    env:
+      # secrets cannot be tested in an `if`: without the signing host the job reports it and signs nothing
+      SIGNING: ${{ secrets.SIGN_SSH_HOST != '' && secrets.SIGN_SSH_KEY != '' && 'true' || 'false' }}
     steps:
       - name: Download build output
         uses: actions/download-artifact@v8
@@ -193,7 +196,13 @@ jobs:
           name: graywolf-release-x64
           path: app
 
+      - name: Note that nothing is signed
+        if: env.SIGNING != 'true'
+        shell: pwsh
+        run: Write-Warning 'SIGN_SSH_HOST / SIGN_SSH_KEY not set: nothing was signed or checked'
+
       - name: Sign GrayWolf.exe
+        if: env.SIGNING == 'true'
         uses: Kenshin9977/Discord-Overlay/.github/actions/sign-windows@sign-windows-v1
         with:
           files: app/GrayWolf.exe
@@ -203,6 +212,7 @@ jobs:
           ssh-port: ${{ secrets.SIGN_SSH_PORT }}
 
       - name: Upload the signed exe
+        if: env.SIGNING == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: graywolf-signed-x64
@@ -217,6 +227,9 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
+      # secrets cannot be tested in an `if`. Without the signing host and key the release is built UNSIGNED
+      # (the signing steps stay, skipped): the updater checks the manifest's sha256 only, never a signature.
+      SIGNING: ${{ secrets.SIGN_SSH_HOST != '' && secrets.SIGN_SSH_KEY != '' && 'true' || 'false' }}
 
     steps:
       # the scripts only, before the build output: a checkout cleans the workspace
@@ -229,10 +242,16 @@ jobs:
           name: graywolf-release-x64
           path: app
 
+      - name: Note an unsigned build
+        if: env.SIGNING != 'true'
+        shell: pwsh
+        run: Write-Warning 'SIGN_SSH_HOST / SIGN_SSH_KEY not set: GrayWolf.exe and the installer are built UNSIGNED'
+
       # Authenticode with the Certum certificate Discord-Overlay signs with: its action pipes the exe
       # to the signing host over SSH and refuses to go on unless Windows sees a valid, timestamped
       # signature. Only our own exe: the Oodle DLLs beside it are signed (or not) by their vendor.
       - name: Sign GrayWolf.exe
+        if: env.SIGNING == 'true'
         uses: Kenshin9977/Discord-Overlay/.github/actions/sign-windows@sign-windows-v1
         with:
           files: app/GrayWolf.exe
@@ -265,6 +284,7 @@ jobs:
           "SETUP_EXE=installer/GrayWolf-$ver-x64-setup.exe" >> $env:GITHUB_ENV
 
       - name: Sign the installer
+        if: env.SIGNING == 'true'
         uses: Kenshin9977/Discord-Overlay/.github/actions/sign-windows@sign-windows-v1
         with:
           files: ${{ env.SETUP_EXE }}
