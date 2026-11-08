@@ -210,9 +210,10 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
   `hdrColorParms` are scaled by one factor for the game, set so `mp_crash` matches the upper-hemisphere mean of a stock day sky, and `skyStops`
   is the stock median, listed as `sky_values_from_stock_median`. `skyRotation 0` is an assumption. The brightest sky texel lies 11 to 36 degrees
   from the sun direction on four maps.
-- A Modern Warfare Remastered map is enclosed by six `sky` brushes around everything written, as one group that can be deleted. A map whose bounds
-  would pass 64,000 units gets none and the report names what is that far out: on `mp_crash`, ten vista models. Whether cod2map takes the shell as
-  sealed is unknown.
+- A Modern Warfare Remastered map is enclosed by six `sky` brushes around everything written, as one group that can be deleted. When the bounds
+  would pass 64,000 units, the static models placed that far out are left out of the shell and written to `<map>_prefab_vista.map`, which the
+  main map does not call, so they are not compiled (a model outside the shell is thought to leak). On `mp_crash` that is ten vista models, up to
+  105,148 units out; the report names them and anything else left outside. Whether cod2map takes the shell as sealed is unknown.
 - The colour grade (`clut`) is the identity on the maps that have one, so no `lutmaterial` is written.
 - Script-placed effects come from `maps/createfx/<map>_fx`: 230 on `mp_crash`, 187 on `mp_crossfire`, written as entities in the effects prefab. A placement
   is tied to its name by the shape of its instruction group, not by a full bytecode decode. A script whose groups do not fit is rejected whole and

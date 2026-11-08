@@ -1491,7 +1491,7 @@ namespace
             // M4: only for a game that has the data (a scene without probes, sun or effects reports none of these)
             for (const auto& [Key, N] : std::initializer_list<std::pair<const char*, size_t>>{
                      { "map_radiant_probes", Stats.Probes }, { "map_radiant_probes_no_size", Stats.ProbesNoSize }, { "map_radiant_sun_volumes", Stats.SunVolumes },
-                     { "map_radiant_ssi_stock_values", Stats.SsiStockValues }, { "map_radiant_sky_written", Stats.SkyWritten }, { "map_radiant_sky_shells", Stats.SkyShells }, { "map_radiant_effect_placements", Stats.EffectPlacements }, { "map_radiant_effect_placements_refused", Stats.EffectPlacementsRefused } })
+                     { "map_radiant_ssi_stock_values", Stats.SsiStockValues }, { "map_radiant_sky_written", Stats.SkyWritten }, { "map_radiant_sky_shells", Stats.SkyShells }, { "map_radiant_vista_models", Stats.VistaModels }, { "map_radiant_effect_placements", Stats.EffectPlacements }, { "map_radiant_effect_placements_refused", Stats.EffectPlacementsRefused } })
                 if (N != 0) Result.Counters.emplace_back(Key, N);
             // the prefab files: counts by part (the file is <map>_prefab_<part>.map), and what the main map keeps
             for (const RadiantPrefabFile& F : Stats.PrefabFiles) Result.Files.push_back(F.File);
@@ -1940,6 +1940,11 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         fs::remove(fs::path(Path).replace_extension(".ownercheck.txt"), Gone);
     }
     const std::string Map = ExportNaming::SafeFileName(Path.stem().string());
+    {
+        // M4f: the vista file of an earlier run, under the name this run would write it by
+        std::error_code Gone;
+        fs::remove(Path.parent_path() / (Map + "_prefab_vista.map"), Gone);
+    }
     const fs::path Root = Path.parent_path() / (Map + "_radiant");
     const fs::path ModelDir = Root / "model_export" / Map;
     std::error_code Ec;
@@ -2278,6 +2283,8 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
     // M4e: a sky shell. cod2map needs the map sealed; the Mod Tools' own maps seal with brushes in the stock `sky` material (zm_giant's geo prefab: five shells of `sky`), and the
     // MWR export has only clip and caulk brushes. Six slabs 64 thick around the collision bounds plus 1024, in the brush entities prefab, optional to delete. Whether it seals the
     // map in cod2map is unknown: nothing was compiled.
+    size_t EmptyFar = 0;   // M4f: far static instances with no model (written nowhere)
+    std::set<const Instance*> VistaSet;   // M4f: the static instances left out of the shell's bounds because they lie beyond its reach
     if (Scene.SealWithSkyShell)
     {
         std::array<float, 3> Lo{}, Hi{};
@@ -2287,9 +2294,37 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
             std::array<double, 3> A{}, B{};
             SunBox(Lo, Hi, 1024.0f, 64000.0f, A, B);
             // a box that reaches the clamp would put slabs inside the map: no shell then, said
-            bool Clamped = false;
-            for (size_t K = 0; K < 3; K++)
-                Clamped = Clamped || std::fabs(static_cast<double>(Lo[K]) - 1024.0) >= 64000.0 || std::fabs(static_cast<double>(Hi[K]) + 1024.0) >= 64000.0;
+            const auto Reaches = [](const std::array<float, 3>& L, const std::array<float, 3>& H) {
+                bool R = false;
+                for (size_t K = 0; K < 3; K++)
+                    R = R || std::fabs(static_cast<double>(L[K]) - 1024.0) >= 64000.0 || std::fabs(static_cast<double>(H[K]) + 1024.0) >= 64000.0;
+                return R;
+            };
+            bool Clamped = Reaches(Lo, Hi);
+            // M4f: the bounds reach the limit; leave out every static instance whose origin is beyond it (position rule). When the rest fits, the shell is built from that
+            // and the left-out instances go to the vista file. Otherwise today's behaviour.
+            if (Clamped)
+            {
+                std::array<float, 3> NearLo{}, NearHi{};
+                if (WrittenBounds(Scene, NearLo, NearHi, nullptr, nullptr, 62976.0f) && !Reaches(NearLo, NearHi))
+                {
+                    // only an instance with a model is written anywhere; one without a model still took part in the bounds decision above and is reported (EmptyFar)
+                    for (const Instance& I : Scene.StaticInstances)
+                        if (std::fabs(I.Origin[0]) >= 62976.0f || std::fabs(I.Origin[1]) >= 62976.0f || std::fabs(I.Origin[2]) >= 62976.0f)
+                        {
+                            if (I.Model.empty())
+                                EmptyFar++;
+                            else
+                                VistaSet.insert(&I);
+                        }
+                    if (!VistaSet.empty())
+                    {
+                        Lo = NearLo, Hi = NearHi;
+                        SunBox(Lo, Hi, 1024.0f, 64000.0f, A, B);
+                        Clamped = false;
+                    }
+                }
+            }
             if (Clamped)
             {
                 std::string Reach;
@@ -2338,6 +2373,56 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
             Stats.OwnerCheckLines.push_back(std::format("sealing: a shell of six `sky` slabs 64 thick surrounds the collision bounds plus 1024 ({} {} {} to {} {} {}) in the brush entities prefab, as zm_giant seals with `sky` brushes; "
                                                         "delete that func_group if you seal the map yourself. Whether cod2map accepts it as sealed is unknown (nothing compiled); a leak file names the gap.",
                                                         A[0], A[1], A[2], B[0], B[1], B[2]));
+            if (!VistaSet.empty())
+            {
+                // M4f: what was left out, by model, and the furthest distance from the origin; the name rule (*vista*) is counted beside the position rule
+                std::map<std::string, size_t> ByModel;
+                double Furthest = 0;
+                size_t ByName = 0, Both = 0;
+                for (const Instance* I : VistaSet)
+                {
+                    ByModel[I->Model]++;
+                    Furthest = std::max(Furthest, std::sqrt(static_cast<double>(I->Origin[0]) * I->Origin[0] + static_cast<double>(I->Origin[1]) * I->Origin[1] + static_cast<double>(I->Origin[2]) * I->Origin[2]));
+                    Both += I->Model.find("vista") != std::string::npos;
+                }
+                for (const Instance& I : Scene.StaticInstances) ByName += I.Model.find("vista") != std::string::npos;
+                std::string ModelText;
+                for (const auto& [Model, N] : ByModel) ModelText += std::format(" {} x{};", Model, N);
+                // every entity the writer emits with an origin outside the shell's inner box: the map's entities, the compiled lights, the probes, the script-placed effects and the dynamic and splined
+                // model placements (static ones outside are the vista file). Nothing is moved.
+                std::string Outside;
+                size_t EntitiesOutside = 0;
+                const auto Note = [&](const std::string& Class, const float (&P)[3]) {
+                    bool Out3 = false;
+                    for (size_t K = 0; K < 3; K++) Out3 = Out3 || P[K] < A[K] || P[K] > B[K];
+                    if (!Out3) return;
+                    if (EntitiesOutside++ < 12) Outside += std::format(" {} at ({} {} {});", Class, P[0], P[1], P[2]);
+                };
+                for (const Entity& E : Ents)
+                {
+                    const auto At = E.find("origin");
+                    float P[3];
+                    if (At == E.end() || sscanf_s(At->second.c_str(), "%f %f %f", &P[0], &P[1], &P[2]) != 3) continue;
+                    const auto Cls = E.find("classname");
+                    Note(Cls != E.end() ? Cls->second : std::string("?"), P);
+                }
+                for (const Light& L : Scene.Lights)
+                    if (!LightEntityKeys(L, "graywolf_").empty()) Note("light", L.Origin);
+                for (const Probe& P : Scene.Probes) Note("reflection_probe", P.Origin);
+                for (const EffectPlacement& E : Scene.Effects) Note("effect " + E.Name, E.Origin);
+                for (const auto* List : { &Scene.DynamicInstances, &Scene.SplinedInstances })
+                    for (const Instance& I : *List)
+                        if (!I.Model.empty()) Note((List == &Scene.DynamicInstances ? "dynamic misc_model " : "splined misc_model ") + I.Model, I.Origin);
+                Stats.VistaModels = VistaSet.size();
+                Stats.VistaFile = Map + "_prefab_vista.map";
+                Stats.Unresolved.push_back(std::format("vista_models_not_compiled: the bounds with every static instance counted reach the +-64000 limit, so the shell is built from the bounds without the {} static instance(s) whose origin is {:.0f} or more from 0 "
+                                                       "(position rule) and those are written to {} (not called by the main map; a model outside the shell would leak, hypothesis). By model:{} Furthest: {:.0f} units from the origin. "
+                                                       "Instances with *vista* in the model name: {} ({} of them are in the left-out set). Far static instances with no model (counted in the bounds decision, written nowhere): {}. Entities of every kind the writer emits with an origin outside the shell's inner box: {}{}",
+                                                       VistaSet.size(), 62976.0, Stats.VistaFile, ModelText, Furthest, ByName, Both, EmptyFar, EntitiesOutside, Outside.empty() ? std::string() : (":" + Outside)));
+                Stats.OwnerCheckLines.push_back(std::format("sealing: the shell encloses the play area; the {} far static model(s) (furthest {:.0f} units out) are in {}, which the main map does NOT call and which is not compiled. To bring them in: move them inside the shell, "
+                                                            "scale them down, or use a BO3 vista setup (unknown); BO3's world size limit for a model that far is unknown. Whether cod2map takes the shell as sealed stays unknown.",
+                                                            VistaSet.size(), Furthest, Stats.VistaFile));
+            }
             }
         }
     }
@@ -2359,19 +2444,23 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
 
     // the placements, then the world geometry left, as misc_models; the models they name as files
     std::set<std::string> Named;
+    std::string VistaBody;   // M4f: the left-out static instances as misc_model entities, numbered from 1 in their own file
+    size_t VistaNumber = 0;
     const auto Place = [&](const Instance& I) {
         if (const double Horizontal = std::hypot((double)I.Axis[0], (double)I.Axis[1]); Horizontal < 1e-4)
         {
             Stats.PlacementsPolar++;
             if (Horizontal >= 1e-6) Stats.PlacementsPolarNoise++;
         }
-        Blocks.push_back({ Out.size(), PrefabPart::Models });
-        Out += "// entity " + std::to_string(EntityNumber++) + "\n{\n";
-        Out += Quote("classname", "misc_model") + Quote("model", ModelNamed(I.Model)) + Quote("origin", Vec(I.Origin)) +
-               Quote("angles", StaticModelAngles(I.Axis));
-        if (std::fabs(I.Scale - 1.0f) > 1e-4f) Out += Quote("modelscale", Num(I.Scale));
-        Out += "}\n";
-        Stats.Placements++;
+        const bool Vista = VistaSet.count(&I) != 0;
+        if (!Vista) Blocks.push_back({ Out.size(), PrefabPart::Models });
+        std::string& To = Vista ? VistaBody : Out;
+        To += "// entity " + std::to_string(Vista ? ++VistaNumber : EntityNumber++) + "\n{\n";
+        To += Quote("classname", "misc_model") + Quote("model", ModelNamed(I.Model)) + Quote("origin", Vec(I.Origin)) +
+              Quote("angles", StaticModelAngles(I.Axis));
+        if (std::fabs(I.Scale - 1.0f) > 1e-4f) To += Quote("modelscale", Num(I.Scale));
+        To += "}\n";
+        if (!Vista) Stats.Placements++;
         Named.insert(I.Model);
     };
     for (const auto* List : { &Scene.StaticInstances, &Scene.DynamicInstances, &Scene.SplinedInstances })
@@ -2494,6 +2583,23 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         File << Out;
     else if (!WritePrefabs(Out, Blocks, Prefabs, Path, File, Stats, Error))
         return false;
+    // M4f: the vista file, written with or without --map-prefabs, a worldspawn and the misc_model entities; no misc_prefab in the main map calls it
+    if (!VistaBody.empty())
+    {
+        const fs::path VistaPath = Path.parent_path() / Stats.VistaFile;
+        std::ofstream Vista(VistaPath, std::ios::binary);
+        if (!Vista)
+        {
+            Error = "cannot create " + VistaPath.string();
+            return false;
+        }
+        Vista << std::string_view(Out).substr(0, Blocks.front().Begin) << "// entity 0\n{\n\"classname\" \"worldspawn\"\n}\n" << VistaBody;
+        if (!Vista.good())
+        {
+            Error = "cannot write " + Stats.VistaFile;
+            return false;
+        }
+    }
     if (Stats.DecalMeshesLayered + Stats.DecalMeshesSortUnnamed + Stats.DecalMeshesNoSort > 0)
     {
         std::string Layers;
@@ -2514,6 +2620,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         std::ofstream Check(fs::path(Path).replace_extension(".ownercheck.txt"), std::ios::binary);
         Check << "files: " << Path.filename().string() << "\n";
         for (const RadiantPrefabFile& P : Stats.PrefabFiles) Check << "files: " << P.File << "\n";
+        if (!Stats.VistaFile.empty()) Check << "files: " << Stats.VistaFile << " (not called by the main map, not compiled)\n";
         Check << "expect: " << Stats.CollisionMesh.Meshes << " colliding collision meshes (" << Stats.CollisionTriangles << " collision triangles, " << Stats.CollisionTwinned << " with a render twin), "
               << Stats.RenderWorldTaken << " world render triangles left the render pass, " << Stats.Mesh.Meshes << " non-colliding render meshes, " << Stats.CollisionMesh.MeshesNoMaterial
               << " tool meshes (" << Stats.CollisionToolSummary << "), no brush prisms\n";
@@ -2695,6 +2802,74 @@ int RadiantWriterSelfTest(std::string& Failures)
                     for (const std::string& Line : VStats.Unresolved) Said = Said || Line.rfind("sealing:", 0) == 0;
                     Check(VOk && VStats.SkyShells == 0 && VAll.find(" sky 64 64 0 0 0 0") == std::string::npos && (Far ? Said : true),
                           Far ? "bounds at the clamp: no shell, reported" : "a game without the trait gets no shell", VError);
+                }
+                const auto VStatsRowHas = [](const RadiantStats& St, const char* Text) {
+                    for (const std::string& Line : St.Unresolved)
+                        if (Line.rfind("vista_models_not_compiled:", 0) == 0 && Line.find(Text) != std::string::npos) return true;
+                    return false;
+                };
+                // M4f: one far static instance: the shell comes from the near bounds, the far model is only in the vista file, which the main map does not call (with and without --map-prefabs);
+                // a scene with nothing far writes no vista file
+                for (const bool WithPrefabs : { false, true })
+                    for (const bool AnyFar : { false, true })
+                    {
+                        MapScene Variant = S;
+                        Variant.SealWithSkyShell = true;
+                        Instance Near, FarOne;
+                        Near.Name = "near_1", Near.Model = "near_model", Near.Origin[0] = 10, Near.Origin[1] = 10, Near.Origin[2] = 10;
+                        FarOne.Name = "far_1", FarOne.Model = "h1_x_vista_hills", FarOne.Origin[0] = 87000, FarOne.Origin[1] = 5, FarOne.Origin[2] = 5;
+                        Variant.StaticInstances = { Near };
+                        if (AnyFar)
+                        {
+                            Variant.StaticInstances.push_back(FarOne);
+                            // a far static instance with no model (reported, written nowhere) and a far dynamic one (stays in the main map, named in the row)
+                            Instance NoModel, Dyn;
+                            NoModel.Name = "far_empty", NoModel.Origin[1] = 90000;
+                            Dyn.Name = "dyn_1", Dyn.Model = "dyn_far_model", Dyn.Origin[0] = 90000, Dyn.Origin[1] = 7, Dyn.Origin[2] = 7;
+                            Variant.StaticInstances.push_back(NoModel);
+                            Variant.DynamicInstances = { Dyn };
+                        }
+                        const std::string Tag = std::string("m4vista") + (WithPrefabs ? "p" : "n") + (AnyFar ? "f" : "z");
+                        const fs::path VMap = Dir / Tag / "m4scene.map";
+                        fs::create_directories(VMap.parent_path(), Ec);
+                        RadiantStats VStats;
+                        std::string VError;
+                        const std::vector<PrefabPart> Parts = WithPrefabs ? std::vector<PrefabPart>{ PrefabPart::Models, PrefabPart::BrushEntities } : std::vector<PrefabPart>{};
+                        const bool VOk = WriteRadiant(Variant, VMap.string(), VStats, VError, nullptr, Parts);
+                        std::string Everything = Slurp(VMap);
+                        for (const RadiantPrefabFile& F : VStats.PrefabFiles) Everything += Slurp(VMap.parent_path() / F.File);
+                        const std::string Vista = Slurp(VMap.parent_path() / "m4scene_prefab_vista.map");
+                        bool Row = false;
+                        for (const std::string& Line : VStats.Unresolved) Row = Row || Line.rfind("vista_models_not_compiled:", 0) == 0;
+                        if (AnyFar)
+                            Check(VOk && VStats.SkyShells == 1 && VStats.VistaModels == 1 && Row && Vista.find("\"origin\" \"87000 5 5\"") != std::string::npos && Vista.find("h1_x_vista_hills") != std::string::npos &&
+                                      Vista.find("near_model") == std::string::npos && Everything.find("87000") == std::string::npos && VStatsRowHas(VStats, "dynamic misc_model dyn_far_model at (90000 7 7)") &&
+                                      VStatsRowHas(VStats, "written nowhere): 1.") && Everything.find("dyn_far_model") != std::string::npos && Vista.find("dyn_far_model") == std::string::npos && Vista.find("far_empty") == std::string::npos && Everything.find("m4scene_prefab_vista") == std::string::npos &&
+                                      Everything.find("\"origin\" \"10 10 10\"") != std::string::npos && Everything.find(" sky 64 64 0 0 0 0") != std::string::npos,
+                                  "a far static instance: the shell comes from the near bounds, the far model is only in the vista file, the main map does not call it", VError + "|" + Tag);
+                        else
+                            Check(VOk && VStats.SkyShells == 1 && VStats.VistaModels == 0 && !Row && Vista.empty() && !fs::exists(VMap.parent_path() / "m4scene_prefab_vista.map"),
+                                  "nothing far: no vista file, no vista row", VError + "|" + Tag);
+                    }
+                // the stale file: a run with a far instance, then one without, into the same folder; the vista file of the first must be gone (a map name that SafeFileName changes is covered by using its name)
+                {
+                    MapScene Variant = S;
+                    Variant.SealWithSkyShell = true;
+                    Variant.Name = "m4 stale";
+                    Instance Near, FarOne;
+                    Near.Name = "near_1", Near.Model = "near_model", Near.Origin[0] = 10;
+                    FarOne.Name = "far_1", FarOne.Model = "h1_x_vista_hills", FarOne.Origin[0] = 87000;
+                    const fs::path SMap = Dir / "m4stale" / "m4 stale.map";
+                    fs::create_directories(SMap.parent_path(), Ec);
+                    const std::string StaleVista = ExportNaming::SafeFileName("m4 stale") + "_prefab_vista.map";
+                    Variant.StaticInstances = { Near, FarOne };
+                    RadiantStats First, Second;
+                    std::string E1, E2;
+                    const bool Ok1 = WriteRadiant(Variant, SMap.string(), First, E1, nullptr, {});
+                    const bool Had = fs::exists(SMap.parent_path() / StaleVista);
+                    Variant.StaticInstances = { Near };
+                    const bool Ok2 = WriteRadiant(Variant, SMap.string(), Second, E2, nullptr, {});
+                    Check(Ok1 && Ok2 && Had && !fs::exists(SMap.parent_path() / StaleVista), "a run without a far instance removes the vista file of the run before", E1 + E2 + "|" + StaleVista);
                 }
             }
             else

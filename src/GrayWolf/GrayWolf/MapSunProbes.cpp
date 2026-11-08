@@ -177,7 +177,7 @@ namespace Maps
         return Any;
     }
 
-    bool WrittenBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi, std::array<std::string, 6>* Why, const char* SkipModelContaining)
+    bool WrittenBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi, std::array<std::string, 6>* Why, const char* SkipModelContaining, float SkipOriginBeyond)
     {
         bool Any = CollisionBounds(Scene, Lo, Hi);
         if (Why != nullptr)
@@ -220,6 +220,7 @@ namespace Maps
         for (const Instance& I : Scene.StaticInstances)
         {
             if (SkipModelContaining != nullptr && I.Model.find(SkipModelContaining) != std::string::npos) continue;
+            if (SkipOriginBeyond > 0.0f && (std::fabs(I.Origin[0]) >= SkipOriginBeyond || std::fabs(I.Origin[1]) >= SkipOriginBeyond || std::fabs(I.Origin[2]) >= SkipOriginBeyond)) continue;
             Take(I.Origin, [&](const float (&P)[3]) { return std::format("static instance {} of {} at ({:.0f}, {:.0f}, {:.0f})", I.Name, I.Model, P[0], P[1], P[2]); });
         }
         return Any;

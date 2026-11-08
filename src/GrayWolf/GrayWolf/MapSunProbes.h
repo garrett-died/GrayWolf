@@ -53,8 +53,8 @@ namespace Maps
     bool CollisionBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi);
     // The bounds of everything the map writes: the collision above, the drawn world's vertices (a sky material's surfaces, drawn far out, left out) and the static instances' origins
     // Why, when given, gets what set each extreme: x min, x max, y min, y max, z min, z max, each as "collision" or "render vertex of <mesh> (<material>) at (x, y, z)" or "static instance <name> of
-    // <model> at (x, y, z)".
-    bool WrittenBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi, std::array<std::string, 6>* Why = nullptr, const char* SkipModelContaining = nullptr);
+    // <model> at (x, y, z)". SkipOriginBeyond > 0 leaves out the static instances with an origin coordinate of that size or more (M4f: the instances outside the shell's reach).
+    bool WrittenBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi, std::array<std::string, 6>* Why = nullptr, const char* SkipModelContaining = nullptr, float SkipOriginBeyond = 0.0f);
 
     // The box of a sun volume: the bounds grown by Pad, every side clamped to +-Range.
     void SunBox(const std::array<float, 3>& Lo, const std::array<float, 3>& Hi, float Pad, float Range, std::array<double, 3>& A, std::array<double, 3>& B);

@@ -108,6 +108,9 @@ namespace Maps
         // worldspawn and the misc_prefab calls, its brushes and meshes
         std::vector<RadiantPrefabFile> PrefabFiles;
         size_t MainEntities = 0, MainBrushes = 0, MainMeshes = 0;
+        // M4f: the static models outside the shell's reach go to <map>_prefab_vista.map, which the main map does not call
+        std::string VistaFile;
+        size_t VistaModels = 0;
     };
     // With Gdt (the material_gdt setting), the model files name their materials by their GDT asset
     // names (MaterialGdt::AssetName) and the GDT is left to the caller: its model entries and the
