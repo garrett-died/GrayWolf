@@ -1,0 +1,7 @@
+{
+  "steps": [
+    { "theme": "graywolf", "demo": 240, "view": "list", "page": "settings", "loadgame": { "ask_test": "Mod Tools folder: C:/Example/BlackOps3\nFiles to create: 12\nFiles to replace: 0\nGDT files to merge into: 1\nGDT backups: 0" }, "wait": 0.5, "label": "ask-over-settings", "shot": "bo3-ask-over-settings" },
+    { "loadgame": { "ask_drop": true }, "wait": 0.5, "label": "ask-dropped", "shot": "bo3-ask-dropped" },
+    { "page": "main", "loadgame": { "ask_test": "Mod Tools folder: C:/Example/BlackOps3\nFiles to create: 3" }, "wait": 0.5, "label": "ask-over-library", "shot": "bo3-ask-over-main" }
+  ]
+}

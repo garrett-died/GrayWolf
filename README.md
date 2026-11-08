@@ -305,6 +305,13 @@ animation not exported yet. Checked on one Black Ops 4 zone to a folder target; 
 that command line, never one from the settings. Each run writes `graywolf_placement.tsv`: every
 asset, what was done with it, why, and where it went.
 
+In the app, Settings → Games and maps → a game's own choices has **Black Ops III conversion**
+(off, a BO3 folder inside the export folder, or into the Mod Tools), **Full map** and **Map
+prefabs**. A converting run exports to a temporary folder of its own and publishes from there. An
+export folder inside a Mod Tools install always converts: the unconverted layout is never written
+into it, and every write into the Mod Tools asks first, showing what will be created, merged or
+backed up. A run whose export folder holds a link into a Mod Tools or game install is refused.
+
 **How far this has been checked.** On Black Ops 4 zones: every file a GDT names exists, no name is
 defined twice, every image a material references is defined or already in `gdt.db`, and a second
 run changes nothing (a whole map zone: 4,214 assets written, 2,229 already in the Mod Tools). The

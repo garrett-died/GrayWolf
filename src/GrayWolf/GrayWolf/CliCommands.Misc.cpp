@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <cmath>
+#include "DiskGame.Bo3.h"
 #include <map>
 #include <filesystem>
 #include <algorithm>
@@ -1027,6 +1028,7 @@ static int SelfTest(std::string& Failures)
     Failed += Bo3Target::Publish::SelfTest(Failures);
     Failed += Bo3Target::Awi::SelfTest(Failures);
     Failed += Bo3Target::Verify::SelfTest(Failures);
+    Failed += DiskGame::Bo3::SelfTest(Failures);
 
     // pool-coverage: the state of a pool on synthetic rows, the pool map file, the run report parsers
     Failed += PoolCoverage::SelfTest(Failures);

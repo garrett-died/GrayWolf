@@ -180,6 +180,7 @@ namespace ShellUi
                 }
                 if (St.contains("settings_search")) std::snprintf(S.SettingsQuery, sizeof(S.SettingsQuery), "%s", St["settings_search"].get<std::string>().c_str());
                 if (St.contains("settings_jump")) S.SettingsJump = St["settings_jump"].get<std::string>();
+                if (St.contains("settings_game")) S.SettingsGame = St["settings_game"].get<std::string>();
                 if (St.contains("float"))   // a window undocked and put at x, y (off screen on purpose): KeepWindowsVisible must bring it back
                 {
                     const auto& F = St["float"];

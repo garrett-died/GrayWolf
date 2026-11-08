@@ -239,6 +239,7 @@ bool RunImGuiShell(const std::string& ModelsDir, const GridShotOptions* ShotMode
         if (S.DemoInstalls) { LoadGame.UseDemoInstalls(); S.DemoInstalls = false; }
         if (!S.LoadGameScript.empty()) { LoadGame.Script(S.LoadGameScript); S.LoadGameScript.clear(); }
         LoadGame.Draw(Dev.Get(), S.LeftPage == 0);
+        LoadGame.DrawBo3Ask();   // the Mod Tools question, over whatever page is open
         S.LoadGameWorking = S.Recorder && LoadGame.Working();
         S.LoadGameIndicator = LoadGame.ShowedProgress();
 

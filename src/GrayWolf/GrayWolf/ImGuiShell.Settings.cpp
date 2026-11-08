@@ -247,6 +247,21 @@ namespace ShellUi
                 { "decompile", "Compiled scripts and Lua files are saved as bytecode by default, which you cannot read. Decompiled turns them back "
                                "into text using the helper programs (see Tools); it takes longer and the result is a reconstruction, not the "
                                "original source. If a helper program cannot be found, the scripts are saved as bytecode instead." },
+                { "full_map", "Also bring in everything the map names (its models, materials and pictures) when it is converted for Black Ops III, "
+                              "and check it at the end. Only works with the Black Ops III conversion on. "
+                              "Slow and big: a whole map with its pictures can take 10 to 20 GB (PNG or TIFF) and many minutes. The run stops when the "
+                              "export drive or the Black Ops III folder has less than 8 GB free." },
+                { "map_prefabs", "Radiant maps can be split into prefab files of their own (brushes, patches, models, lights and so on). None writes the "
+                                 "map as one file. All writes every part as a separate prefab file as well. Choosing single parts is only possible "
+                                 "from the command line (--map-prefabs). Used when the map is written as a Radiant .map, which a Black Ops III conversion does by itself." },
+                { "bo3_convert", "Turns an export into the Black Ops III Mod Tools layout (texture_assets, model_export, source_data, map_source) and "
+                                 "checks it at the end. \"BO3 folder\" writes that layout to a folder named bo3 inside your export folder: nothing "
+                                 "outside it is touched. \"Into the Mod Tools\" writes it into your Black Ops III Mod Tools folder (set under Black Ops "
+                                 "III Mod Tools below, or found by itself): GrayWolf first shows what it would create and merge, and writes only after "
+                                 "you say Yes. It never replaces a file it did not write, and copies an unreadable GDT to a .bak first. If your export "
+                                 "folder is inside the Mod Tools folder, this is used whatever you pick here. It turns on the material GDT and, for maps, "
+                                 "the Radiant .map by itself, and uses TIFF or your chosen image format. A converted map can take 10 to 20 GB; the "
+                                 "run is refused when the drive of the export or of the target has under 8 GB free, and says which." },
                 { "ui_res", "Black Ops 4 keeps its interface images twice, at 4K and at 1080p. Pick which are exported; \"both\" doubles the "
                             "space they take." },
                 { "language", "Call of Duty 1 and 2 shipped in several languages; an install holds English plus at most one more. \"As the export "
@@ -381,7 +396,7 @@ namespace ShellUi
                 ImGui::TextDisabled("%s", S.Viewport.Sky.FoundLine().c_str());
             }
 
-            void DrawGameSettings(LoadGamePanel& LoadGame, float Width)
+            void DrawGameSettings(ShellState& S, LoadGamePanel& LoadGame, float Width)
             {
                 const auto& Games = DiskGame::Games();
                 if (Games.empty()) return;
@@ -392,6 +407,12 @@ namespace ShellUi
                     Followed = Loaded ? Loaded->Id() : "";
                     for (size_t i = 0; i < Games.size(); i++)
                         if (Games[i] == Loaded) Picked = (int)i;
+                }
+                if (!S.SettingsGame.empty())
+                {
+                    for (size_t i = 0; i < Games.size(); i++)
+                        if (S.SettingsGame == Games[i]->Id()) Picked = (int)i;
+                    S.SettingsGame.clear();
                 }
                 if (Picked < 0 || Picked >= (int)Games.size()) Picked = 0;
                 ImGui::AlignTextToFramePadding();
@@ -457,7 +478,7 @@ namespace ShellUi
                                                          (Loaded ? std::string(Loaded->Id()) : std::string("<game>")) / "images";
                     ImGui::TextDisabled("%s", Images.string().c_str());
                 }
-                else if (K == "@gamesettings") DrawGameSettings(LoadGame, Width);
+                else if (K == "@gamesettings") DrawGameSettings(S, LoadGame, Width);
                 else if (K == "@modtools") DrawModToolsSettings(S);
                 else if (K == "@blender") DrawBlenderSettings();
                 else if (K == "@screenshots") DrawScreenshotSettings();

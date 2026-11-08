@@ -1,6 +1,7 @@
 #include "DiskGuard.h"
 #include "stdafx.h"
 
+#include "DiskGame.Bo3.h"
 #include "DiskGameCli.h"
 #include "DiskGameSizes.h"
 #include "ExportNaming.h"
@@ -114,91 +115,6 @@ namespace
     }
 }
 
-namespace
-{
-    // A setting of graywolf.json that gives a default to a value: the command line wins. Never the target.
-    std::string SavedDefault(const std::string& Given, const char* Key)
-    {
-        return Given.empty() ? SettingsManager::GetSetting(Key, "") : Given;
-    }
-
-    bool OnOff(const std::string& Text, bool& Out)
-    {
-        if (Text == "on" || Text == "true" || Text == "yes") { Out = true; return true; }
-        if (Text == "off" || Text == "false" || Text == "no") { Out = false; return true; }
-        return false;
-    }
-
-    // --target and its companions. Target comes from the command line alone, so a saved setting can never
-    // select the Mod Tools root; the other values default to graywolf.json (bo3_check_gdtdb, bo3_gdtdb_match,
-    // bo3_gdt_mode, bo3_mod_tools_root) when the command line does not give them.
-    bool ReadPublish(const CliOptions& Cli, const std::string& OutRoot, Bo3Target::Publish::Options& P, std::string& Error)
-    {
-        namespace Pb = Bo3Target::Publish;
-        if (!Cli.PublishTarget.empty() && !Pb::ParseTarget(Cli.PublishTarget, P.Which))
-        {
-            Error = "unknown --target " + Cli.PublishTarget + ": none, folder or modtools";
-            return false;
-        }
-        if (P.Which == Pb::Target::None)
-        {
-            if (Cli.PublishPlan || Cli.FullMap || !Cli.CheckGdtDb.empty() || !Cli.GdtDbMatch.empty() || !Cli.GdtMode.empty())
-            {
-                Error = "--plan, --full-map, --check-gdtdb, --gdtdb-match and --gdt need --target folder or modtools";
-                return false;
-            }
-            return true;
-        }
-        P.Plan = Cli.PublishPlan;
-        P.FullMap = Cli.FullMap;
-        const std::string Check = SavedDefault(Cli.CheckGdtDb, "bo3_check_gdtdb");
-        if (!Check.empty() && !OnOff(Check, P.CheckGdtDb))
-        {
-            Error = "unknown --check-gdtdb " + Check + ": on or off";
-            return false;
-        }
-        const std::string Match = SavedDefault(Cli.GdtDbMatch, "bo3_gdtdb_match");
-        if (!Match.empty() && !Bo3Target::GdtDb::ParseMatchMode(Match, P.Match))
-        {
-            Error = "unknown --gdtdb-match " + Match + ": type or name";
-            return false;
-        }
-        const std::string Mode = SavedDefault(Cli.GdtMode, "bo3_gdt_mode");
-        if (!Mode.empty() && Mode != "merge" && Mode != "overwrite")
-        {
-            Error = "unknown --gdt " + Mode + ": merge or overwrite";
-            return false;
-        }
-        P.Merge = Mode != "overwrite";
-
-        // the Mod Tools root. --target modtools writes into it, so only --mod-tools-root on this command line names it;
-        // for the read-only lookups (gdt.db, stock index) the saved default, the install scan and TA_TOOLS_PATH also count
-        std::string Given = Cli.ModToolsRoot, Scan, Ta;
-        if (P.Which != Pb::Target::ModTools)
-        {
-            Given = SavedDefault(Cli.ModToolsRoot, "bo3_mod_tools_root");
-            if (Given.empty())
-            {
-                for (const auto& I : GameInstalls::Detect())
-                {
-                    if (I.DiskId == "bo3") { Scan = I.Path; break; }
-                }
-                char* Env = nullptr;
-                size_t Length = 0;
-                if (_dupenv_s(&Env, &Length, "TA_TOOLS_PATH") == 0 && Env != nullptr)
-                {
-                    Ta = Env;
-                    free(Env);   // NOLINT: _dupenv_s allocates with malloc
-                }
-            }
-        }
-        std::string How;
-        if (!Pb::ChooseRoot(P.Which, Given, Scan, Ta, P.ModToolsRoot, How, Error)) return false;
-        P.OutputRoot = P.Which == Pb::Target::Folder ? fs::path(OutRoot) / "bo3" : P.ModToolsRoot;
-        return true;
-    }
-}
-
 bool ReadExportOptions(const IDiskGame& Game, const CliOptions& Cli, ExportOptions& Out, std::string& Error)
 {
     return ReadOptions(Game, Cli, Out, Error);
@@ -219,95 +135,20 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
     Context C;
     C.OutRoot = (fs::path(Options.Out) / Game.Id()).string();
     Bo3Target::Publish::Options Publish;
+    const Bo3::Request Bo3Request = Bo3::FromCli(Options);
     {
         std::string Why;
-        if (!ReadPublish(Options, C.OutRoot, Publish, Why)) return Fail(Why);
-        // with a target set, an export never lands inside a Mod Tools install (HydraX guarded --map-name and zpkg only);
-        // with none the run is what it always was
-        fs::path Install;
-        if (Publish.Which != Bo3Target::Publish::Target::None && Bo3Target::Output::Touches(Options.Out, &Install))
-            return Fail("--out lies in (or cannot be told from) the Mod Tools install " + Install.string() + "; use a folder outside it (--target modtools writes there on purpose)");
-        if (const std::string Refused = Bo3Target::Publish::Preflight(Publish); !Refused.empty()) return Fail(Refused);
-        // As soon as the run folder is known and before anything can fail: the reports an earlier run left at this run's paths go, so a refused,
-        // failed or crashed rerun never leaves an old result. Only the five report files are removed; with --target none (no report is written
-        // or read) nothing is touched; a --plan rewrites the reports anyway, and its export and sidecars are not among them.
-        if (Publish.Which != Bo3Target::Publish::Target::None)
-            if (const std::string Stuck = Bo3Target::Publish::ClearRunReports(C.OutRoot); !Stuck.empty()) return Fail(Stuck);
+        if (!Bo3::ReadPublish(Bo3Request, C.OutRoot, Publish, Why)) return Fail(Why);
+        if (const std::string Refused = Bo3::Begin(Publish, Options.Out, C.OutRoot); !Refused.empty()) return Fail(Refused);
+        // links already under the run folder that lead into an install (any target, none included): refused before anything is written
+        if (const std::string Linked = Bo3::CheckRunFolder(C.OutRoot, Options.Install, Publish); !Linked.empty()) return Fail(Linked);
     }
     // the publish step, once the export is on disk: counters into T, its lines for the report, an error text when refused
     std::string PublishLines;
     const auto Publishing = [&](Totals& Into, std::string& Refused) {
-        namespace Pb = Bo3Target::Publish;
-        Pb::Loaded Mod;
-        std::vector<std::string> Warnings;
-        Mod.Open(Publish.ModToolsRoot, Publish.CheckGdtDb, Warnings);
-        Pb::Result Done = Pb::Run(Publish, Mod.View(), C.OutRoot, Game.Id());
-        for (const auto& [Name, N] : Done.Counters) Into.Counters[Name] += N;
-        Warnings.insert(Warnings.end(), Done.Warnings.begin(), Done.Warnings.end());
-        PublishLines = std::string("publish_target=") + (Publish.Which == Pb::Target::Folder ? "folder" : "modtools") + "\npublish_plan=" +
-                       (Publish.Plan ? "1" : "0") + "\npublish_output=" + Publish.OutputRoot.string() + "\npublish_mod_tools_root=" +
-                       Publish.ModToolsRoot.string() + "\n";
-        for (const auto& W : Warnings) PublishLines += "publish_warning " + W + "\n";
-        Refused = Done.Error;
-
-        // the static gate (bo3-verify) over what was just written: read-only, and its report goes beside the run's other reports
-        // (graywolf_gate.tsv in the run folder). It changes no exported file. A plan wrote nothing to the target, so it has nothing to check.
-        if (Refused.empty() && !Publish.Plan)
-        {
-            namespace Vf = Bo3Target::Verify;
-            Vf::Inputs In;
-            In.Roots = { Publish.OutputRoot };
-            In.ModToolsRoot = Publish.ModToolsRoot;
-            In.Catalog = &Bo3Target::Techsets::Shared();
-            In.Held = Mod.View().Held;
-            In.Stock = Mod.View().Stock;
-            In.Approximations = fs::path(C.OutRoot) / "graywolf_approximations.tsv";
-            std::error_code GateEc;
-            In.MapSources = fs::is_directory(Publish.OutputRoot / "map_source", GateEc) || Publish.FullMap;
-            // --full-map says which materials the maps draw on their own geometry: the gate fails one of them left <not in editor>
-            if (Publish.FullMap)
-            {
-                In.MapDrawn = Done.MapMaterials;
-                In.MapDrawnKnown = Done.MapDataComplete;
-                In.MapDataWhy = Done.MapDataWhy;
-                In.MapHeld = Done.MapHeld;
-            }
-            bool RunGate = true;
-            std::string NotRunWhy;
-            if (Publish.Which == Pb::Target::ModTools)
-            {
-                // the Mod Tools root holds far more than this run wrote: only the GDTs GrayWolf's manifest lists. A manifest that does not
-                // load, or lists none, means the gate is not run: the root is never scanned instead.
-                Bo3Target::Output::Manifest Listed;
-                const bool Loaded = Listed.Load(Publish.OutputRoot / "graywolf" / "manifest.json").Ok;
-                RunGate = Vf::ModToolsGdtFiles(Listed, Loaded, Publish.OutputRoot, In.OnlyFiles, NotRunWhy);
-                In.ListedOnly = true;
-            }
-            if (!RunGate)
-            {
-                PublishLines += "gate_mode=not run (" + NotRunWhy + ")\n";
-                Into.Counters["gate_not_run"] += 1;
-            }
-            else
-            {
-                // no result of an earlier run survives a crash in the gate; one that cannot be removed means the gate is not run
-                if (const std::string Stuck = Bo3Target::Publish::ClearGateReports(C.OutRoot); !Stuck.empty())
-                {
-                    PublishLines += "gate_mode=not run (" + Stuck + ")" + char(10);
-                    Into.Counters["gate_not_run"] += 1;
-                    return;
-                }
-                const Vf::Result Gate = Vf::Run(In);
-                std::string GateError;
-                if (Vf::WriteReports(Gate, C.OutRoot, GateError))
-                    PublishLines += "gate_report=" + (fs::path(C.OutRoot) / "graywolf_gate.tsv").string() + "\n";
-                else
-                    PublishLines += "gate_warning cannot write the gate report: " + GateError + "\n";
-                PublishLines += "gate_mode=static (not proof BO3 accepts the assets)\ngate_result=" + std::string(Gate.Word()) + "\ngate_exit=" + std::to_string(Gate.ExitCode()) + "\ngate_summary=" + Gate.Summary() + "\n";
-                Into.Counters["gate_failures"] += Gate.Failures;
-                Into.Counters["gate_warnings"] += Gate.Warnings;
-            }
-        }
+        const Bo3::Outcome Done = Bo3::Finish(Game, Publish, C.OutRoot, Into);
+        PublishLines = Done.Lines;
+        Refused = Done.Refused;
     };
     if (Publish.Plan)
     {
@@ -346,17 +187,7 @@ int Run(const IDiskGame& Game, const CliOptions& Options, const std::string& Inp
     }
     std::string Error;
     if (!ReadOptions(Game, Options, O, Error) || !ParseKinds(Options.Type, C.Kinds, Error)) return Fail(Error);
-    if (Publish.Which != Bo3Target::Publish::Target::None)
-    {
-        // the target needs the material GDT's model files (assets named as the GDT names them), TIFF pictures
-        // (stock's format) and XMODEL_BIN (what an xmodel entry references), unless the command line chose others
-        O.Settings["material_gdt"] = "on";
-        if (Options.FullMap) O.Settings["full_map"] = "on";
-        C.ConvertImages = true;
-        Materials::KeepConstantsInSidecar(true);    // the BO3 techset step reads colorTint and glossRange from the kept constant block
-        if (Options.ImageFormat.empty()) SettingsManager::SetRunSetting("exportimg", "TIFF");
-        if (Options.ModelFormat.empty()) SettingsManager::SetRunSetting("export_xmbin", "true");
-    }
+    Bo3::Force(Publish, Bo3Request, O, C);
     O.ZoneAlone = std::all_of(C.Kinds.begin(), C.Kinds.end(), [](Kind K) { return K == Kind::MaterialLinks || K == Kind::SoundLinks || K == Kind::AssetRefs || K == Kind::Techsets || K == Kind::ScriptBundles || K == Kind::Weapons || K == Kind::WeaponStats || K == Kind::MapInfo || K == Kind::Scriptables || K == Kind::MapEnts || K == Kind::AiTypes; }) && !C.Kinds.empty();
     std::vector<std::string> Zones;
     const auto Start = std::chrono::steady_clock::now();

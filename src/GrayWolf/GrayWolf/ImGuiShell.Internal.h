@@ -275,6 +275,7 @@ namespace ShellUi
         bool SettingsOpen = false, SettingsJustOpened = false;
         char SettingsQuery[128] = "";
         std::string SettingsJump;
+        std::string SettingsGame;    // ui-shot: the game the settings page shows (its id), taken once
         bool FiltersOpenRequest = false;   // ui-shot: the Filters panel opened
         int LeftPage = 0;               // the left panel: 0 Extract (a game, its assets, Export), 1 Library (the exports, preview)
         // ui-shot tests: a window to float at a position (off screen on purpose), a window size to take

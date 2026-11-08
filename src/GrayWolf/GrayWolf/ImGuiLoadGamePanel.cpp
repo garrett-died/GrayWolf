@@ -4,6 +4,7 @@
 #include "stdafx.h"
 
 #include "ImGuiLoadGamePanel.h"
+#include "AppLog.h"
 #include "ImGuiLoadGamePanel.Common.h"
 #include "ImGuiDialogs.h"
 #include "LauncherIcons.h"
@@ -35,6 +36,13 @@ namespace
 
 LoadGamePanel::LoadGamePanel()
 {
+    // staging folders of Black Ops III conversions that an earlier run left behind (it ended without cleaning up): by their own name only
+    {
+        std::vector<std::string> Failed;
+        const size_t Removed = DiskGame::Bo3::RemoveStaleStaging({}, &Failed);
+        if (Removed) AppLog::Log().info("removed {} staging folder(s) an earlier run left behind", Removed);
+        for (const std::string& Why : Failed) AppLog::Log().warn("{}", Why);
+    }
     // Last session's choices first; they are what the user is most likely to want again.
     SetBuf(GameBuf, sizeof(GameBuf), SettingsManager::GetSetting("game_folder", ""));
     SetBuf(DiskOutBuf, sizeof(DiskOutBuf), AbsoluteFolder(SettingsManager::GetSetting("disk_out", "exported_files")));
@@ -50,6 +58,9 @@ LoadGamePanel::LoadGamePanel()
 
 LoadGamePanel::~LoadGamePanel()
 {
+    // a worker waiting for the answer to the Mod Tools question would never end: Cancel is No, and the wait is woken
+    DiskCancel.store(true);
+    Bo3Q.Wake();
     if (Worker.joinable()) Worker.join();
 }
 

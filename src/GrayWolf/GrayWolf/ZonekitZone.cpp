@@ -224,8 +224,44 @@ void ZonekitZone::DefineImages(std::vector<std::pair<DiskGame::AssetId, int64_t>
         }
 }
 
+std::string RawZoneRefusal(const std::string& Path)
+{
+    std::ifstream In(std::filesystem::path(Path), std::ios::binary);
+    unsigned char Head[4] = {};
+    In.read(reinterpret_cast<char*>(Head), sizeof(Head));
+    const std::streamsize Got = In.gcount();
+    if (Got < 4) return "too short to be a zone (" + std::to_string((long long)Got) + " bytes)";
+    if (Head[2] == 'f' && Head[3] == 'f') return "starts like a fast file (damaged or cut short), not a raw zone";
+    return {};
+}
+
 bool ZonekitZone::LoadBytes(ZoneBytes& Out, std::string& Error)
 {
+    // a raw decompressed zone (the walk tools keep them as <name>.zone, zone-decompress writes one) is read as it lies;
+    // any other file goes through the fast file container readers
+    std::error_code Ec;
+    const std::filesystem::path File(Path);
+    std::string Ext = File.extension().string();
+    for (char& Ch : Ext) Ch = (char)std::tolower((unsigned char)Ch);
+    // never a fast file, damaged or truncated or not (RawZoneRefusal looks at the first bytes itself)
+    if (Ext == ".zone" && RawZoneRefusal(Path).empty() && FastFile::Identify(Path).Format == FastFileFormat::Unknown)
+    {
+        const uintmax_t Size = std::filesystem::file_size(File, Ec);
+        std::ifstream In(File, std::ios::binary);
+        if (Ec || !In)
+        {
+            Error = "cannot read " + Path;
+            return false;
+        }
+        Out.resize((size_t)Size);
+        In.read(reinterpret_cast<char*>(Out.data()), (std::streamsize)Size);
+        if (!In)
+        {
+            Error = "short read of " + Path;
+            return false;
+        }
+        return true;
+    }
     return FastFile::Decompress(Path, Out, Error);
 }
 

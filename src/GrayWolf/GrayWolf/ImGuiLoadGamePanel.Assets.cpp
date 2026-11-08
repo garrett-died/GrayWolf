@@ -394,6 +394,9 @@ void LoadGamePanel::Script(const std::string& StepJson)
 {
     const nlohmann::json St = nlohmann::json::parse(StepJson, nullptr, false);
     if (!St.is_object()) return;
+    // ui-shot: the Mod Tools question shown (and dropped) with no worker behind it
+    if (St.contains("ask_test")) Bo3Q.ShowForTest(St["ask_test"].get<std::string>());
+    if (St.contains("ask_drop")) Bo3Q.DropForTest();
     if (St.contains("tab")) WantTab = St["tab"].get<std::string>() == "zone" ? 1 : 0;
     if (St.contains("query")) SetBuf(AssetQueryBuf, sizeof(AssetQueryBuf), St["query"].get<std::string>());
     if (St.contains("dismiss"))

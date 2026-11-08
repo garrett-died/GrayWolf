@@ -204,6 +204,8 @@
     <ClCompile Include="ExportWriters.Sound.cpp" />
     <ClCompile Include="AnimOwners.cpp" />
     <ClCompile Include="DiskGame.cpp" />
+    <ClCompile Include="DiskGame.Bo3.cpp" />
+    <ClCompile Include="DiskGame.Bo3.Check.cpp" />
     <ClCompile Include="DiskGame.Cli.cpp" />
     <ClCompile Include="DiskGame.Index.cpp" />
     <ClCompile Include="DiskGame.Materials.cpp" />
@@ -399,6 +401,7 @@
     <ClInclude Include="Games\H1\LayerBits.h" />
     <ClInclude Include="ExportWriters.h" />
     <ClInclude Include="AnimOwners.h" />
+    <ClInclude Include="DiskGame.Bo3.h" />
     <ClInclude Include="DiskGame.h" />
     <ClInclude Include="DiskGame.Materials.h" />
     <ClInclude Include="DiskGame.Monitor.h" />

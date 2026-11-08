@@ -11,6 +11,8 @@
 #include "ImGuiBlender.h"
 #include "AppLog.h"
 #include "DiskGame.h"
+#include "DiskGame.Bo3.h"
+#include "DiskGuard.h"
 #include "ExportNaming.h"
 #include "SettingsManager.h"
 #include "Strings.h"
@@ -345,9 +347,10 @@ void LoadGamePanel::DoDiskExport()
     // meanwhile cannot change a run under way; the Settings page also locks the settings the export
     // reads from the settings file (SettingsPage::ReadByRun)
     const std::string Install = RunInstall;
-    const DiskGame::ExportOptions Options = RunOptions;
+    DiskGame::ExportOptions Options = RunOptions;
     DiskGame::Context C;
-    C.OutRoot = (fs::path(AbsoluteFolder(RunOut.c_str())) / Game.Id()).string();
+    namespace Bo3 = DiskGame::Bo3;
+    namespace Pb = Bo3Target::Publish;
     if (ExportOnly)
     {
         C.Only = ExportOnly;
@@ -371,6 +374,22 @@ void LoadGamePanel::DoDiskExport()
         DiskEta.Reset(C.Kinds);
         DiskEtaText = "estimating...";
     }
+    // the Black Ops III conversion: the same checks and forced options as the command line (DiskGame.Bo3.cpp). C.OutRoot is the
+    // asked folder, or a staging folder when that lies in a Mod Tools install (the raw layout is never written into one).
+    Bo3::Prepared Prep = Bo3::Prepare(Game, RunBo3, Options, C);
+    if (!Prep.Error.empty())
+    {
+        AppLog::Log().warn("disk export: {}", Prep.Error);
+        if (!Prep.CleanupError.empty()) AppLog::Log().warn("disk export: {}", Prep.CleanupError);
+        std::lock_guard<std::mutex> Lk(Mutex);
+        Status = Prep.Error;
+        LastRun.Has = true;
+        LastRun.Headline = "The Black Ops III conversion was not started";
+        LastRun.ZoneErrors = { Prep.Error };
+        if (!Prep.CleanupError.empty()) LastRun.ZoneErrors.push_back(Prep.CleanupError);
+        return;
+    }
+    const bool Converting = Prep.Converting;
     std::vector<std::string> Zones;
     std::string Error;
     const auto Start = std::chrono::steady_clock::now();
@@ -378,6 +397,7 @@ void LoadGamePanel::DoDiskExport()
     C.ResolveSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - Start).count();
     if (!Resolved)
     {
+        if (const std::string Left = Bo3::Abandon(Prep); !Left.empty()) AppLog::Log().warn("disk export: {}", Left);
         AppLog::Log().warn("disk export: the picked zones did not resolve: {}", Error);
         std::lock_guard<std::mutex> Lk(Mutex);
         Status = Error;
@@ -411,7 +431,20 @@ void LoadGamePanel::DoDiskExport()
         DiskEta.Observe(P);
         DiskEtaText = DiskEta.Text();
     };
-    const DiskGame::Totals T = DiskGame::Export(Game, Options, Zones, C, OnProgress, &DiskCancel);
+    DiskGame::Totals T = DiskGame::Export(Game, Options, Zones, C, OnProgress, &DiskCancel);
+    // the publish step and the gate over what was just exported; a write into a Mod Tools root only after the user's Yes
+    if (Converting && !T.Cancelled)
+    {
+        std::lock_guard<std::mutex> Lk(Mutex);
+        DiskStep = "converting for Black Ops III...";
+        Status = DiskStep;
+    }
+    Bo3::Hooks Ask;
+    Ask.Confirm = [this](const Bo3::PlanSummary& Plan) { return AskBo3(Plan); };
+    const bool Staged = !Prep.Staging.empty();   // the raw export was in a folder of the run's own, removed by Complete
+    const Bo3::Completed Finished = Bo3::Complete(Game, Prep, C, T, Ask);
+    const Bo3::Outcome& Converted = Finished.Out;
+    const bool FloorReached = Finished.FloorReached;
     // pulling dependencies may have built the install index: its counts
     if (!DiskZoneCounted) ReadZoneCounts(Game, Options, Install);
 
@@ -429,8 +462,9 @@ void LoadGamePanel::DoDiskExport()
     LastRun.Written = Written;
     LastRun.Failures = T.Failures.size();
     LastRun.ZoneErrors = T.ZoneErrors;
-    LastRun.OutDir = C.OutRoot;
-    LastRun.RunLog = DiskGame::RunLogPath(C);
+    // a staged run keeps nothing of its raw export: what it shows is where the conversion went (or the export folder chosen)
+    LastRun.OutDir = Staged ? (Finished.Out.OutputRoot.empty() ? AbsoluteFolder(RunOut.c_str()) : Finished.Out.OutputRoot) : C.OutRoot;
+    LastRun.RunLog = Staged ? std::string() : DiskGame::RunLogPath(C);
     const std::string What = C.Only ? Thousands(C.Only->size()) + (C.Only->size() == 1 ? " asset" : " assets")
                                     : std::to_string(T.ZonesWalked) + (T.ZonesWalked == 1 ? " zone" : " zones");
     size_t Pulled = 0;
@@ -441,10 +475,96 @@ void LoadGamePanel::DoDiskExport()
     for (const auto& [K, V] : T.Kinds)
         if (V.Written) Kinds += (Kinds.empty() ? "" : ", ") + KindCount(K, V.Written);
     LastRun.Detail = (Kinds.empty() ? std::string("Nothing written") : Kinds + " written") + " in " + Clock(Seconds) + "  \xC2\xB7  " + C.OutRoot;
+    if (Converting)
+    {
+        std::vector<std::string>& L = LastRun.Bo3Lines;
+        const char* Where = Prep.Publish.Which == Pb::Target::ModTools ? "the Mod Tools" : "the BO3 folder";
+        if (T.Cancelled) L.push_back("Black Ops III conversion: not run, the export was stopped");
+        else if (Converted.Declined)
+        {
+            L.push_back("Nothing was written into the Mod Tools: you said No. The export is kept in " + C.OutRoot);
+            LastRun.Bo3Bad = true;
+        }
+        else if (!Converted.Refused.empty())
+        {
+            L.push_back("Black Ops III conversion refused: " + Converted.Refused);
+            LastRun.Bo3Bad = true;
+        }
+        else
+        {
+            L.push_back(std::string("Written to ") + Where + ": " + Converted.OutputRoot + " (" + Thousands(Converted.FilesWritten) + " files)");
+            if (Converted.GateRun)
+            {
+                L.push_back("Check: " + Converted.GateWord + ", " + std::to_string(Converted.GateFailures) + " failures, " +
+                            std::to_string(Converted.GateWarnings) + " warnings. " + Converted.GateSummary);
+                LastRun.Bo3Bad = Converted.GateFailures > 0;
+            }
+            else L.push_back("Check: not run");
+            L.push_back(Thousands(Converted.Backups) + " .bak backup files made");
+            LastRun.Bo3Folder = Converted.OutputRoot;
+            LastRun.Bo3Report = Converted.GateReport;
+        }
+        if (!Finished.CleanupError.empty())
+        {
+            AppLog::Log().warn("disk export: {}", Finished.CleanupError);
+            L.push_back("Could not remove the temporary export: " + Finished.CleanupError);
+            LastRun.Bo3Bad = true;
+        }
+        if (FloorReached)
+        {
+            L.push_back("Stopped at the free space floor (8 GB free is kept); the export is not complete");
+            LastRun.Bo3Bad = true;
+        }
+    }
     DiskStall.clear();
     DiskFraction = 1.0f;
-    DiskExportedTo = C.OutRoot;
-    if (Written > 0) DiskJustFinished.store(true);
+    DiskExportedTo = LastRun.OutDir;
+    if (Written > 0 && !Staged) DiskJustFinished.store(true);
+}
+
+// Worker: the plan of a write into a Mod Tools root put to the user; waits for Yes or No (the run's Cancel, or the window closing, is No)
+bool LoadGamePanel::AskBo3(const DiskGame::Bo3::PlanSummary& Plan)
+{
+    {
+        std::lock_guard<std::mutex> Lk(Mutex);
+        Status = "waiting for your answer: write into the Mod Tools?";
+    }
+    return Bo3Q.Ask(Plan.Text, DiskCancel);
+}
+
+// Drawn from the shell's frame, so it shows whatever page is open. The popup follows the question: when it ends (an answer, a cancel) the
+// popup closes on the next frame.
+void LoadGamePanel::DrawBo3Ask()
+{
+    constexpr const char* Title = "Write into the Mod Tools?##bo3ask";
+    std::string Text;
+    const bool Pending = Bo3Q.Pending(Text);
+    if (Pending && !ImGui::IsPopupOpen(Title)) ImGui::OpenPopup(Title);
+    if (!ImGui::BeginPopupModal(Title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    if (!Pending)
+    {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 38.0f);
+    ImGui::TextUnformatted("The export is ready. Writing it into the Black Ops III Mod Tools would do this:");
+    ImGui::Spacing();
+    ImGui::TextUnformatted(Text.c_str());
+    ImGui::Spacing();
+    ImGui::TextDisabled("Files GrayWolf did not write are never replaced. This is asked every time.");
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    int Answer = 0;
+    if (ImGui::Button("Yes, write it", ImVec2(ImGui::GetFontSize() * 10.0f, 0))) Answer = 2;
+    ImGui::SameLine();
+    if (ImGui::Button("No", ImVec2(ImGui::GetFontSize() * 6.0f, 0))) Answer = 3;
+    if (Answer != 0)
+    {
+        Bo3Q.Answer(Answer == 2);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 bool LoadGamePanel::Working()
@@ -868,6 +988,23 @@ void LoadGamePanel::DrawLastRun()
                     Ok ? ImVec4(0.18f, 0.42f, 0.29f, 1.0f) : ImVec4(1, 1, 1, 0.08f));
         ImGui::TextUnformatted(R.Headline.c_str());
         ImGui::TextDisabled("%s", R.Detail.c_str());
+        for (const std::string& Line : R.Bo3Lines)
+        {
+            ImGui::PushTextWrapPos(0.0f);
+            if (R.Bo3Bad) ImGui::TextColored(Amber, "%s", Line.c_str());
+            else ImGui::TextUnformatted(Line.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        if (!R.Bo3Folder.empty())
+        {
+            if (ImGui::Button("Open the BO3 folder")) UiAsync::OpenInShell(R.Bo3Folder);
+            ImGui::SameLine();
+        }
+        if (!R.Bo3Report.empty())
+        {
+            if (ImGui::Button("Open the check report")) UiAsync::OpenInShell(R.Bo3Report);
+            ImGui::SameLine();
+        }
         if (Ok)
         {
             if (ImGui::Button("Show in Library")) ShowAssets.store(true);
@@ -875,8 +1012,11 @@ void LoadGamePanel::DrawLastRun()
         }
         if (ImGui::Button("Open folder")) UiAsync::OpenInShell(R.OutDir);
         ImGui::SameLine();
-        if (ImGui::Button("Open export log")) UiAsync::OpenInShell(R.RunLog);
-        ImGui::SameLine();
+        if (!R.RunLog.empty())
+        {
+            if (ImGui::Button("Open export log")) UiAsync::OpenInShell(R.RunLog);
+            ImGui::SameLine();
+        }
         if (ImGui::Button("Dismiss")) Dismiss = true;
         if (!Lines.empty() && ImGui::TreeNode("Details##lastrun"))
         {
@@ -961,6 +1101,23 @@ void LoadGamePanel::StartExport()
     RunNameFilter = DiskNameFilterBuf;
     RunKindFlags = DiskKindFlags;
     RunOptions = DiskOptions(*Disk, RunInstall);
+    // the Black Ops III conversion this run does: from its settings and the output folder (an output folder in a Mod Tools install makes
+    // it the Mod Tools target whatever the choice, and moves the raw export out of the install)
+    {
+        std::string How;
+        const std::string Root = DiskGame::Bo3::FindModToolsRoot(How);
+        RunBo3 = DiskGame::Bo3::FromSettings(RunOptions.Settings, AbsoluteFolder(RunOut.c_str()), Root, DiskGame::Bo3::NewStagingFolder());
+        if (!RunBo3.Why.empty())
+        {
+            std::lock_guard<std::mutex> Lock(Mutex);
+            Status = RunBo3.Why;
+            LastRun = {};
+            LastRun.Has = true;
+            LastRun.Headline = "The export was not started";
+            LastRun.ZoneErrors = { RunBo3.Why };
+            return;
+        }
+    }
     DiskCancel.store(false);
     DiskStartedAt = ImGui::GetTime();
     StartWork(ExportLabel, &LoadGamePanel::DoDiskExport);
@@ -1003,6 +1160,13 @@ void LoadGamePanel::DrawExportBar()
         if (Zones == 0) Why = "Pick a map or a zone above to export it";
         else if (Kinds.empty()) Why = "Tick at least one kind of asset in What to export";
         Ready = Zones > 0 && !Kinds.empty();
+    }
+    // the Black Ops III conversion of this export, as Settings keeps it (the output folder in a Mod Tools install makes it the Mod Tools one)
+    {
+        const std::string Convert = SettingsManager::GetSetting(LoadGameUi::SettingKey(*Disk, DiskGame::Bo3Convert), DiskGame::Bo3Convert.Default);
+        const std::string Dot = Note.empty() ? std::string() : std::string("  \xC2\xB7  ");
+        if (Convert == "folder") Note += Dot + "then the Black Ops III folder";
+        else if (Convert == "modtools") Note += Dot + "then into the Mod Tools, after you confirm";
     }
     if (Ready && DiskOutBuf[0] == 0)
     {

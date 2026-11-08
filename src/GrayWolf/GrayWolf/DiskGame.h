@@ -16,6 +16,7 @@
 #include <map>
 #include <optional>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -230,6 +231,11 @@ namespace DiskGame
     // decompile: compiled scripts also decompiled (acts or gsc-tool, by the game's VM), and the
     // compiled Lua files (LuaExport.h), else written as bytecode (ScriptExport.h)
     extern const Setting ScriptDecompile;
+    // full_map, map_prefabs, bo3_convert: the Black Ops III conversion around a run (DiskGame.Bo3.h). The command line has --full-map,
+    // --map-prefabs and --target; the panel keeps them as these settings (bo3_convert: off, folder, modtools).
+    extern const Setting FullMap;
+    extern const Setting MapPrefabs;
+    extern const Setting Bo3Convert;
     const std::vector<Setting>& CommonSettings();
 
     // A material's images as its zone's reader reads them (XImage_t's usage as a number, the

@@ -132,9 +132,20 @@ const Setting MapContent{ "map_content", "Map content", { { "all", "Everything" 
 const Setting ScriptDecompile{ "decompile", "Compiled scripts and Lua", { { "off", "Bytecode" }, { "on", "Decompiled" } },
                                "off", { Kind::Script, Kind::Rawfile } };
 
+const Setting FullMap{ "full_map", "Full map", { { "off", "Off" }, { "on", "On (needs a Black Ops III conversion)" } },
+                       "off", { Kind::Map } };
+
+const Setting MapPrefabs{ "map_prefabs", "Map prefabs", { { "none", "None" }, { "all", "All parts" } },
+                          "none", { Kind::Map } };
+
+const Setting Bo3Convert{ "bo3_convert", "Black Ops III conversion",
+                          { { "off", "Off" }, { "folder", "BO3 folder (inside the export folder)" }, { "modtools", "Into the Mod Tools (BO3 root)" } },
+                          "off", { Kind::Model, Kind::Map } };
+
 const std::vector<Setting>& CommonSettings()
 {
-    static const std::vector<Setting> All = { MapPng, MapTextures, MapCast, MapRadiant, MapGeometryOnly, GdtMaterials, SoundAliases, MapCollision, MapContent, ScriptDecompile };
+    static const std::vector<Setting> All = { MapPng, MapTextures, MapCast, MapRadiant, MapGeometryOnly, GdtMaterials, SoundAliases, MapCollision, MapContent, ScriptDecompile,
+                                              FullMap, MapPrefabs, Bo3Convert };
     return All;
 }
 

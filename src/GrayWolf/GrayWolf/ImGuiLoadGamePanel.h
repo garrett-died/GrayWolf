@@ -11,6 +11,7 @@
 
 #include "GameInstalls.h"
 #include "DiskGame.h"
+#include "DiskGame.Bo3.h"
 #include "DiskGameSizes.h"
 #include "UiAsync.h"
 
@@ -47,6 +48,8 @@ public:
     // opened), dismiss (each true), languages (the languages exported: "auto", "all", "auto,en"),
     // languages_open (true: their list dropped down, in the options popup)
     void Script(const std::string& StepJson);
+    // The question before a write into a Mod Tools root, drawn from the shell's frame so it shows whatever page is open
+    void DrawBo3Ask();
     // ui-shot's demo: made-up installs on the tiles instead of a scan of this machine (nothing is
     // looked up, no game is read), so a screenshot shows nothing of the machine it was taken on
     void UseDemoInstalls();
@@ -101,6 +104,8 @@ private:
     void DrawExportBar();
     void DrawOptions();
     void DrawLastRun();
+    // Worker: shows the plan to the user and waits (Bo3::Hooks::Confirm); false is No or a cancelled run
+    bool AskBo3(const DiskGame::Bo3::PlanSummary& Plan);
     // The index and its rows for search: kept by ReadZoneCounts, under Mutex
     void KeepIndex(std::unique_ptr<DiskGame::ZoneIndex> Ix);
     // The search's rows for the query and kinds now, rebuilt when either changes
@@ -195,6 +200,9 @@ private:
     std::string RunInstall, RunOut, RunNameFilter;
     std::vector<uint8_t> RunKindFlags;
     DiskGame::ExportOptions RunOptions;
+    DiskGame::Bo3::Decision RunBo3;               // the conversion this run does (StartExport), read by the worker
+    // the question before a write into a Mod Tools root
+    DiskGame::Bo3::Question Bo3Q;                 // its own lock: the worker waits on it, the UI thread answers
     std::string DiskExportedTo;                  // <out>/<game id> of the last export
     std::atomic<bool> DiskCancel{false};
     std::atomic<bool> DiskJustFinished{false};
@@ -244,6 +252,10 @@ private:
         std::string Headline, Detail, OutDir, RunLog;
         std::vector<std::string> ZoneErrors;
         size_t Failures = 0, Written = 0;
+        // the Black Ops III conversion's result: where it went, the verdict, the .bak files; the gate's report to open
+        std::vector<std::string> Bo3Lines;
+        bool Bo3Bad = false;
+        std::string Bo3Folder, Bo3Report;
     } LastRun;
     float DiskFraction = 0.0f;                   // the running export's progress, under Mutex
     std::string DiskStep;

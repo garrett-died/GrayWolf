@@ -99,6 +99,10 @@ struct ProfileWalk
 bool WalkWithProfile(const std::string& FastFilePath, ByteView Zone, ProfileWalk& Out,
                      std::string& Error);
 
+// Why a file must not be read as a raw decompressed zone, or empty when it may be: one shorter than 4 bytes, or one that starts like a fast file
+// (its container magic has "ff" in bytes 2 and 3: "IWff", "TAff", "S1ff"...), however short or damaged. LoadBytes reads only what this passes.
+std::string RawZoneRefusal(const std::string& Path);
+
 // A script bundle value's kind (ZonekitZone::ScriptBundleLayout)
 enum class BundleValue : uint8_t { Raw, Bool, Int, Float, Localize, String, Struct, KeyedStruct, Array, Anim, Hash, Asset };
 
