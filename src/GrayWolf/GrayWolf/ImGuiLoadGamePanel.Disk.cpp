@@ -12,6 +12,7 @@
 #include "AppLog.h"
 #include "DiskGame.h"
 #include "DiskGame.Bo3.h"
+#include "Bo3Target.Output.h"
 #include "DiskGuard.h"
 #include "ExportNaming.h"
 #include "SettingsManager.h"
@@ -1130,8 +1131,39 @@ void LoadGamePanel::DrawExportBar()
     DrawDiskProgress();
     const bool Busyish = Busy.load();
 
-    // what is picked, where it goes, and why Export is not ready when it is not
-    const std::string Target = (fs::path(AbsoluteFolder(DiskOutBuf)) / Disk->Id()).string();
+    // what is picked, where it goes, and why Export is not ready when it is not. Where it goes is where the files end up: a converting
+    // run's raw export is a staging folder of its own, so the line names the BO3 folder or the Mod Tools root, not <out>\<game>
+    std::string Target = (fs::path(AbsoluteFolder(DiskOutBuf)) / Disk->Id()).string();
+    std::string Shown = Target;   // the words; Target stays a folder (its drive's free space)
+    {
+        const std::string Convert = SettingsManager::GetSetting(LoadGameUi::SettingKey(*Disk, DiskGame::Bo3Convert), DiskGame::Bo3Convert.Default);
+        // Touches reads the disk: judged again only when the output folder changes, not every frame
+        static std::string JudgedOut;
+        static fs::path Root;
+        static bool InInstall = false;
+        if (JudgedOut != DiskOutBuf)
+        {
+            JudgedOut = DiskOutBuf;
+            Root.clear();
+            InInstall = DiskOutBuf[0] != 0 && Bo3Target::Output::Touches(AbsoluteFolder(DiskOutBuf), &Root);
+        }
+        if (InInstall)
+        {
+            Target = Root.string();
+            Shown = "the Mod Tools at " + Target + " (converted, asks first)";
+        }
+        else if (Convert == "modtools")
+        {
+            const std::string Saved = SettingsManager::GetSetting("modtools_dir", "");
+            if (!Saved.empty()) Target = Saved;
+            Shown = "the Mod Tools" + (Saved.empty() ? std::string() : " at " + Saved) + " (converted, asks first)";
+        }
+        else if (Convert == "folder")
+        {
+            Target = (fs::path(Target) / "bo3").string();
+            Shown = Target + " (converted)";
+        }
+    }
     std::string Picked, Note, Why;
     bool Ready = false;
     bool HaveIndex = false;
@@ -1190,8 +1222,8 @@ void LoadGamePanel::DrawExportBar()
         ImGui::TextDisabled("\xC2\xB7 %s", Note.c_str());
     }
     if (!Why.empty() && !Busyish) ImGui::TextColored(Amber, "%s", Why.c_str());
-    else if (ExportByAsset) ImGui::TextDisabled("to %s", Target.c_str());
-    else DrawEstimate(Target);
+    else if (ExportByAsset) ImGui::TextDisabled("to %s", Shown.c_str());
+    else DrawEstimate(Target, Shown);
     ImGui::PopTextWrapPos();
     ImGui::EndGroup();
 
@@ -1223,7 +1255,7 @@ void LoadGamePanel::DrawExportBar()
     }
 }
 
-void LoadGamePanel::DrawEstimate(const std::string& Target)
+void LoadGamePanel::DrawEstimate(const std::string& Target, const std::string& Shown)
 {
     namespace Sizes = DiskGame::Sizes;
     // what is picked now, from the counts and samples kept (nothing is read here)
@@ -1308,7 +1340,7 @@ void LoadGamePanel::DrawEstimate(const std::string& Target)
             Size += (Size.empty() ? "" : " + ") + Names + (Measuring ? " (measuring\xE2\x80\xA6)" : " (not estimated)");
     }
     const bool Over = !Size.empty() && Free > 0 && E.Bytes > Free, Near = !Size.empty() && Free > 0 && E.Bytes > Free / 10 * 8;
-    const std::string Line = (Size.empty() ? std::string() : Size + "  ·  ") + "to " + Target +
+    const std::string Line = (Size.empty() ? std::string() : Size + "  ·  ") + "to " + Shown +
                              (Free > 0 ? "  (" + Sizes::Text(Free) + " free" + (Over ? ": not enough)" : ")") : std::string());
     if (Over || Near) ImGui::TextColored(Over ? Red : Amber, "%s", Line.c_str());
     else ImGui::TextDisabled("%s", Line.c_str());

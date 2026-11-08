@@ -140,7 +140,8 @@ private:
     std::string PickWeightsFor;
     // The export's estimated size for the kinds, zones and formats picked, and the free space of
     // the output folder's drive (Target): computed from the counts and the samples, every frame
-    void DrawEstimate(const std::string& Target);
+    // Target: the folder whose drive's free space is shown; Shown: the words for where the files go
+    void DrawEstimate(const std::string& Target, const std::string& Shown);
 
     // Guards Log, Status, Installs and the export's progress against the worker thread.
     std::mutex Mutex;
