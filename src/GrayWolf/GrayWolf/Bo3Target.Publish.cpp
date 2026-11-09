@@ -125,6 +125,38 @@ namespace Bo3Target::Publish
             return OneChannel.count(FieldOf(Fields, "semantic")) != 0 && !(FromAlpha.size() && FromAlpha != "0");
         }
 
+        // What the Mod Tools hold, for the "already in the Mod Tools" check. A row is left out of Held when
+        //  - its gdt (root-relative, the key form of ReadManifestPaths) is in the graywolf manifest: GrayWolf wrote that file and
+        //    rewrites it (the manifest hash gate in Run, step 4, still refuses a file the owner edited); or
+        //  - its gdt file is not on disk: gdt.db is behind until gdtdb or Radiant runs again.
+        // An entity held by any other gdt (the owner's, stock) stays held. Counts of both kinds go to Own and Stale.
+        void BuildHeld(const std::vector<GdtDb::Row>& Rows, const fs::path& Root, const std::unordered_set<std::string>& GrayWolfManifest,
+                       GdtDb::Catalog& Held, size_t& Own, size_t& Stale)
+        {
+            std::unordered_map<std::string, int> Verdict;   // gdt as stored -> 0 held, 1 graywolf's own, 2 file missing
+            const std::string Prefix = Root.string();
+            for (const GdtDb::Row& Entry : Rows)
+            {
+                auto Found = Verdict.find(Entry.GdtFile);
+                if (Found == Verdict.end())
+                {
+                    int V = 0;
+                    const std::string Relative = GdtDb::StockIndex::RelativeGdtPath(Entry.GdtFile, Prefix);
+                    if (!Relative.empty() && GrayWolfManifest.count(Relative) != 0) V = 1;
+                    else if (!Entry.GdtFile.empty())
+                    {
+                        std::error_code Ec;
+                        const fs::path Where = !Relative.empty() ? Root / fs::path(Relative) : fs::path(Entry.GdtFile);
+                        if (!fs::exists(Where, Ec)) V = 2;
+                    }
+                    Found = Verdict.emplace(Entry.GdtFile, V).first;
+                }
+                if (Found->second == 1) ++Own;
+                else if (Found->second == 2) ++Stale;
+                else Held.Add(Entry);
+            }
+        }
+
         class NoTimes final : public GdtDb::IFileTimes
         {
         public:
@@ -140,6 +172,7 @@ namespace Bo3Target::Publish
         bool HaveCatalog = false;
         bool Check = true;
         std::unordered_set<std::string> Manifests;
+        size_t OwnRows = 0, StaleRows = 0;
         std::unique_ptr<GdtDb::IFileTimes> Times;
         std::unique_ptr<GdtDb::StockIndex> Stock;
     };
@@ -171,17 +204,21 @@ namespace Bo3Target::Publish
             Empty();
             return;
         }
-        for (const GdtDb::Row& Entry : S.Rows) S.Held.Add(Entry);
+        // the manifests first: Held leaves out the rows of graywolf's own gdts (the hydrax manifest is not graywolf's to rewrite)
+        std::unordered_set<std::string> GrayWolfOwn;
+        for (const char* Folder : { "hydrax", "graywolf" })
+        {
+            std::unordered_set<std::string>& Into = std::string_view(Folder) == "graywolf" ? GrayWolfOwn : S.Manifests;
+            const GdtDb::Status M = GdtDb::ReadManifestPaths(Root / Folder / "manifest.json", Into);
+            if (!M.Ok) Warnings.push_back("the stock index ignores an unreadable manifest: " + M.Reason);
+        }
+        S.Manifests.insert(GrayWolfOwn.begin(), GrayWolfOwn.end());
+        BuildHeld(S.Rows, Root, GrayWolfOwn, S.Held, S.OwnRows, S.StaleRows);
         S.HaveCatalog = true;
         GdtDb::StockRules Rules;
         std::error_code Ec;
         const auto Time = fs::last_write_time(Root / "bin" / "linker_modtools.exe", Ec);
         if (!Ec) Rules.ReferenceSeconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::clock_cast<std::chrono::system_clock>(Time).time_since_epoch()).count();
-        for (const char* Folder : { "hydrax", "graywolf" })
-        {
-            const GdtDb::Status M = GdtDb::ReadManifestPaths(Root / Folder / "manifest.json", S.Manifests);
-            if (!M.Ok) Warnings.push_back("the stock index ignores an unreadable manifest: " + M.Reason);
-        }
         Rules.RootPrefix = Root.string();
         Rules.Manifests = &S.Manifests;
         S.Times = GdtDb::MakeDiskFileTimes(Root);
@@ -190,7 +227,7 @@ namespace Bo3Target::Publish
 
     Knowledge Loaded::View() const
     {
-        return { Data->HaveCatalog && Data->Check ? &Data->Held : nullptr, Data->Stock.get() };
+        return { Data->HaveCatalog && Data->Check ? &Data->Held : nullptr, Data->Stock.get(), Data->OwnRows, Data->StaleRows };
     }
 
     // ---- preflight ----------------------------------------------------------------------------------------
@@ -590,6 +627,11 @@ namespace Bo3Target::Publish
             Approxes.push_back({ "material.techset_names_missing", "", "materials=" + std::to_string(Missed->second),
                                  "package_index/cod_techsets.wni was not found: the techset names of these materials are unknown, so the slot rules chose their techsets (run update-name-db)" });
         if (Know.Held != nullptr) Count("gdtdb_image_file_conflicts", Know.Held->ImageFileConflicts());
+        if (Know.Held != nullptr)
+        {
+            Count("gdtdb_rows_graywolf_own", Know.OwnRows);
+            Count("gdtdb_rows_stale", Know.StaleRows);
+        }
 
         // which models use each image (through the materials that name it)
         std::map<std::string, std::vector<std::string>> ImageModels;
@@ -2155,6 +2197,39 @@ namespace Bo3Target::Publish
             Check(!OneChannelBytes(Dir / "alpha.png", Bytes) && Bytes.empty(), "one channel: a varying alpha keeps the file as it is", "");
             Check(!OneChannelBytes(Dir / "one_grey.png", Bytes), "one channel: a file that is one channel already is left", "");
             fs::remove_all(Dir, Ec);
+        }
+
+        // 21. gdt.db rows of GrayWolf's own gdt (in the graywolf manifest) and of a gdt file that is gone do not hold an asset; the owner's gdt still does
+        {
+            const fs::path RunDir = Base / "t21" / "bo4", Root = RunDir / "bo3";
+            const std::string OwnGdt = "model_export\\t7_props\\own\\graywolf_own.gdt";
+            fs::create_directories(Root / "texture_assets", Ec);
+            fs::create_directories(Root / "graywolf", Ec);
+            { std::ofstream(Root / "texture_assets" / "owner.gdt", std::ios::binary) << "owner file"; }
+            {
+                Out::Manifest Listed;
+                Listed.Record({ OwnGdt, std::string(64, '0'), "BlackOps4", "gdt", "x", "t" });
+                Listed.Save(Root / "graywolf" / "manifest.json");
+            }
+            const std::vector<GdtDb::Row> Rows = {
+                { 10, "mtl_gw_own", "material", Root.string() + "\\" + OwnGdt },            // graywolf's own gdt, absent from disk now
+                { 11, "mtl_other_held", "material", "texture_assets\\owner.gdt" },           // the owner's gdt, on disk
+                { 12, "mtl_stale_row", "material", "texture_assets\\gone.gdt" },             // a gdt that no longer exists, not in a manifest
+            };
+            GdtDb::Catalog Cat;
+            size_t Own = 0, Stale = 0;
+            BuildHeld(Rows, Root, { GdtDb::StockIndex::RelativeGdtPath(OwnGdt, "") }, Cat, Own, Stale);
+            Check(Own == 1 && Stale == 1 && !Cat.ContainsName("mtl_gw_own") && Cat.ContainsName("mtl_other_held") && !Cat.ContainsName("mtl_stale_row"),
+                  "held: a graywolf-manifest gdt row and a missing-file row are left out, the owner's gdt row stays", std::format("own={} stale={}", Own, Stale));
+            MakeModel(RunDir, "p7_crate_x", { { "mtl_gw_own", { "i_mtl_gw_own_c" } }, { "mtl_other_held", { "i_mtl_other_held_c" } }, { "mtl_stale_row", { "i_mtl_stale_row_c" } } });
+            const Knowledge K{ &Cat, &Stock, Own, Stale };
+            Result R = Go(RunDir, Root, K);
+            const fs::path Tsv = RunDir / "graywolf_placement.tsv";
+            Check(R.Error.empty() && ActionOf(Tsv, "material", "mtl_gw_own") == "written", "held: a material held only by a graywolf-manifest gdt is exported again", RowOf(Tsv, "material", "mtl_gw_own") + R.Error);
+            Check(ActionOf(Tsv, "material", "mtl_other_held") == "already_in_mod_tools", "held: a material held by a gdt that is not in the manifest stays already_in_mod_tools", RowOf(Tsv, "material", "mtl_other_held"));
+            Check(ActionOf(Tsv, "material", "mtl_stale_row") == "written", "held: a material whose row names a missing gdt file is exported", RowOf(Tsv, "material", "mtl_stale_row"));
+            Check(R.Counters["publish_gdtdb_rows_graywolf_own"] == 1 && R.Counters["publish_gdtdb_rows_stale"] == 1, "held: both kinds of left-out rows are counted in the report",
+                  std::format("{} {}", R.Counters["publish_gdtdb_rows_graywolf_own"], R.Counters["publish_gdtdb_rows_stale"]));
         }
 
         // 17. ChooseRoot: --target modtools takes its root from the command line only

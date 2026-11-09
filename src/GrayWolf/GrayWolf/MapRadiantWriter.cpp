@@ -763,6 +763,21 @@ namespace
         return Maps::IsDecalMaterial(Scene, S.Material);
     }
 
+    // Whether a drawn material is the game's sky render surface (MWR: techset wc_sky_cso_nfwpf, material hdr_sky_<map>): a sky dome the Mod Tools' ssi shell and volume_sun replace.
+    // The evidence, in this order: the scene material's techset starts with `wc_sky` (the reader's fact, the techset rule `sky`); else the material is named `hdr_sky_<something>`
+    // (a leading folder, wc/, ignored). Never a name prefix of `sky` alone: skyscraper_concrete is a building.
+    bool IsSkyRenderMaterial(const MapScene& Scene, const std::string& Material)
+    {
+        if (const auto Found = Scene.Materials.find(Material); Found != Scene.Materials.end())
+        {
+            const std::string T = ExportNaming::Lower(Found->second.Techset);
+            if (T.rfind("wc_sky", 0) == 0) return true;
+        }
+        std::string Name = ExportNaming::Lower(Material);
+        if (const size_t Slash = Name.find_last_of("/\\"); Slash != std::string::npos) Name.erase(0, Slash + 1);
+        return Name.size() > 8 && Name.rfind("hdr_sky_", 0) == 0;
+    }
+
 #ifdef GW_MESH_DUMP
     std::string EnvText(const char* Name)
     {
@@ -983,6 +998,26 @@ namespace
             {
                 const Surface& S = M.Surfaces[Si];
                 if (IsDecalSurface(Scene, S) != Decal) continue;
+                // a game with the ssi sky shell: its sky dome render surface is not written (the shell and the volume_sun are the sky); the world's triangles stay accounted (RenderWorldSky)
+                // and the surface is not in the shell's bounds (MapSunProbes WrittenBounds skips a sky material)
+                if (Stats.SkyShellPlanned && IsSkyRenderMaterial(Scene, S.Material))
+                {
+                    Stats.SkyMeshesDropped++;
+                    for (size_t K = 0; K + 2 < S.Indices.size(); K += 3)
+                    {
+                        if (FateOf(S, K / 3) != Fate::Patch) continue;
+                        // a triangle a collision mesh or a brush side already wrote is accounted as the normal path does; only the rest is a dropped sky triangle
+                        const bool TakenByCollision = Owner == 0 && Oi < Stats.CollisionTaken.size() && Si < Stats.CollisionTaken[Oi].size() && K / 3 < Stats.CollisionTaken[Oi][Si].size() && Stats.CollisionTaken[Oi][Si][K / 3];
+                        const bool ByBrush = Drawn.Removed(Oi, Si, K / 3);
+                        if (Owner == 0 && (TakenByCollision || ByBrush)) (TakenByCollision ? Stats.RenderWorldTaken : Stats.RenderWorldByBrush)++;
+                        else
+                        {
+                            Stats.SkyTrianglesDropped++;
+                            if (Owner == 0) Stats.RenderWorldSky++;
+                        }
+                    }
+                    continue;
+                }
                 bool Joined = false;
                 size_t Base = 0;
                 for (size_t K = 0; K + 2 < S.Indices.size(); K += 3)
@@ -1562,7 +1597,7 @@ namespace
             for (const auto& [Key, N] : std::initializer_list<std::pair<const char*, size_t>>{
                      { "map_radiant_probes", Stats.Probes }, { "map_radiant_probes_no_size", Stats.ProbesNoSize }, { "map_radiant_sun_volumes", Stats.SunVolumes },
                      { "map_radiant_ssi_stock_values", Stats.SsiStockValues }, { "map_radiant_sky_written", Stats.SkyWritten }, { "map_radiant_sky_shells", Stats.SkyShells }, { "map_radiant_tool_names_changed", Stats.ToolMat.Changed() },
-                     { "map_radiant_tool_brushes_dropped", Stats.ToolMat.BrushesDropped }, { "map_radiant_tool_meshes_dropped", Stats.ToolMat.MeshesDropped }, { "map_radiant_sky_brushes_dropped", Stats.ToolMat.SkyBrushesDropped }, { "map_radiant_vista_models", Stats.VistaModels }, { "map_radiant_effect_placements", Stats.EffectPlacements }, { "map_radiant_effect_placements_refused", Stats.EffectPlacementsRefused } })
+                     { "map_radiant_tool_brushes_dropped", Stats.ToolMat.BrushesDropped }, { "map_radiant_tool_meshes_dropped", Stats.ToolMat.MeshesDropped }, { "map_radiant_sky_brushes_dropped", Stats.ToolMat.SkyBrushesDropped }, { "map_radiant_sky_meshes_dropped", Stats.SkyMeshesDropped }, { "map_radiant_sky_triangles_dropped", Stats.SkyTrianglesDropped },{ "map_radiant_vista_models", Stats.VistaModels }, { "map_radiant_effect_placements", Stats.EffectPlacements }, { "map_radiant_effect_placements_refused", Stats.EffectPlacementsRefused } })
                 if (N != 0) Result.Counters.emplace_back(Key, N);
             // the prefab files: counts by part (the file is <map>_prefab_<part>.map), and what the main map keeps
             for (const RadiantPrefabFile& F : Stats.PrefabFiles) Result.Files.push_back(F.File);
@@ -2178,6 +2213,30 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
                     BoundsSkip.insert(&B);
                     break;
                 }
+    // The shell decision, before any patch pass: the sky render surfaces are dropped only when the shell will be written (bounds, the +-64000 reach, the M4f vista fallback; the block that writes the
+    // shell below makes the same decision from the same inputs).
+    const auto Reaches = [](const std::array<float, 3>& L, const std::array<float, 3>& H) {
+        bool R = false;
+        for (size_t K = 0; K < 3; K++)
+            R = R || std::fabs(static_cast<double>(L[K]) - 1024.0) >= 64000.0 || std::fabs(static_cast<double>(H[K]) + 1024.0) >= 64000.0;
+        return R;
+    };
+    Stats.SkyShellPlanned = false;
+    if (Scene.SealWithSkyShell)
+    {
+        std::array<float, 3> PLo{}, PHi{};
+        if (WrittenBounds(Scene, PLo, PHi, nullptr, nullptr, 0.0f, &BoundsSkip))
+        {
+            Stats.SkyShellPlanned = !Reaches(PLo, PHi);
+            if (!Stats.SkyShellPlanned)
+            {
+                std::array<float, 3> NearLo{}, NearHi{};
+                if (WrittenBounds(Scene, NearLo, NearHi, nullptr, nullptr, 62976.0f, &BoundsSkip) && !Reaches(NearLo, NearHi))
+                    for (const Instance& I : Scene.StaticInstances)
+                        if (!I.Model.empty() && (std::fabs(I.Origin[0]) >= 62976.0f || std::fabs(I.Origin[1]) >= 62976.0f || std::fabs(I.Origin[2]) >= 62976.0f)) Stats.SkyShellPlanned = true;
+            }
+        }
+    }
     for (const Brush& B : Scene.Collision.Brushes)
     {
         if (SkyBrushes.count(&B) != 0) continue;
@@ -2268,11 +2327,11 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         WritePatches(Group, Scene, Drawn, 0, ForGdt, Stats, Number, PatchKind::NotDecal);
         WritePatches(DecalGroup, Scene, Drawn, 0, ForGdt, Stats, DecalNumber, PatchKind::Decal);
         // the world's patch-fate triangles: candidates = taken by a collision mesh + drawn by a brush side + written by the render pass (+ the ones the collision pass never saw: none)
-        if (Stats.CollisionTriangles > 0 && Stats.CollisionRenderCandidates != Stats.RenderWorldTaken + Stats.RenderWorldByBrush + Stats.RenderWorldInPass)
+        if (Stats.CollisionTriangles > 0 && Stats.CollisionRenderCandidates != Stats.RenderWorldTaken + Stats.RenderWorldByBrush + Stats.RenderWorldInPass + Stats.RenderWorldSky)
         {
             Stats.Mesh.AccountingFailed++;
-            Stats.CoverageLines.push_back(std::format("world render triangles: {} candidates are not {} taken by collision meshes + {} drawn by a brush side + {} in the render pass\n", Stats.CollisionRenderCandidates,
-                                                      Stats.RenderWorldTaken, Stats.RenderWorldByBrush, Stats.RenderWorldInPass));
+            Stats.CoverageLines.push_back(std::format("world render triangles: {} candidates are not {} taken by collision meshes + {} drawn by a brush side + {} in the render pass + {} of a dropped sky surface\n", Stats.CollisionRenderCandidates,
+                                                      Stats.RenderWorldTaken, Stats.RenderWorldByBrush, Stats.RenderWorldInPass, Stats.RenderWorldSky));
         }
         for (const uint32_t O : Owners)
             if (!Patched.count(O))
@@ -2334,13 +2393,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         {
             std::array<double, 3> A{}, B{};
             SunBox(Lo, Hi, 1024.0f, 64000.0f, A, B);
-            // a box that reaches the clamp would put slabs inside the map: no shell then, said
-            const auto Reaches = [](const std::array<float, 3>& L, const std::array<float, 3>& H) {
-                bool R = false;
-                for (size_t K = 0; K < 3; K++)
-                    R = R || std::fabs(static_cast<double>(L[K]) - 1024.0) >= 64000.0 || std::fabs(static_cast<double>(H[K]) + 1024.0) >= 64000.0;
-                return R;
-            };
+            // a box that reaches the clamp would put slabs inside the map: no shell then, said (Reaches, above)
             bool Clamped = Reaches(Lo, Hi);
             // M4f: the bounds reach the limit; leave out every static instance whose origin is beyond it (position rule). When the rest fits, the shell is built from that
             // and the left-out instances go to the vista file. Otherwise today's behaviour.
@@ -3295,6 +3348,65 @@ int RadiantWriterSelfTest(std::string& Failures)
             const bool XOk = WriteRadiant(Prefix, (Dir / "toolsky" / "prefixsky.map").string(), XS, Error);
             Check(XOk && XS.Brushes == 1 && XS.ToolMat.SkyBrushesDropped == 1 && XS.SkyShells == 1, "a solid brush of skyscraper_concrete is not a sky even when it is the first collision material starting with sky; the exact sky slab is cut",
                   Error + " " + std::to_string(XS.Brushes) + "/" + std::to_string(XS.ToolMat.SkyBrushesDropped));
+        }
+
+        // the sky dome as a render surface: with the shell it is not written and is counted (techset wc_sky*, or the name hdr_sky_*); skyscraper_* stays; without the shell it stays
+        {
+            const auto Dome = [&](bool Shell) {
+                MapScene D;
+                D.Game = "mwr";
+                D.SealWithSkyShell = Shell;
+                D.MapEnts = "{\n\"classname\" \"worldspawn\"\n}\n";
+                D.Collision.Brushes.push_back(Named(0, { "clip", "clip", "clip" }));
+                Mesh World;
+                World.Name = "world";
+                int Row = 0;
+                for (const char* Material : { "sky_dome_by_techset", "skyscraper_facade", "hdr_sky_h1_by_name" })
+                {
+                    Surface S;
+                    S.Material = Material;
+                    const float Z = 400.0f + 64.0f * static_cast<float>(Row++);
+                    const float C[4][2] = { { 0, 0 }, { 128, 0 }, { 128, 96 }, { 0, 96 } };
+                    for (const auto& P : C)
+                    {
+                        Vertex V;
+                        V.Pos[0] = P[0], V.Pos[1] = P[1], V.Pos[2] = Z;
+                        V.Normal[2] = 1, V.NormalRead = true;
+                        V.Uv[0] = P[0] / 128.0f, V.Uv[1] = P[1] / 96.0f;
+                        S.Vertices.push_back(V);
+                    }
+                    S.Indices = { 0, 1, 2, 0, 2, 3 };
+                    World.Surfaces.push_back(S);
+                }
+                D.Objects.push_back(World);
+                D.Materials["sky_dome_by_techset"].Name = "sky_dome_by_techset";
+                D.Materials["sky_dome_by_techset"].Techset = "wc_sky_cso_nfwpf";
+                D.Materials["skyscraper_facade"].Name = "skyscraper_facade";
+                D.Materials["skyscraper_facade"].Techset = "m_l_sm_lmpb_t0c0n0sd0_nfwpf";
+                return D;
+            };
+            RadiantStats WS, NS;
+            const fs::path WMap = Dir / "toolsky" / "domeshell.map", NMap = Dir / "toolsky" / "domenoshell.map";
+            const bool WOk = WriteRadiant(Dome(true), WMap.string(), WS, Error);
+            const std::string WText = Read(WMap);
+            Check(WOk && WS.SkyMeshesDropped == 2 && WS.SkyTrianglesDropped == 4 && WText.find("sky_dome_by_techset") == std::string::npos && WText.find("hdr_sky_h1_by_name") == std::string::npos,
+                  "with the sky shell a sky render surface (techset wc_sky, or the name hdr_sky_) is not written and is counted", Error + " " + std::to_string(WS.SkyMeshesDropped));
+            Check(WOk && WText.find("skyscraper_facade") != std::string::npos, "with the sky shell a skyscraper_* surface is kept", Error);
+            // the shell is refused (a clip brush at x=70000 puts the bounds past the +-64000 reach): the sky surfaces stay
+            {
+                MapScene Far = Dome(true);
+                Far.Collision.Brushes.push_back(Named(70000, { "clip", "clip", "clip" }));
+                RadiantStats FS2;
+                const fs::path FMap2 = Dir / "toolsky" / "domefar.map";
+                const bool FOk2 = WriteRadiant(Far, FMap2.string(), FS2, Error);
+                const std::string FText2 = Read(FMap2);
+                Check(FOk2 && FS2.SkyShells == 0 && !FS2.SkyShellPlanned && FS2.SkyMeshesDropped == 0 && FText2.find("sky_dome_by_techset") != std::string::npos && FText2.find("hdr_sky_h1_by_name") != std::string::npos,
+                      "when the shell is refused (reach limit) the sky render surfaces are kept", Error + " " + std::to_string(FS2.SkyShells) + "/" + std::to_string(FS2.SkyMeshesDropped));
+            }
+            const bool NOk = WriteRadiant(Dome(false), NMap.string(), NS, Error);
+            const std::string NText = Read(NMap);
+            Check(NOk && NS.SkyMeshesDropped == 0 && NText.find("sky_dome_by_techset") != std::string::npos && NText.find("hdr_sky_h1_by_name") != std::string::npos,
+                  "with no sky shell every surface is kept, sky or not", Error + " " + std::to_string(NS.SkyMeshesDropped));
         }
 
         // a brush a tool name drops (a portal) stays out of the bounds: one at x=70000 neither blocks the shell nor stretches it

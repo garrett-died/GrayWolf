@@ -352,7 +352,7 @@ void Builder::Add(const Materials::Description& Given, const fs::path& Dir, cons
             Counter("foliage_decal_unchanged")++;
         else if (!Lit)
             Counter("foliage_not_lit_unchanged")++;
-        else if (Tech.rfind("vegetation", 0) == 0 || Tech.find("backlit") != std::string::npos)
+        else if (Tech.rfind("vegetation", 0) == 0)   // not backlit: MWR's alpha-tested dsl rows (techset_rules.txt alphatest_t_dsl*) choose backlit for a t0 fence, and a foliage one still takes vegetation here
             Counter("foliage_already_vegetation")++;
         else
         {
@@ -621,12 +621,22 @@ void Builder::Add(const Materials::Description& Given, const fs::path& Dir, cons
     const bool Catalog = Targets != nullptr && Targets->HasCatalog();
     if (Targets != nullptr && !Catalog) Counter("techset_data_missing")++;
     if (Catalog && !Targets->HasDefaults()) Counter("material_defaults_missing")++;
+    // no catalog, MWR: the backlit family the game's techset rule chose (alphatest_t_dsl*, a hypothesis) is kept, as the foliage rule's family is. Its type has no specular colour slot and its alphaRevealMap
+    // is the thickness map, so no specular image and no emissive image is written for it. Other games and other techsets are untouched.
+    const std::string GameLower = ExportNaming::Lower(Game);
+    const bool RuleBacklit = !Catalog && Use != &Vegetation && (GameLower == "mwr" || GameLower == "h1") && ExportNaming::Lower(Given.TechsetName).rfind("lit_transparent_backlit", 0) == 0;
     M.Category = "Geometry";
     if (Catalog) M.Targeted = true;
     else if (Use == &Vegetation && !Vegetation.TechsetName.empty())
     {
         M.Type = Vegetation.TechsetName;   // no catalog: the family the foliage rule chose
         if (M.Type.size() > 5 && M.Type.compare(M.Type.size() - 5, 5, "_plus") == 0) M.Category = "Geometry Plus";
+    }
+    else if (RuleBacklit)
+    {
+        M.Type = ExportNaming::Lower(Given.TechsetName);
+        if (M.Type.size() > 5 && M.Type.compare(M.Type.size() - 5, 5, "_plus") == 0) M.Category = "Geometry Plus";
+        Counter("rule_backlit_kept")++;
     }
     else if (Emissive) M.Type = "lit_emissive";
     else if (Backlit) M.Type = "lit_backlit";
@@ -702,7 +712,8 @@ void Builder::Add(const Materials::Description& Given, const fs::path& Dir, cons
     }
     else if (!Roughness.Empty() && !Roughness.Invert) Counter("roughness_not_gloss")++;
     else Slot(M, "cosinePowerMap", Roughness, Dir, "glossMap", "Linear1ch", "compressed");
-    if (Spec)
+    if (Spec && RuleBacklit) Counter("spec_dropped_backlit")++;
+    if (Spec && !RuleBacklit)
     {
         // a full colour in the fullspec and emissive techniques, else the intensity mask theirs take
         // (with a target the slot the techset has decides: ChooseTechset gives a scalar slot its mask semantic)
@@ -749,7 +760,7 @@ void Builder::Add(const Materials::Description& Given, const fs::path& Dir, cons
         }
         if (!Done) Slot(M, "occMap", D.Occlusion, Dir, "occlusionMap", "Linear1ch", "compressed");
     }
-    if (Emissive) Slot(M, "colorMap00", D.Emissive, Dir, "diffuseMap", "sRGB3chAlpha", "compressed no alpha");
+    if (Emissive && !RuleBacklit) Slot(M, "colorMap00", D.Emissive, Dir, "diffuseMap", "sRGB3chAlpha", "compressed no alpha");
     if (Backlit && Slot(M, "alphaRevealMap", D.Transmission.Image, Dir, "thicknessMap", "Linear1ch", "compressed"))
         M.Values.emplace_back("backlightScatterColor", Floats3(D.Transmission.Color));
     if (Catalog) ChooseTechset(M, D, Source, Game, Emissive, Spec, Blend, Cutout);
@@ -1873,12 +1884,33 @@ int SelfTest(std::string& Failures)
             Ck(!Rn.Materials.empty() && Value(Rn.Materials[0], "materialType") == "vegetation_plus" && Value(Rn.Materials[0], "materialCategory") == "Geometry Plus" && B.Counters().at("t_foliage_vegetation_plus") == 1 && B.Counters().at("t_foliage_alpha_cutout") == 1,
                "without a catalog a foliage cut-out is still vegetation_plus", Rn.Materials.empty() ? "" : Value(Rn.Materials[0], "materialType"));
         }
+        // no catalog (the map's Radiant GDT): the MWR rule's backlit family is kept with Geometry Plus, colour/normal/gloss bound, no specular; another game is unchanged
+        {
+            Materials::Description D = Make("mtl_h1_fence_nocat", Gloss | Spec | Cutout);
+            D.TechsetName = "lit_transparent_backlit_plus";
+            D.SurfaceType = "metal";
+            const auto Run = [&](const char* Game, Builder::Resolved& Out, std::map<std::string, size_t>& Counters) {
+                Builder B(Base, "t_");
+                B.Add(D, Dir, nullptr, Game);
+                Out = B.Resolve();
+                Counters = B.Counters();
+            };
+            Builder::Resolved Rm, Rb;
+            std::map<std::string, size_t> Cm, Cb;
+            Run("mwr", Rm, Cm);
+            Run("bo4", Rb, Cb);
+            const auto Absent = [&](const Builder::Resolved& R, const char* Key) { const std::string V = R.Materials.empty() ? std::string("(none)") : Value(R.Materials[0], Key); return V.empty() || V == "(no key)"; };
+            Ck(!Rm.Materials.empty() && Value(Rm.Materials[0], "materialType") == "lit_transparent_backlit_plus" && Value(Rm.Materials[0], "materialCategory") == "Geometry Plus" && !Absent(Rm, "colorMap") && !Absent(Rm, "normalMap") &&
+                   !Absent(Rm, "cosinePowerMap") && Absent(Rm, "specColorMap") && Absent(Rm, "alphaRevealMap") && Cm["t_spec_dropped_backlit"] == 1,
+               "no catalog, MWR: the rule's lit_transparent_backlit_plus is kept as Geometry Plus with colour, normal and gloss, no specular, nothing in the thickness slot", Rm.Materials.empty() ? "(none)" : Value(Rm.Materials[0], "materialType"));
+            Ck(!Rb.Materials.empty() && Value(Rb.Materials[0], "materialType") == "lit_alphatest_advanced" && Cb["t_rule_backlit_kept"] == 0, "no catalog, another game: the fixed rules decide as before", Rb.Materials.empty() ? "(none)" : Value(Rb.Materials[0], "materialType"));
+        }
         // an emissive slot bound to a colour image is no emission; a real emissive image is
         {
             const auto Described = [&](const char* Emissive) {
                 Materials::Source Src;
                 Src.Name = "mtl_h1_probe";
-                Src.Techset = "m_l_sm_flagext_wv0wv1wv2_fuv_t0c0n0sd0_nfwpf";
+                Src.Techset = "m_l_sm_flagext_wv0wv1wv2_fuv_r0c0n0sd0_nfwpf";
                 Src.SortKey = 2;
                 Src.SurfaceFlags = 128;
                 Src.Images.push_back({ "x_col.png", Materials::Role::Unknown, 0xA0AB1041u, 0 });
@@ -1908,8 +1940,9 @@ int SelfTest(std::string& Failures)
             Src.Images.push_back({ "x_col.png", Materials::Role::Unknown, 0xA0AB1041u, 0 });
             Src.Images.push_back({ "x_nml.png", Materials::Role::Unknown, 0x59D30D0Fu, 0 });
             const Materials::Description Beech = Materials::AdapterFor("H1").Describe(Src);
-            Ck(Beech.FoliageVegetation && Beech.SurfaceType == "foliage" && Beech.TechsetName == "lit" && Beech.Alpha == Materials::AlphaMode::Opaque,
-                  "the MWR adapter asks, and a wind-animated foliage techset names no alpha test (the colour image's alpha decides in the builder)", Beech.SurfaceType + " " + Beech.TechsetName);
+            // radiant-fix2: the t0 sampler set (alpha-tested colour, a hypothesis) is the alpha test these techsets carry instead of aat, so the rule says cutout and the builder takes vegetation from the techset
+            Ck(Beech.FoliageVegetation && Beech.SurfaceType == "foliage" && Beech.TechsetName == "lit_alphatest" && Beech.Alpha == Materials::AlphaMode::Cutout,
+                  "the MWR adapter asks, and a wind-animated foliage techset with a t0 sampler set is alpha tested (cutout) by the rule", Beech.SurfaceType + " " + Beech.TechsetName);
             Ck(!Materials::AdapterFor("bo4").Describe(Src).FoliageVegetation, "another game's adapter does not ask");
         }
     }
@@ -1993,6 +2026,48 @@ int SelfTest(std::string& Failures)
         Check(Pane.TechsetName == "glass" && PaneNoBit.TechsetName == "lit_transparent_advanced_fullspec", "mwr: cltrans with the glass surface is glass, without it coloured glass", Pane.TechsetName + " / " + PaneNoBit.TechsetName);
         const Materials::Description Test = Described("m_l_sm_lmpb_r0c0n0sd0om0_aat_nfwpf", 2, 1ll << 7, false);
         Check(Test.TechsetName == "lit_alphatest_plus" && Test.Alpha == Materials::AlphaMode::Cutout, "mwr: aat without ndw is alpha tested, cutout", Test.TechsetName);
+        // radiant-fix2: a t0 sampler set (alpha-tested colour, a hypothesis) without the aat token is alpha tested too; dsl takes the owner's backlit family
+        {
+            const Materials::Description Fence = Described("wc_l_sm_lmpb_t0c0n0sd0_nfwpf_dsl", 2, 1ll << 4, false);
+            const Materials::Description Concrete = Described("m_l_sm_lmpb_t0c0n0sd0om0_nfwpf", 2, 1ll << 4, false);
+            const Materials::Description Pole = Described("wc_l_sm_lmpb_r0c0n0sd0_nfwpf_dsl", 2, 1ll << 12, false);
+            Check(Fence.TechsetName == "lit_transparent_backlit_plus" && Fence.Alpha == Materials::AlphaMode::Cutout, "mwr: the chain-link fence techset (t0 and dsl) is lit_transparent_backlit_plus, cutout", Fence.TechsetName);
+            Check(Concrete.TechsetName == "lit_alphatest_plus" && Concrete.Alpha == Materials::AlphaMode::Cutout, "mwr: a t0 material on concrete with no aat or dsl is lit_alphatest_plus, cutout", Concrete.TechsetName);
+            Check(Pole.TechsetName == "lit_advanced_fullspec" && Pole.Alpha == Materials::AlphaMode::Opaque, "mwr: an r0 techset is unchanged (a metal pole stays lit_advanced_fullspec, opaque)", Pole.TechsetName);
+            // a foliage t0 material still becomes vegetation (the backlit family the rule gave is not mistaken for an already-vegetation family)
+            const Materials::Description Leaf = Described("m_l_sm_lmpb_t0c0n0sd0_nfwpf_dsl", 2, 1ll << 7, false);
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            Materials::Description Given = Leaf;
+            Given.Name = "mtl_h1_leaf_t0";
+            Given.Albedo = Map("c.png");
+            Given.Normal = Map("n.png");
+            Given.Roughness = Map("g.png", true);
+            B.Add(Given, Dir, nullptr, "mwr");
+            const Builder::Resolved Rv = B.Resolve();
+            Check(Leaf.TechsetName == "lit_transparent_backlit_plus" && Leaf.SurfaceType == "foliage" && !Rv.Materials.empty() && Value(Rv.Materials[0], "materialType") == "vegetation_plus",
+                  "mwr: a foliage t0 material is vegetation_plus, not the backlit family the rule chose", Leaf.TechsetName + " -> " + (Rv.Materials.empty() ? std::string("(none)") : Value(Rv.Materials[0], "materialType")));
+            // the slots of the backlit family: colour, normal and gloss bind, a specular map has no slot and is dropped and counted, the thickness slot takes no specular image
+            Materials::Description Fe = Fence;
+            Fe.Name = "mtl_h1_fence_t0";
+            Fe.Albedo = Map("c.png");
+            Fe.Normal = Map("n.png");
+            Fe.Roughness = Map("g.png", true);
+            Fe.Specular = Map("s.png");
+            Fe.SurfaceType = "metal";
+            Builder F(Base, "t_");
+            F.TechsetData(&Data);
+            F.Add(Fe, Dir, nullptr, "mwr");
+            const Builder::Resolved Rf = F.Resolve();
+            const bool Got = !Rf.Materials.empty();
+            const auto Unmapped = F.Counters().find("t_unmapped_slot_specColorMap");
+            Check(Got && Value(Rf.Materials[0], "materialType") == "lit_transparent_backlit_plus" && !Value(Rf.Materials[0], "colorMap").empty() && Value(Rf.Materials[0], "colorMap") != "(no key)" &&
+                      !Value(Rf.Materials[0], "normalMap").empty() && Value(Rf.Materials[0], "normalMap") != "(no key)" && !Value(Rf.Materials[0], "cosinePowerMap").empty() && Value(Rf.Materials[0], "cosinePowerMap") != "(no key)" &&
+                      (Value(Rf.Materials[0], "specColorMap").empty() || Value(Rf.Materials[0], "specColorMap") == "(no key)") && (Value(Rf.Materials[0], "alphaRevealMap").empty() || Value(Rf.Materials[0], "alphaRevealMap") == "(no key)") &&
+                      Unmapped != F.Counters().end() && Unmapped->second == 1,
+                  "mwr: lit_transparent_backlit_plus binds colour, normal and gloss; a specular map is dropped and counted; alphaRevealMap (thickness) takes no specular image",
+                  Got ? Value(Rf.Materials[0], "materialType") + " spec=" + Value(Rf.Materials[0], "specColorMap") + " thick=" + Value(Rf.Materials[0], "alphaRevealMap") : std::string("(none)"));
+        }
         const Materials::Description Ui = Described("2d_add_nfwpf", 0x3c, 0, false);
         Check(Ui.SkipWhy.rfind("ui_2d:", 0) == 0, "mwr: a 2d techset is skipped", Ui.SkipWhy);
         const Materials::Description Fx = Described("effect_blend_nfwpf", 0x35, 0, false);

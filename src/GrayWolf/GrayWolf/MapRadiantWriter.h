@@ -82,6 +82,9 @@ namespace Maps
         RenderMeshCounters CollisionMesh;
         size_t CollisionTriangles = 0, CollisionTwinned = 0, CollisionAmbiguous = 0, CollisionDecalOnly = 0, CollisionDecalBeside = 0, CollisionTwinDrawnByBrush = 0, CollisionRenderTaken = 0;
         size_t CollisionRenderCandidates = 0, RenderWorldTaken = 0, RenderWorldByBrush = 0, RenderWorldInPass = 0;   // the world patch-fate triangles, and where each went
+        bool SkyShellPlanned = false;               // the sky shell will be written (decided before the patch passes): only then are sky render surfaces dropped
+        size_t RenderWorldSky = 0;                  // ... and the ones of a sky render surface dropped under the sky shell
+        size_t SkyMeshesDropped = 0, SkyTrianglesDropped = 0;   // sky render surfaces (any owner) not written because the sky shell stands in, and their patch triangles
         size_t CollisionExhausted = 0, CollisionRenderStayed = 0, CollisionToolRejected = 0;
         std::map<uint64_t, size_t> BrushToolRows;   // brush sides named by a profile row (ClipToolKey), by row
         std::string CollisionToolSummary;           // the tool meshes by name and contents, as written to <map>.meshes.txt (for <map>.ownercheck.txt)

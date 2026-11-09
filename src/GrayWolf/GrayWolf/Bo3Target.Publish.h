@@ -63,6 +63,8 @@ namespace Bo3Target::Publish
     {
         const GdtDb::Catalog* Held = nullptr;           // null: no check (off, or the database is unreadable)
         const GdtDb::StockIndex* Stock = nullptr;       // required
+        size_t OwnRows = 0;                             // gdt.db rows left out of Held: their gdt is in the graywolf manifest (GrayWolf rewrites it)
+        size_t StaleRows = 0;                           // gdt.db rows left out of Held: their gdt file is not on disk (the database is behind)
     };
 
     // Loads the gdt.db of Root read-only and the stock index. Warnings (one for an unreadable database) are
