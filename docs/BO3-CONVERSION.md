@@ -200,7 +200,7 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
   `material.surface_from_collision`: a surface wins with at least 90% of the material's twinned triangles and at least eight of them, and must be one of
   the material's own bits. A layer material with no collision evidence can take the surface of the same art in a plain material, which settles nine.
   The rest stay failures rather than guesses.
-- Modern Warfare Remastered maps get a `volume_sun` around the collision bounds, an `info_null` target, an `ssi` entry `graywolf_<map>` and
+- Modern Warfare Remastered maps get a `volume_sun` around the play area (hypothesis: the spawns, intermission and path nodes plus 2048, clamped inside the shell bounds), in the main `.map` rather than a prefab, an `info_null` target, an `ssi` entry `graywolf_<map>` and
   `reflection_probe` entities. Sun angles and colour ratios come from the game. Its brightness has no known conversion to stops, so stops, EV range and
   shadow values are the median of the 94 stock entries, listed as `ssi_values_from_stock_median`: a starting value to tune, not a value read from the map.
   Probes are at the game's origins; the record holds no size, so size is not read.
@@ -210,10 +210,12 @@ image is judged from the stock GDT. A code image with no Mod Tools semantic stay
   `hdrColorParms` are scaled by one factor for the game, set so `mp_crash` matches the upper-hemisphere mean of a stock day sky, and `skyStops`
   is the stock median, listed as `sky_values_from_stock_median`. `skyRotation 0` is an assumption. The brightest sky texel lies 11 to 36 degrees
   from the sun direction on four maps.
-- A Modern Warfare Remastered map is enclosed by six `sky` brushes around everything written, as one group that can be deleted. When the bounds
+- A Modern Warfare Remastered map is enclosed by six `sky` brushes around everything written, as one group that can be deleted, in the main `.map` (not a prefab, so it is always loaded). The game's own all-`sky` world brushes (six slabs far out, which would stretch the bounds) are dropped, counted in the report, and the sky comes from the `ssi` skybox model and the `volume_sun`. When the bounds
   would pass 64,000 units, the static models placed that far out are left out of the shell and written to `<map>_prefab_vista.map`, which the
   main map does not call, so they are not compiled (a model outside the shell is thought to leak). On `mp_crash` that is ten vista models, up to
   105,148 units out; the report names them and anything else left outside. Whether cod2map takes the shell as sealed is unknown.
+- Tool materials are written as Black Ops III names. `zonekit/profiles/t7/target/tool-materials.json` holds the BO3 names (tested in the stock prefabs, or a hypothesis from the tool images) and, per source lineage, the game's own names mapped onto them (Modern Warfare Remastered: `clip_nosight_brick` is `brick_clip_nosight`, `clip_full_metal` is `metal_clip_full`). An IW portal has no BO3 tool, so a brush with a portal face (or a mesh of a portal material) is not written. A name with no row takes the `clip_<kind>_<surface>` rule, then loses its surface, then the nearest base tool by prefix; each of those is a `tool_material_fallback` line in the unresolved list. `<map>.tools.txt` counts every name. Names are never left outside the list.
+- Foliage materials (surface `foliage`, never decals) take the vegetation family when the source is alpha tested (`vegetation_plus` with a gloss or occlusion map, else `vegetation`) and the backlit transparent family when it blends (`lit_transparent_backlit_plus`, `lit_transparent_backlit`). Opaque foliage such as bark is unchanged. MWR's foliage techsets carry no alpha-test token, so the colour image's alpha decides (10% of the texels below 128). A foliage material with a lit emissive map is left in its family and reported (`material.foliage_emissive`). No specular image goes in the thickness slot.
 - The colour grade (`clut`) is the identity on the maps that have one, so no `lutmaterial` is written.
 - Script-placed effects come from `maps/createfx/<map>_fx`: 230 on `mp_crash`, 187 on `mp_crossfire`, written as entities in the effects prefab. A placement
   is tied to its name by the shape of its instruction group, not by a full bytecode decode. A script whose groups do not fit is rejected whole and

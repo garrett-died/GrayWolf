@@ -14,6 +14,7 @@
 #include "MapRadiantTextures.h"
 #include "MapRenderMeshes.h"
 #include "MapScene.h"
+#include "MapToolMaterials.h"
 
 #include <array>
 #include <filesystem>
@@ -99,6 +100,8 @@ namespace Maps
         std::vector<std::string> MeshLines;
         // <map>.ownercheck.txt: what to open in Radiant and where to look (M2c)
         std::vector<std::string> OwnerCheckLines;
+        // the tool names written, mapped onto Black Ops III's (MapToolMaterials.h; <map>.tools.txt): set by WriteRadiant
+        ToolUse ToolMat;
         size_t Probes = 0, ProbesNoSize = 0, SunVolumes = 0, EffectPlacements = 0, EffectPlacementsRefused = 0, SsiStockValues = 0, SkyWritten = 0, SkyShells = 0;
         std::vector<std::string> DataFiles;   // see SceneWriteResult::DataFiles   // M4 (SkyWritten: M4e, the sky's three GDT entries and its EXR): reflection probes (and those with no size read), volume_sun entities, script-placed effects written
         size_t Lights = 0, PlacementsPolar = 0, PlacementsPolarNoise = 0, KeysUnresolved = 0;

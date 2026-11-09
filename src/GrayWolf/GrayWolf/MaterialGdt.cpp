@@ -317,32 +317,129 @@ int Builder::GreyP99(const fs::path& File)
     return 255;
 }
 
+double Builder::AlphaMaskShare(const fs::path& File)
+{
+    Rgba8Image Image;
+    std::string Error;
+    if (!Bo3Target::LoadRgba8(File, Image, Error) || Image.Width == 0 || Image.Height == 0 || Image.Pixels.size() < static_cast<size_t>(Image.Width) * Image.Height * 4) return -1.0;
+    const size_t Count = static_cast<size_t>(Image.Width) * Image.Height;
+    size_t Below = 0;
+    for (size_t P = 0; P < Count; P++) Below += Image.Pixels[P * 4 + 3] < 128 ? 1 : 0;
+    return static_cast<double>(Below) / static_cast<double>(Count);
+}
+
 void Builder::Add(const Materials::Description& Given, const fs::path& Dir, const Materials::Source* Source, const std::string& Game)
 {
     AddDir = Dir;
+    // Foliage as vegetation (docs/hydrax-port/tools-veg.md), for a game whose adapter asks (Description::FoliageVegetation). A geometry material (never a decal) whose surface is foliage:
+    //   alpha tested in the source   -> vegetation_plus (gloss or occlusion map) or vegetation
+    //   blended in the source        -> lit_transparent_backlit_plus or lit_transparent_backlit
+    //   opaque in the source         -> unchanged (bark)
+    // The source's alpha is told by its techset name (the adapter's Alpha: `aat` cut-out, `cltrans` / `ndw` blend). Where the name says opaque, the colour image's alpha is the evidence: MWR's foliage
+    // techsets carry no alpha-test token (m_l_sm_flagext_wv0wv1wv2_fuv_...), their leaves are cut out by the colour map's alpha (beech_tree_leaves_c: 80% of the texels below 128, bark 0%), and
+    // the state bits of the game are not decoded. An emissive map on foliage is measured, not trusted: a black one is dropped, a lit one keeps the material out of this family, both reported.
+    // The thickness slot (specColorMap of the vegetation family) is never given a specular image; the tint mask (colorMap00) is never given an emissive one.
+    Materials::Description Vegetation;
+    std::vector<Note> PixelNotes;
+    const Materials::Description* Use = &Given;
+    if (Given.FoliageVegetation && Given.SurfaceType == "foliage" && Given.SkipWhy.empty())
+    {
+        Counter("foliage_candidates")++;
+        const std::string Tech = ExportNaming::Lower(Given.TechsetName);
+        const bool Lit = Tech.rfind("lit", 0) == 0;   // a material with no techset name (shadow casters, ambient) is not foliage geometry
+        const std::string Shown = Tech.empty() ? std::string("(none)") : Tech;
+        if (Tech.find("decal") != std::string::npos)
+            Counter("foliage_decal_unchanged")++;
+        else if (!Lit)
+            Counter("foliage_not_lit_unchanged")++;
+        else if (Tech.rfind("vegetation", 0) == 0 || Tech.find("backlit") != std::string::npos)
+            Counter("foliage_already_vegetation")++;
+        else
+        {
+            // 0 opaque, 1 cut out, 2 blended; and what said so
+            int Class = 0;
+            std::string Evidence;
+            double Share = -1.0;
+            if (Given.Alpha == Materials::AlphaMode::Cutout) Class = 1, Evidence = "techset_alpha_test";
+            else if (Given.Alpha == Materials::AlphaMode::Blend) Class = 2, Evidence = "techset_blend";
+            else if (!Given.Albedo.Empty())
+            {
+                Share = AlphaMaskShare((Dir / fs::path(Given.Albedo.Path)).lexically_normal());
+                if (Share < 0.0) Counter("foliage_colour_unread")++;
+                else if (Share >= 0.10) Class = 1, Evidence = "colour_alpha_mask";   // measured on mp_vacant: foliage 0.65 to 0.93, none between 0 and 0.65
+            }
+            // an emissive map on foliage: measured. Black: dropped (the material is not emissive). Lit or unreadable: the material keeps the family the rules chose, and says so.
+            bool KeepsEmissive = false;
+            if (Class != 0 && !Given.Emissive.Empty())
+            {
+                const int P99 = GreyP99((Dir / fs::path(Given.Emissive.Path)).lexically_normal());
+                if (P99 >= 0 && P99 <= 8) Counter("foliage_emissive_black_dropped")++;
+                else
+                {
+                    KeepsEmissive = true;
+                    Counter(P99 < 0 ? "foliage_emissive_unread" : "foliage_emissive_kept")++;
+                    PixelNotes.push_back({ "material.foliage_emissive", "game=" + Game + ", p99=" + std::to_string(P99) + ", techset=" + Shown,
+                                           "a foliage material has an emissive map " + std::string(P99 < 0 ? "that could not be read" : "that is not black") + ": it is not given the vegetation family (its tint mask slot is the emissive one) and keeps the family the rules chose; check by eye" });
+                }
+            }
+            if (Class != 0 && !KeepsEmissive)
+            {
+                const bool Gloss = !Given.Roughness.Empty() || !Given.Occlusion.Empty();
+                const std::string Family = Class == 1 ? (Gloss ? "vegetation_plus" : "vegetation") : (Gloss ? "lit_transparent_backlit_plus" : "lit_transparent_backlit");
+                // with a catalog the family must be in it and its class decides the alpha mode; without one (a plain --material-gdt run) the four families are the BO3 stock ones, all alpha tested
+                const bool Cat = Targets != nullptr && Targets->HasCatalog();
+                const Bo3Target::Techsets::Techset* Chosen = Cat ? Targets->Find(Family) : nullptr;
+                if (Cat && Chosen == nullptr)
+                    Counter("foliage_family_not_in_catalog")++;
+                else
+                {
+                    Vegetation = Given;
+                    Vegetation.TechsetName = Family;
+                    Vegetation.TechsetWhy.clear();
+                    // the alpha mode is the chosen techset's own class in the catalog (the backlit family is alpha tested, not blended)
+                    Vegetation.Alpha = Chosen == nullptr || Chosen->Class == Bo3Target::Techsets::Blend::AlphaTest ? Materials::AlphaMode::Cutout
+                                       : Chosen->Class == Bo3Target::Techsets::Blend::Opaque                       ? Materials::AlphaMode::Opaque
+                                                                                                                   : Materials::AlphaMode::Blend;
+                    Vegetation.Specular = Materials::Map();            // thickness lives in specColorMap here: no specular image goes in
+                    Vegetation.Metal = Materials::Description::PixelMetal();
+                    Vegetation.Emissive = Materials::Map();            // tint mask lives in colorMap00: no emissive image goes in
+                    Counter(Vegetation.Alpha == Materials::AlphaMode::Cutout ? "foliage_alpha_cutout" : Vegetation.Alpha == Materials::AlphaMode::Opaque ? "foliage_alpha_opaque" : "foliage_alpha_blend")++;
+                    Vegetation.RevealSemantic = 0;
+                    Vegetation.FamilyWhy.clear();
+                    Use = &Vegetation;
+                    Counter("foliage_" + Family)++;
+                    Counter("foliage_evidence_" + Evidence)++;
+                    PixelNotes.push_back({ "material.foliage_family", "game=" + Game + ", from=" + (Given.TechsetName.empty() ? std::string("(none)") : Given.TechsetName) + ", to=" + Family + ", evidence=" + Evidence +
+                                               (Share >= 0.0 ? ", alpha_below_128=" + std::to_string(Share) : std::string()),
+                                           "a foliage surface that is " + std::string(Class == 1 ? "alpha tested" : "blended") + " in the source takes BO3's " + Family + " family" });
+                }
+            }
+            else if (Class == 0)
+                Counter("foliage_opaque_unchanged")++;
+        }
+    }
+    const Materials::Description& Base = *Use;
     // The pixel check of a family chosen by the surface type alone (Description::PixelMetal, mwr-m1.md F.1): a dielectric by surface whose specular image is bare-metal bright is a metal.
     // Only this direction is acted on: a metal surface with a dielectric-looking map keeps the advanced family and its map (harmless; counted).
     Materials::Description Checked;
-    const Materials::Description* Use = &Given;
-    std::vector<Note> PixelNotes;
-    if (Given.Metal.Active())
+    if (Base.Metal.Active())
     {
-        const fs::path File = (Dir / fs::path(Given.Metal.Specular.Path)).lexically_normal();
+        const fs::path File = (Dir / fs::path(Base.Metal.Specular.Path)).lexically_normal();
         const int P99 = GreyP99(File);
         if (P99 < 0) Counter("pixel_metal_unread")++;
         else
         {
             Counter("pixel_metal_checked")++;
-            if (static_cast<float>(P99) > Given.Metal.P99)
+            if (static_cast<float>(P99) > Base.Metal.P99)
             {
-                Checked = Given;
-                Checked.TechsetName = Given.Metal.PromoteTechset;
-                Checked.Specular = Given.Metal.Specular;
+                Checked = Base;
+                Checked.TechsetName = Base.Metal.PromoteTechset;
+                Checked.Specular = Base.Metal.Specular;
                 Checked.Metal = Materials::Description::PixelMetal();
                 Use = &Checked;
                 Counter("pixel_metal_promoted")++;
-                PixelNotes.push_back({ "material.family_pixel_metal", "game=" + Game + ", p99=" + std::to_string(P99) + ", techset=" + Given.Metal.PromoteTechset,
-                                       "the surface type calls the material a dielectric but its specular image is bare-metal bright (99th percentile of grey above " + std::to_string(static_cast<int>(Given.Metal.P99)) +
+                PixelNotes.push_back({ "material.family_pixel_metal", "game=" + Game + ", p99=" + std::to_string(P99) + ", techset=" + Base.Metal.PromoteTechset,
+                                       "the surface type calls the material a dielectric but its specular image is bare-metal bright (99th percentile of grey above " + std::to_string(static_cast<int>(Base.Metal.P99)) +
                                            "): it takes the family with a specular colour map" });
             }
         }
@@ -526,6 +623,11 @@ void Builder::Add(const Materials::Description& Given, const fs::path& Dir, cons
     if (Catalog && !Targets->HasDefaults()) Counter("material_defaults_missing")++;
     M.Category = "Geometry";
     if (Catalog) M.Targeted = true;
+    else if (Use == &Vegetation && !Vegetation.TechsetName.empty())
+    {
+        M.Type = Vegetation.TechsetName;   // no catalog: the family the foliage rule chose
+        if (M.Type.size() > 5 && M.Type.compare(M.Type.size() - 5, 5, "_plus") == 0) M.Category = "Geometry Plus";
+    }
     else if (Emissive) M.Type = "lit_emissive";
     else if (Backlit) M.Type = "lit_backlit";
     else if (Blend) M.Type = Spec ? "lit_transparent_advanced" : "lit_transparent";
@@ -1648,6 +1750,168 @@ int SelfTest(std::string& Failures)
         Check(SurfaceOf("", "", Options, Note, Counters) == "<none>" && Counters["t_surface_unknown_not_read"] == 1, "a reader that gives nothing counts as not_read", "");
         Check(SurfaceOf("", "no_bo3_use:player", Options, Note, Counters) == "<none>" && Note == "material.surface_no_bo3_use" && Counters["t_surface_no_bo3_use"] == 1,
               "a surface no stock BO3 material uses is <none> with its own row, not unknown", Note);
+    }
+    // Foliage as vegetation (docs/hydrax-port/tools-veg.md): a foliage surface that is alpha tested in the source takes vegetation(_plus), one that blends takes lit_transparent_backlit(_plus), an opaque one
+    // (bark) and a decal are unchanged. The alpha is the techset's (aat, cltrans, ndw), or, where the name says opaque, the colour image's alpha.
+    {
+        const auto Ck = [&](bool Ok, const char* What, const std::string& Got = std::string()) { Check(Ok, What, Got); };
+        const auto Png = [&](const char* Name, uint8_t Rgb, uint8_t AlphaOfHalf) {
+            Rgba8Image Image;
+            Image.Width = Image.Height = 8;
+            Image.Pixels.assign(8 * 8 * 4, Rgb);
+            for (size_t P = 0; P < 64; P++) Image.Pixels[P * 4 + 3] = P % 2 == 0 ? AlphaOfHalf : 255;   // half the texels carry AlphaOfHalf
+            std::string Error;
+            return Bo3Target::SaveRgba8(Dir / Name, Image, Error);
+        };
+        const auto PngN = [&](const char* Name, size_t Transparent) {
+            Rgba8Image Image;
+            Image.Width = Image.Height = 8;
+            Image.Pixels.assign(8 * 8 * 4, 120);
+            for (size_t P = 0; P < 64; P++) Image.Pixels[P * 4 + 3] = P < Transparent ? 0 : 255;
+            std::string Error;
+            return Bo3Target::SaveRgba8(Dir / Name, Image, Error);
+        };
+        Ck(PngN("veg_few5.png", 3) && PngN("veg_some12.png", 8) && Builder::AlphaMaskShare(Dir / "veg_few5.png") == 3.0 / 64.0 && Builder::AlphaMaskShare(Dir / "veg_some12.png") == 8.0 / 64.0, "foliage: the threshold's two test images");
+        Ck(Png("veg_leaf.png", 120, 0) && Png("veg_bark.png", 120, 255) && Png("veg_black.png", 0, 255) && Png("veg_bright.png", 200, 255) && Png("veg_few.png", 120, 255) &&
+                  Builder::AlphaMaskShare(Dir / "veg_leaf.png") == 0.5 && Builder::AlphaMaskShare(Dir / "veg_bark.png") == 0.0 && Builder::AlphaMaskShare(Dir / "veg_none.png") == -1.0,
+              "foliage: the share of a PNG's texels with alpha below 128, -1 for a file that is not there");
+        const auto Foliage = [&](const char* Colour, const char* Techset, Materials::AlphaMode Alpha, int Features, const char* Surface, Builder::Resolved& Out, std::map<std::string, size_t>* Counters = nullptr, bool Asked = true) {
+            Materials::Description D = Make("mtl_h1_leaves", Features);
+            D.Albedo = Map(Colour);
+            D.SurfaceType = Surface;
+            D.TechsetName = Techset;
+            D.Alpha = Alpha;
+            D.FoliageVegetation = Asked;
+            Builder B(Base, "t_");
+            B.TechsetData(&Data);
+            B.Add(D, Dir, nullptr, "mwr");
+            Out = B.Resolve();
+            if (Counters != nullptr) *Counters = B.Counters();
+            return Out.Materials.size() == 1 ? Value(Out.Materials[0], "materialType") : std::string("(none)");
+        };
+        Builder::Resolved R;
+        std::map<std::string, size_t> C;
+        // opaque by name, cut out by the colour image's alpha
+        Ck(Foliage("veg_leaf.png", "lit_plus", Materials::AlphaMode::Opaque, Gloss, "foliage", R, &C) == "vegetation_plus" && C["t_foliage_evidence_colour_alpha_mask"] == 1,
+              "foliage with a gloss map and an alpha mask in the colour image is vegetation_plus", R.Materials.empty() ? std::string("(none)") : Value(R.Materials[0], "materialType"));
+        Ck(Foliage("veg_leaf.png", "lit", Materials::AlphaMode::Opaque, 0, "foliage", R) == "vegetation", "foliage with neither gloss nor occlusion is vegetation");
+        Ck(Foliage("veg_leaf.png", "lit_plus", Materials::AlphaMode::Opaque, Occ, "foliage", R) == "vegetation_plus", "an occlusion map alone also makes it vegetation_plus");
+        // the threshold (10% of the texels below alpha 128): padding of 4.7% (an opaque bark atlas) stays opaque, 12.5% is a cut-out
+        Ck(Foliage("veg_few5.png", "lit_plus", Materials::AlphaMode::Opaque, Gloss, "foliage", R, &C) == "lit_plus" && C["t_foliage_opaque_unchanged"] == 1, "foliage whose colour image has 4.7% transparent texels stays opaque");
+        Ck(Foliage("veg_some12.png", "lit_plus", Materials::AlphaMode::Opaque, Gloss, "foliage", R, &C) == "vegetation_plus" && C["t_foliage_evidence_colour_alpha_mask"] == 1, "foliage whose colour image has 12.5% transparent texels is a cut-out");
+        // a material with no techset name (a shadow caster) is not foliage geometry
+        Foliage("veg_leaf.png", "", Materials::AlphaMode::Cutout, Gloss, "foliage", R, &C);
+        Ck(C["t_foliage_candidates"] == 1 && C["t_foliage_not_lit_unchanged"] == 1 && C["t_foliage_vegetation_plus"] == 0, "a material with no techset name is left alone");
+        // alpha test by the techset name
+        Ck(Foliage("veg_bark.png", "lit_alphatest_plus", Materials::AlphaMode::Cutout, Gloss, "foliage", R, &C) == "vegetation_plus" && C["t_foliage_evidence_techset_alpha_test"] == 1,
+              "foliage alpha tested by its techset is vegetation_plus whatever the image says");
+        Ck(Foliage("veg_bark.png", "lit_alphatest", Materials::AlphaMode::Cutout, 0, "foliage", R) == "vegetation", "alpha tested foliage without gloss is vegetation");
+        // blended by the techset name
+        Ck(Foliage("veg_leaf.png", "lit_transparent_plus", Materials::AlphaMode::Blend, Gloss, "foliage", R, &C) == "lit_transparent_backlit_plus" && C["t_foliage_evidence_techset_blend"] == 1 && C["t_foliage_alpha_cutout"] == 1 && C["t_foliage_alpha_blend"] == 0,
+              "blended foliage with gloss is lit_transparent_backlit_plus, and its alpha mode is the catalog's (alpha tested), not blend");
+        Ck(Foliage("veg_leaf.png", "lit_transparent", Materials::AlphaMode::Blend, 0, "foliage", R) == "lit_transparent_backlit", "blended foliage without gloss is lit_transparent_backlit");
+        // not changed: opaque (bark), a decal, a surface that is not foliage, a game that did not ask
+        Ck(Foliage("veg_bark.png", "lit_plus", Materials::AlphaMode::Opaque, Gloss, "foliage", R, &C) == "lit_plus" && C["t_foliage_opaque_unchanged"] == 1, "opaque foliage (bark) is unchanged");
+        Ck(Foliage("veg_leaf.png", "lit_decal_plus", Materials::AlphaMode::Blend, Gloss, "foliage", R, &C) == "lit_decal_plus" && C["t_foliage_decal_unchanged"] == 1, "a decal is never vegetation");
+        Ck(Foliage("veg_leaf.png", "lit_plus", Materials::AlphaMode::Opaque, Gloss, "concrete", R) == "lit_plus", "a surface that is not foliage is unchanged");
+        Ck(Foliage("veg_leaf.png", "lit_plus", Materials::AlphaMode::Opaque, Gloss, "foliage", R, nullptr, false) == "lit_plus", "a game whose adapter did not ask is unchanged");
+        Ck(Foliage("veg_none.png", "lit_plus", Materials::AlphaMode::Opaque, Gloss, "foliage", R, &C) == "lit_plus" && C["t_foliage_colour_unread"] == 1, "an unreadable colour image leaves the material as it was, counted");
+        // the thickness slot is never given a specular image, the tint mask never an emissive one
+        {
+            // the contrast: the same specular image on a non-foliage material of a family with a specular slot IS bound; on the vegetation family it is cleared (not merely missing)
+            Builder::Resolved Contrast;
+            Foliage("veg_leaf.png", "lit_advanced_fullspec", Materials::AlphaMode::Opaque, Gloss | Spec, "concrete", Contrast);
+            const std::string Bound = Contrast.Materials.empty() ? std::string() : Value(Contrast.Materials[0], "specColorMap");
+            const std::string Veg = Foliage("veg_leaf.png", "lit_plus", Materials::AlphaMode::Opaque, Gloss | Spec, "foliage", R, &C);
+            const std::string Thick = R.Materials.empty() ? std::string("(none)") : Value(R.Materials[0], "specColorMap");
+            Ck(Veg == "vegetation_plus" && !Bound.empty() && Bound != "(no key)" && (Thick.empty() || Thick == "(no key)") && C["t_foliage_vegetation_plus"] == 1,
+               "a specular image is bound on a family with a specular slot and cleared on the vegetation family's thickness slot", Bound + " | " + Thick);
+        }
+        // an emissive map is measured: black is dropped, a lit one keeps the material out of the family, with a row
+        {
+            Materials::Description D = Make("mtl_h1_leaves", Gloss | Emissive);
+            D.Albedo = Map("veg_leaf.png");
+            D.Emissive = Map("veg_black.png");
+            D.SurfaceType = "foliage";
+            D.TechsetName = "lit_emissive_plus";
+            D.FoliageVegetation = true;
+            Builder Dark(Base, "t_");
+            Dark.TechsetData(&Data);
+            Dark.Add(D, Dir, nullptr, "mwr");
+            const Builder::Resolved Rd = Dark.Resolve();
+            // the contrast: the same black emissive map on foliage a game did not ask about stays bound to the emissive family's colorMap00
+            Materials::Description NotAsked = D;
+            NotAsked.FoliageVegetation = false;
+            Builder Plain(Base, "t_");
+            Plain.TechsetData(&Data);
+            Plain.Add(NotAsked, Dir, nullptr, "mwr");
+            const Builder::Resolved Rp = Plain.Resolve();
+            Ck(!Rp.Materials.empty() && Value(Rp.Materials[0], "materialType") == "lit_emissive_plus" && !Value(Rp.Materials[0], "colorMap00").empty() && Value(Rp.Materials[0], "colorMap00") != "(no key)",
+               "the contrast: a black emissive map is bound to colorMap00 when the foliage rule is not asked", Rp.Materials.empty() ? "" : Value(Rp.Materials[0], "colorMap00"));
+            D.Emissive = Map("veg_bright.png");
+            Builder Lit(Base, "t_");
+            Lit.TechsetData(&Data);
+            Lit.Add(D, Dir, nullptr, "mwr");
+            const Builder::Resolved Rl = Lit.Resolve();
+            bool Row = false;
+            for (const auto& N : Rl.Materials.empty() ? std::vector<Builder::Note>() : Rl.Materials[0].Notes) Row = Row || N.Code == "material.foliage_emissive";
+            Ck(!Rd.Materials.empty() && Value(Rd.Materials[0], "materialType") == "vegetation_plus" && (Value(Rd.Materials[0], "colorMap00") == "(no key)" || Value(Rd.Materials[0], "colorMap00").empty()) && Dark.Counters().at("t_foliage_vegetation_plus") == 1 && Dark.Counters().count("t_foliage_emissive_black_dropped") == 1,
+                  "foliage with a black emissive map is vegetation without it", Rd.Materials.empty() ? "" : Value(Rd.Materials[0], "materialType"));
+            Ck(!Rl.Materials.empty() && Value(Rl.Materials[0], "materialType") == "lit_emissive_plus" && Row && Lit.Counters().count("t_foliage_emissive_kept") == 1,
+                  "foliage with a lit emissive map keeps its family and is reported", Rl.Materials.empty() ? "" : Value(Rl.Materials[0], "materialType"));
+        }
+        // no catalog (a plain --material-gdt run, --target none): the rule still applies, with the stock family names and the alpha test class
+        {
+            Materials::Description D = Make("mtl_h1_leaves", Gloss);
+            D.Albedo = Map("veg_leaf.png");
+            D.SurfaceType = "foliage";
+            D.TechsetName = "lit_plus";
+            D.FoliageVegetation = true;
+            Builder B(Base, "t_");
+            B.Add(D, Dir, nullptr, "mwr");
+            const Builder::Resolved Rn = B.Resolve();
+            Ck(!Rn.Materials.empty() && Value(Rn.Materials[0], "materialType") == "vegetation_plus" && Value(Rn.Materials[0], "materialCategory") == "Geometry Plus" && B.Counters().at("t_foliage_vegetation_plus") == 1 && B.Counters().at("t_foliage_alpha_cutout") == 1,
+               "without a catalog a foliage cut-out is still vegetation_plus", Rn.Materials.empty() ? "" : Value(Rn.Materials[0], "materialType"));
+        }
+        // an emissive slot bound to a colour image is no emission; a real emissive image is
+        {
+            const auto Described = [&](const char* Emissive) {
+                Materials::Source Src;
+                Src.Name = "mtl_h1_probe";
+                Src.Techset = "m_l_sm_flagext_wv0wv1wv2_fuv_t0c0n0sd0_nfwpf";
+                Src.SortKey = 2;
+                Src.SurfaceFlags = 128;
+                Src.Images.push_back({ "x_col.png", Materials::Role::Unknown, 0xA0AB1041u, 0 });
+                Src.Images.push_back({ "x_nml.png", Materials::Role::Unknown, 0x59D30D0Fu, 0 });
+                Src.Images.push_back({ Emissive, Materials::Role::Unknown, 0x34614347u, 0 });
+                return Materials::AdapterFor("H1").Describe(Src);
+            };
+            const Materials::Description OnColour = Described("x_col.png"), Real = Described("x_ems.png");
+            Ck(OnColour.Emissive.Empty() && OnColour.TexturesUnbound.find("emissive(the image is a colour map)") != std::string::npos && OnColour.TechsetName == "lit" && !Real.Emissive.Empty() && Real.TechsetName == "lit_emissive_plus",
+               "an emissive slot bound to a colour image is dropped and said; a real emissive image keeps its family", OnColour.TechsetName + " / " + Real.TechsetName);
+        }
+        // the adapter asks, the sidecar carries the request, and a game that is not MWR does not
+        {
+            Materials::Description D = Make("mtl_side", 0);
+            D.FoliageVegetation = true;
+            Materials::Sidecar Side, Back;
+            Side.Game = "mwr", Side.Adapter = "mwr";
+            Side.Materials.push_back(D);
+            Side.Sources.resize(1);
+            const std::string SidePath = (Dir / "veg.materials.json").string();
+            Ck(Materials::WriteSidecar(SidePath, Side) && Materials::ReadSidecar(SidePath, Back) && Back.Materials.size() == 1 && Back.Materials[0].FoliageVegetation, "the sidecar carries the foliage request");
+            Materials::Source Src;
+            Src.Name = "mtl_h1_probe";
+            Src.Techset = "m_l_sm_flagext_wv0wv1wv2_fuv_t0c0n0sd0_nfwpf";
+            Src.SortKey = 2;
+            Src.SurfaceFlags = 128;   // bit 7, foliage
+            Src.Images.push_back({ "x_col.png", Materials::Role::Unknown, 0xA0AB1041u, 0 });
+            Src.Images.push_back({ "x_nml.png", Materials::Role::Unknown, 0x59D30D0Fu, 0 });
+            const Materials::Description Beech = Materials::AdapterFor("H1").Describe(Src);
+            Ck(Beech.FoliageVegetation && Beech.SurfaceType == "foliage" && Beech.TechsetName == "lit" && Beech.Alpha == Materials::AlphaMode::Opaque,
+                  "the MWR adapter asks, and a wind-animated foliage techset names no alpha test (the colour image's alpha decides in the builder)", Beech.SurfaceType + " " + Beech.TechsetName);
+            Ck(!Materials::AdapterFor("bo4").Describe(Src).FoliageVegetation, "another game's adapter does not ask");
+        }
     }
     // Modern Warfare Remastered: the techset grammar, the surface bit, the packs and the gloss range the adapter states (zonekit/profiles/h1)
     {

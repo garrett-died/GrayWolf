@@ -185,6 +185,9 @@ namespace Materials
             bool Active() const { return !Specular.Empty() && !PromoteTechset.empty(); }
         };
         PixelMetal Metal;
+        // The game's adapter asks for foliage (surfaceType foliage, not a decal) to take BO3's vegetation family when the source is alpha tested, or the backlit transparent family when it
+        // blends (MaterialGdt Builder::Add decides, with the colour image's alpha as the evidence where the techset name says opaque). Unset: the family the rules chose stays.
+        bool FoliageVegetation = false;
         // Why the techset family was chosen against the usual rule: "surface_unknown_treated_as_metal" (an ambiguous or unread surface keeps its specular map)
         std::string FamilyWhy;
     };

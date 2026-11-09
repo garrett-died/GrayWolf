@@ -515,6 +515,7 @@ std::string SidecarText(const Sidecar& S)
         if (D.Metal.Active())
             J["pixel_metal"] = { { "path", D.Metal.Specular.Path }, { "pack", PackName(D.Metal.Specular.Pack) }, { "p99", D.Metal.P99 }, { "promote", D.Metal.PromoteTechset } };
         if (!D.FamilyWhy.empty()) J["family_why"] = D.FamilyWhy;
+        if (D.FoliageVegetation) J["foliage_vegetation"] = true;
         if (D.GlossStopsMax >= 0.0f) J["gloss_stops"] = { Rounded(D.GlossStopsMin < 0.0f ? 0.0f : D.GlossStopsMin), Rounded(D.GlossStopsMax) };
         if (D.LayersDropped > 0) J["layers_dropped"] = D.LayersDropped;
         if (!D.Naming.Empty())
@@ -653,6 +654,7 @@ bool ReadSidecar(const std::string& Path, Sidecar& S)
                 D.Metal.PromoteTechset = P.value("promote", std::string());
             }
             D.FamilyWhy = J.value("family_why", std::string());
+            D.FoliageVegetation = J.value("foliage_vegetation", false);
             if (J.contains("gloss_stops") && J["gloss_stops"].is_array() && J["gloss_stops"].size() == 2)
             {
                 D.GlossStopsMin = J["gloss_stops"][0].get<float>();

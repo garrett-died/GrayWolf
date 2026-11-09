@@ -107,6 +107,8 @@ namespace MaterialGdt
         // holds it; Game: the sidecar's game id ("bo4"). Both only matter with TechsetData.
         // The 99th percentile of the grey level (0..255) of an image file's colour channels, -1 when it cannot be read (the pixel check of Description::PixelMetal)
         static int GreyP99(const std::filesystem::path& File);
+        // The share (0..1) of an image's texels whose alpha is below 128, -1 when it cannot be read: the evidence that a colour map carries a cut-out mask
+        static double AlphaMaskShare(const std::filesystem::path& File);
         void Add(const Materials::Description& D, const std::filesystem::path& Dir, const Materials::Source* Source = nullptr,
                  const std::string& Game = std::string());
 

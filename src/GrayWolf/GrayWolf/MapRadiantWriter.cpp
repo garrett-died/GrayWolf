@@ -244,6 +244,8 @@ namespace
                 if (const std::string Refined = Match(S.Surface, S.Contents); !Refined.empty()) return Refined;
             return Name;
         }
+        // the sky tool a side with the sky contents gets
+        const std::string& SkyName() const { return Sky; }
         // whether Name is a tool one of the game's profile rows gives
         bool IsRowTool(const std::string& Name) const
         {
@@ -290,6 +292,21 @@ namespace
         std::string Sky;
     };
 
+    // A world brush every side of which is written as the sky tool (exactly `sky`, or the map's own sky material, or a side with no tool material and the sky contents): the six far slabs of an
+    // ssi skybox game. Judged by the name the writer gives the side, so it is what the .map holds. A material that merely starts with `sky` (skyscraper_concrete) is not a sky.
+    bool IsAllSkyBrush(const Brush& B, const ToolNames& Tools)
+    {
+        if (B.Sides.empty()) return false;
+        for (const BrushSide& S : B.Sides)
+        {
+            const std::string Name = Tools.Of(B, S);
+            // exactly `sky`, or the map's own sky material with the sky contents bit as the evidence; never a prefix (the first collision material starting with sky may be skyscraper_concrete)
+            const bool SkyBit = ((B.Contents | S.Contents) & 0x800u) != 0;
+            if (Name != "sky" && !(Name == Tools.SkyName() && SkyBit)) return false;
+        }
+        return true;
+    }
+
     // The tool a collision mesh with no drawn material is written with, from its label's clip material (surface and contents of the clip map's table) through the same path as a brush side: the
     // game's profile row for the exact contents, the table of tools by properties, else the contents' name. Never a sky, a trigger or a mantle: anything that is not a clip or caulk is Rejected,
     // written as clip_full and given no contents keywords. Known false: the label is not a clip material (clip_full, as the prisms were).
@@ -335,6 +352,21 @@ namespace
         if (!Gdt) return Material.empty() ? "default" : ExportNaming::SafeFileName(Material);
         Gdt->Materials.insert(Material);
         return MaterialGdt::AssetName(Material);
+    }
+
+    // A drawn surface's material name in the .map. A surface whose material is a tool name (an IW clip or portal drawn as a surface) takes its Black Ops III tool name and is never a
+    // GDT entry; Drop is set when the name has no BO3 tool (its meshes are not written).
+    std::string SurfaceMaterialName(const std::string& Material, RadiantGdt* Gdt, RadiantStats& Stats, bool& Drop)
+    {
+        Drop = false;
+        // only an exact tool name (a key of the lineage's table, a drop name, a BO3 name) is a tool here; a drawn material that merely starts like one (skyline_brick) stays a material
+        if (Stats.ToolMat.Table != nullptr && !Material.empty() && Stats.ToolMat.Table->Exact(Stats.ToolMat.Lineage, Material))
+        {
+            const ToolResult R = Stats.ToolMat.Apply(Material);
+            Drop = R.Kind == ToolKind::Drop;
+            return Drop ? std::string("clip") : R.Name;
+        }
+        return MaterialName(Material, Gdt);
     }
 
     // The drawn triangles a brush's solid sides take their materials from (none: tool materials
@@ -457,6 +489,18 @@ namespace
             }
         }
         const std::string Keywords = Tools.Keywords && Only.empty() ? ContentsKeywords(Moved.Contents) : std::string();
+        // a side whose tool name has no Black Ops III tool (an IW portal) drops the whole brush
+        if (Stats.ToolMat.Table != nullptr)
+            for (const BrushSide& Side : Moved.Sides)
+            {
+                const std::string Name = Only.empty() ? Tools.Of(Moved, Side) : Only;
+                if (Stats.ToolMat.Peek(Name).Kind == ToolKind::Drop)
+                {
+                    Stats.ToolMat.Dropped[Name]++;
+                    Stats.ToolMat.BrushesDropped++;
+                    return false;
+                }
+            }
         // a side's tool name; a profile row that named it (H1: 0x2080 clip_weapon) is counted per row
         const auto ToolOfSide = [&](const BrushSide& Side) {
             uint64_t Row = 0;
@@ -674,7 +718,10 @@ namespace
                     Out += MaterialName(T.Material, Tex.Gdt) + RadiantSideNumbers(T) + " lightmap_gray 16384 16384 0 0 0 0\n";
                 }
                 else
-                    Out += Names[K] + " 64 64 0 0 0 0 lightmap_gray 16384 16384 0 0 0 0\n";
+                {
+                    const ToolResult Tool = Stats.ToolMat.Apply(Names[K]);
+                    Out += (Tool.Kind == ToolKind::Drop ? std::string("clip") : Tool.Name) + " 64 64 0 0 0 0 lightmap_gray 16384 16384 0 0 0 0\n";
+                }
             }
             Out += "}\n";
             Stats.Faces += Faces.size();
@@ -844,12 +891,23 @@ namespace
             }
         }
         std::vector<std::string> Written(Mats.size());
-        for (size_t M = 0; M < Mats.size(); M++) Written[M] = MaterialName(Mats[M], Gdt);
+        std::vector<char> Dropped(Mats.size(), 0);
+        for (size_t M = 0; M < Mats.size(); M++)
+        {
+            bool Drop = false;
+            Written[M] = SurfaceMaterialName(Mats[M], Gdt, Stats, Drop);
+            Dropped[M] = Drop;
+        }
         std::map<std::string, size_t> ToolMeshes;   // the tool meshes by the name they got and the contents they came from
         size_t ToolRejected = 0;                    // tool names the contents mapping gave that are not a clip or caulk (sky, trigger, mantle_on ...): written as clip_full
         std::map<uint64_t, size_t> ToolApproximated;   // tool meshes named by a profile row that is an approximation, by the contents
         for (const RenderMesh& R : Meshes.Meshes)
         {
+            if (R.Material >= 0 && R.Mesh.HasData() && Dropped[static_cast<size_t>(R.Material)])
+            {
+                Stats.ToolMat.MeshesDropped++;
+                continue;
+            }
             MeshTextOptions Text;
             Text.NonColliding = false;
             Text.Prefix = "// brush " + std::to_string(Number++) + "\n {\n";
@@ -861,7 +919,8 @@ namespace
             else
             {
                 const MeshTool Tool = ToolOfMesh(Col, Tools, Clip);
-                Material = Tool.Name;
+                const ToolResult Applied = Stats.ToolMat.Apply(Tool.Name);
+                Material = Applied.Kind == ToolKind::Drop ? std::string("clip") : Applied.Name;
                 Text.Contents = Tool.Keywords;
                 ToolRejected += Tool.Rejected ? 1 : 0;
                 ToolMeshes[Material + (Tool.Known ? std::format(" (contents {:#x})", Tool.Contents) : std::string(" (label not a clip material)"))]++;
@@ -1001,9 +1060,20 @@ namespace
                                                        Meshes.Count.Covered, Meshes.Count.CopiesRemoved, Meshes.Count.CollapsedByWeld));
         }
         std::vector<std::string> Written(Names.size());
-        for (size_t L = 0; L < Names.size(); L++) Written[L] = MaterialName(Names[L], Gdt);
+        std::vector<char> Dropped(Names.size(), 0);
+        for (size_t L = 0; L < Names.size(); L++)
+        {
+            bool Drop = false;
+            Written[L] = SurfaceMaterialName(Names[L], Gdt, Stats, Drop);
+            Dropped[L] = Drop;
+        }
         for (const RenderMesh& R : Meshes.Meshes)
         {
+            if (Dropped[static_cast<size_t>(R.Label)])
+            {
+                Stats.ToolMat.MeshesDropped++;
+                continue;
+            }
             MeshTextOptions Text;
             Text.Prefix = "// brush " + std::to_string(Number++) + "\n {\n";
             // a decal's editor layer from the game's sort (the names the game has evidence for); a sort with no name, or none read, writes no layer and is counted
@@ -1491,7 +1561,8 @@ namespace
             // M4: only for a game that has the data (a scene without probes, sun or effects reports none of these)
             for (const auto& [Key, N] : std::initializer_list<std::pair<const char*, size_t>>{
                      { "map_radiant_probes", Stats.Probes }, { "map_radiant_probes_no_size", Stats.ProbesNoSize }, { "map_radiant_sun_volumes", Stats.SunVolumes },
-                     { "map_radiant_ssi_stock_values", Stats.SsiStockValues }, { "map_radiant_sky_written", Stats.SkyWritten }, { "map_radiant_sky_shells", Stats.SkyShells }, { "map_radiant_vista_models", Stats.VistaModels }, { "map_radiant_effect_placements", Stats.EffectPlacements }, { "map_radiant_effect_placements_refused", Stats.EffectPlacementsRefused } })
+                     { "map_radiant_ssi_stock_values", Stats.SsiStockValues }, { "map_radiant_sky_written", Stats.SkyWritten }, { "map_radiant_sky_shells", Stats.SkyShells }, { "map_radiant_tool_names_changed", Stats.ToolMat.Changed() },
+                     { "map_radiant_tool_brushes_dropped", Stats.ToolMat.BrushesDropped }, { "map_radiant_tool_meshes_dropped", Stats.ToolMat.MeshesDropped }, { "map_radiant_sky_brushes_dropped", Stats.ToolMat.SkyBrushesDropped }, { "map_radiant_vista_models", Stats.VistaModels }, { "map_radiant_effect_placements", Stats.EffectPlacements }, { "map_radiant_effect_placements_refused", Stats.EffectPlacementsRefused } })
                 if (N != 0) Result.Counters.emplace_back(Key, N);
             // the prefab files: counts by part (the file is <map>_prefab_<part>.map), and what the main map keeps
             for (const RadiantPrefabFile& F : Stats.PrefabFiles) Result.Files.push_back(F.File);
@@ -1827,6 +1898,7 @@ namespace
         PrefabPart Part = PrefabPart::Entities;
         bool World = false;
         size_t BodyBegin = 0, BodyEnd = 0;
+        bool Pinned = false;   // stays in the main map whatever prefab parts are selected (the sky shell and the volume_sun)
     };
 
     size_t CountOf(std::string_view Text, std::string_view What)
@@ -1877,7 +1949,7 @@ namespace
         std::vector<size_t> Moved[PrefabPartCount];
         for (size_t K = 1; K < Blocks.size(); K++)
         {
-            if (Has(Blocks[K].Part))
+            if (!Blocks[K].Pinned && Has(Blocks[K].Part))
             {
                 Moved[(int)Blocks[K].Part].push_back(K);
                 continue;
@@ -1938,6 +2010,19 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         fs::remove(fs::path(Path).replace_extension(".coverage.txt"), Gone);
         fs::remove(fs::path(Path).replace_extension(".meshes.txt"), Gone);
         fs::remove(fs::path(Path).replace_extension(".ownercheck.txt"), Gone);
+        fs::remove(fs::path(Path).replace_extension(".tools.txt"), Gone);
+    }
+    // the tool names: Black Ops III's, from the target data (MapToolMaterials.h)
+    Stats.ToolMat = ToolUse();
+    {
+        std::string Why;
+        if (const ToolMaterials* Table = ToolMaterials::Shared(Why))
+        {
+            Stats.ToolMat.Table = Table;
+            Stats.ToolMat.Lineage = Table->LineageOf(Scene.Game);
+        }
+        else
+            Stats.Unresolved.push_back("tool materials: " + Why + ": tool names are written as the game gives them");
     }
     const std::string Map = ExportNaming::SafeFileName(Path.stem().string());
     {
@@ -2077,8 +2162,27 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
     Blocks.back().World = true;
     Blocks.back().BodyBegin = Out.size();
     size_t BrushNumber = 0;
+    // A game whose sky is the ssi skybox model (SealWithSkyShell) does not need its own all-sky brushes: the shell and the volume_sun replace them. They are not written here; when the shell turns out
+    // not to be written (reach limit) they are written at the end of the worldspawn (below), so every counter is exactly what was written. A brush a tool name drops (a portal) and the sky brushes
+    // stay out of the bounds the shell and the sun box are made from.
+    std::set<const Brush*> SkyBrushes, BoundsSkip;
+    if (Scene.SealWithSkyShell)
+        for (const Brush& B : Scene.Collision.Brushes)
+            if (IsAllSkyBrush(B, Tools)) SkyBrushes.insert(&B);
+    BoundsSkip = SkyBrushes;
+    if (Stats.ToolMat.Table != nullptr)
+        for (const Brush& B : Scene.Collision.Brushes)
+            for (const BrushSide& Side : B.Sides)
+                if (Stats.ToolMat.Peek(Tools.Of(B, Side)).Kind == ToolKind::Drop)
+                {
+                    BoundsSkip.insert(&B);
+                    break;
+                }
     for (const Brush& B : Scene.Collision.Brushes)
+    {
+        if (SkyBrushes.count(&B) != 0) continue;
         if (WriteBrush(Out, B, BrushNumber, nullptr, nullptr, Tools, "", Stats, Tex)) BrushNumber++;
+    }
     Blocks.back().BodyEnd = Out.size();
     Out += "}\n";
 
@@ -2214,82 +2318,19 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
             Stats.OwnerCheckLines.push_back(std::format("reflection probe {}: look at ({} {} {}) in the lights prefab; its size was not read, so Radiant's default size shows (set size_min / size_max by eye)", K + 1, Scene.Probes[K].Origin[0],
                                                         Scene.Probes[K].Origin[1], Scene.Probes[K].Origin[2]));
     }
-    if (Scene.Sun.Present)
-    {
-        double Pitch = 0, Yaw = 0;
-        std::array<float, 3> Lo{}, Hi{};
-        SsiStock Stock;
-        std::string StockWhy;
-        const bool HaveStock = LoadSsiStock(Stock, StockWhy);
-        if (!SunAngles(Scene.Sun.Toward, Pitch, Yaw) || !CollisionBounds(Scene, Lo, Hi))
-            Stats.Unresolved.push_back("sun: the map has a sun but its direction or the collision bounds are not usable: no volume_sun and no ssi entry written");
-        else
-        {
-            SsiEntry Ssi;
-            // a name no stock entry has: the map's, with a prefix (and a suffix if a stock entry still has it)
-            Ssi.Name = "graywolf_" + Map;
-            while (std::find(Stock.StockNames.begin(), Stock.StockNames.end(), Ssi.Name) != Stock.StockNames.end()) Ssi.Name += "_gw";
-            Ssi.Pitch = Pitch, Ssi.Yaw = Yaw;
-            Ssi.SkyboxModel = SkyXmodel;
-            if (HaveStock) Ssi.Stock = Stock.Values;
-            const float Max = std::max({ Scene.Sun.Color[0], Scene.Sun.Color[1], Scene.Sun.Color[2] });
-            if (Max > 0 && std::isfinite(Max))
-            {
-                Ssi.HasColor = true;
-                for (int A = 0; A < 3; A++) Ssi.ColorSRGB[A] = std::clamp(Scene.Sun.Color[A] / Max, 0.0f, 1.0f);
-            }
-            const std::string Entry = SsiGdtEntry(Ssi);
-            if (Entry.empty())
-                Stats.Unresolved.push_back("sun: the map's name is not usable in an ssi entry (" + Ssi.Name + "): no volume_sun and no ssi entry written");
-            else
-            {
-                std::array<double, 3> BoxLo{}, BoxHi{};
-                SunBox(Lo, Hi, 256.0f, 65536.0f, BoxLo, BoxHi);
-                std::error_code SunEc;
-                fs::create_directories(Root / "source_data", SunEc);
-                const fs::path SsiFile = Root / "source_data" / ("ssi_" + Map + ".gdt");
-                std::ofstream SsiOut(SsiFile, std::ios::binary);
-                SsiOut << Gdt::Document({ Entry }, "\r\n");
-                SsiOut.close();
-                if (SunEc || !SsiOut.good() || !fs::exists(SsiFile, SunEc))
-                {
-                    Error = "the ssi entry could not be written: " + SsiFile.string();
-                    return false;
-                }
-                Stats.DataFiles.push_back(Map + "_radiant/source_data/ssi_" + Map + ".gdt");
-                Blocks.push_back({ Out.size(), PrefabPart::BrushEntities });
-                Out += SunVolumeEntities(EntityNumber, BoxLo, BoxHi, "graywolf_sun_target", Ssi.Name);
-                EntityNumber += 2;
-                Stats.Entities += 2;
-                Stats.SunVolumes++;
-                Stats.OwnerCheckLines.push_back(std::format("sun: the volume_sun box (collision bounds {} {} {} to {} {} {} plus 256, clamped to +-65536) with its info_null target is in the brush entities prefab; its four lighting states name ssi entry {} "
-                                                            "(source_data/ssi_{}.gdt, pitch {:.1f}, yaw {:.1f}): check that Radiant lists the entry and that the sun stands where the sky says",
-                                                            Lo[0], Lo[1], Lo[2], Hi[0], Hi[1], Hi[2], Ssi.Name, Map, Pitch, Yaw));
-                if (HaveStock)
-                {
-                    std::string Values;
-                    for (const auto& [K, V] : Stock.Values) Values += (Values.empty() ? "" : ", ") + K + " " + V;
-                    Stats.Unresolved.push_back(std::format("ssi_values_from_stock_median: ssi entry {} takes {} from the median of the {} stock ssi entries ({}), not from the game: the brightness is a starting value to tune in Radiant. The sun's angles "
-                                                           "(pitch {:.2f}, yaw {:.2f}) and colour ratios{} are the game's; the game's own sun intensity unit is not proven to be BO3 stops. No skyboxmodel is written (the sky is not converted)",
-                                                           Ssi.Name, Values, Stock.Entries, Stock.Source, Pitch, Yaw, Ssi.HasColor ? " (sun colour divided by its largest channel; sRGB or linear: unknown)" : " (not read)"));
-                    Stats.OwnerCheckLines.push_back("sun brightness: stops, evmin, evmax, evcmp, bounceCount, dynamicShadow and penumbra_inches of the ssi entry are the median of the stock BO3 ssi entries, a starting value for you to tune, NOT read from the game");
-                    Stats.SsiStockValues++;
-                }
-                else
-                    Stats.Unresolved.push_back("sun: " + StockWhy + ": the ssi entry has no stops or exposure fields, so Radiant uses its own defaults (brighter than any stock sun)");
-            }
-        }
-    }
     // M4e: a sky shell. cod2map needs the map sealed; the Mod Tools' own maps seal with brushes in the stock `sky` material (zm_giant's geo prefab: five shells of `sky`), and the
     // MWR export has only clip and caulk brushes. Six slabs 64 thick around the collision bounds plus 1024, in the brush entities prefab, optional to delete. Whether it seals the
     // map in cod2map is unknown: nothing was compiled.
+    std::array<float, 3> PlayLo{}, PlayHi{};   // the bounds the shell is built from, for the volume_sun
+    std::array<std::string, 6> PlayWhy;        // what set each extreme of them
+    bool HavePlay = false;
     size_t EmptyFar = 0;   // M4f: far static instances with no model (written nowhere)
     std::set<const Instance*> VistaSet;   // M4f: the static instances left out of the shell's bounds because they lie beyond its reach
     if (Scene.SealWithSkyShell)
     {
         std::array<float, 3> Lo{}, Hi{};
         std::array<std::string, 6> BoundsWhy;
-        if (WrittenBounds(Scene, Lo, Hi, &BoundsWhy))
+        if (WrittenBounds(Scene, Lo, Hi, &BoundsWhy, nullptr, 0.0f, &BoundsSkip))
         {
             std::array<double, 3> A{}, B{};
             SunBox(Lo, Hi, 1024.0f, 64000.0f, A, B);
@@ -2306,7 +2347,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
             if (Clamped)
             {
                 std::array<float, 3> NearLo{}, NearHi{};
-                if (WrittenBounds(Scene, NearLo, NearHi, nullptr, nullptr, 62976.0f) && !Reaches(NearLo, NearHi))
+                if (WrittenBounds(Scene, NearLo, NearHi, nullptr, nullptr, 62976.0f, &BoundsSkip) && !Reaches(NearLo, NearHi))
                 {
                     // only an instance with a model is written anywhere; one without a model still took part in the bounds decision above and is reported (EmptyFar)
                     for (const Instance& I : Scene.StaticInstances)
@@ -2344,7 +2385,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
                 std::array<float, 3> VLo{}, VHi{};
                 std::string Without = "no bounds without them";
                 size_t EntitiesOutside = 0;
-                if (WrittenBounds(Scene, VLo, VHi, nullptr, "vista"))
+                if (WrittenBounds(Scene, VLo, VHi, nullptr, "vista", 0.0f, &BoundsSkip))
                 {
                     Without = std::format("({:.0f} {:.0f} {:.0f}) to ({:.0f} {:.0f} {:.0f})", VLo[0], VLo[1], VLo[2], VHi[0], VHi[1], VHi[2]);
                     for (const Entity& E : Ents)
@@ -2366,11 +2407,13 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
             }
             else
             {
+            PlayLo = Lo, PlayHi = Hi, PlayWhy = BoundsWhy, HavePlay = true;
             Blocks.push_back({ Out.size(), PrefabPart::BrushEntities });
+            Blocks.back().Pinned = true;   // only a game that writes the shell: other games' sun volume stays where it was
             Out += SkyShellEntity(EntityNumber++, A, B, 64.0);
             Stats.Entities++;
             Stats.SkyShells++;
-            Stats.OwnerCheckLines.push_back(std::format("sealing: a shell of six `sky` slabs 64 thick surrounds the collision bounds plus 1024 ({} {} {} to {} {} {}) in the brush entities prefab, as zm_giant seals with `sky` brushes; "
+            Stats.OwnerCheckLines.push_back(std::format("sealing: a shell of six `sky` slabs 64 thick surrounds the collision bounds plus 1024 ({} {} {} to {} {} {}) in the main map, as zm_giant seals with `sky` brushes; "
                                                         "delete that func_group if you seal the map yourself. Whether cod2map accepts it as sealed is unknown (nothing compiled); a leak file names the gap.",
                                                         A[0], A[1], A[2], B[0], B[1], B[2]));
             if (!VistaSet.empty())
@@ -2426,6 +2469,122 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
             }
         }
     }
+    if (Scene.Sun.Present)
+    {
+        double Pitch = 0, Yaw = 0;
+        // the play area the shell is built from (shell games), else the collision bounds
+        std::array<float, 3> Lo = PlayLo, Hi = PlayHi;
+        SsiStock Stock;
+        std::string StockWhy;
+        const bool HaveStock = LoadSsiStock(Stock, StockWhy);
+        if (!SunAngles(Scene.Sun.Toward, Pitch, Yaw) || (!HavePlay && !CollisionBounds(Scene, Lo, Hi, &BoundsSkip)))
+            Stats.Unresolved.push_back("sun: the map has a sun but its direction or the collision bounds are not usable: no volume_sun and no ssi entry written");
+        else
+        {
+            SsiEntry Ssi;
+            // a name no stock entry has: the map's, with a prefix (and a suffix if a stock entry still has it)
+            Ssi.Name = "graywolf_" + Map;
+            while (std::find(Stock.StockNames.begin(), Stock.StockNames.end(), Ssi.Name) != Stock.StockNames.end()) Ssi.Name += "_gw";
+            Ssi.Pitch = Pitch, Ssi.Yaw = Yaw;
+            Ssi.SkyboxModel = SkyXmodel;
+            if (HaveStock) Ssi.Stock = Stock.Values;
+            const float Max = std::max({ Scene.Sun.Color[0], Scene.Sun.Color[1], Scene.Sun.Color[2] });
+            if (Max > 0 && std::isfinite(Max))
+            {
+                Ssi.HasColor = true;
+                for (int A = 0; A < 3; A++) Ssi.ColorSRGB[A] = std::clamp(Scene.Sun.Color[A] / Max, 0.0f, 1.0f);
+            }
+            const std::string Entry = SsiGdtEntry(Ssi);
+            if (Entry.empty())
+                Stats.Unresolved.push_back("sun: the map's name is not usable in an ssi entry (" + Ssi.Name + "): no volume_sun and no ssi entry written");
+            else
+            {
+                std::array<double, 3> BoxLo{}, BoxHi{};
+                // The box. A shell game (HavePlay): hypothesis, the play area is the bounds of the player spawns (mp_*spawn*), the intermission and the path nodes, plus 2048, clamped inside the
+                // shell's bounds (the placed models far out, which size those, are not the play area). With none of them, or any other game: the bounds as before, plus 256.
+                std::array<float, 3> SunLo = Lo, SunHi = Hi;
+                float SunPad = 256.0f;
+                std::string SunHow = HavePlay ? "the bounds the sky shell is built from" : "the collision bounds";
+                if (HavePlay)
+                {
+                    bool AnyPlay = false;
+                    std::array<float, 3> PLo{}, PHi{};
+                    size_t PlayEntities = 0;
+                    for (const Entity& E : Ents)
+                    {
+                        const auto Cls = E.find("classname"), At = E.find("origin");
+                        float P[3];
+                        if (Cls == E.end() || At == E.end() || sscanf_s(At->second.c_str(), "%f %f %f", &P[0], &P[1], &P[2]) != 3) continue;
+                        const std::string C = ExportNaming::Lower(Cls->second);
+                        if (!((C.rfind("mp_", 0) == 0 && C.find("spawn") != std::string::npos) || C == "mp_global_intermission" || C.rfind("node_", 0) == 0)) continue;
+                        for (size_t A = 0; A < 3; A++)
+                        {
+                            PLo[A] = AnyPlay ? (std::min)(PLo[A], P[A]) : P[A];
+                            PHi[A] = AnyPlay ? (std::max)(PHi[A], P[A]) : P[A];
+                        }
+                        AnyPlay = true;
+                        PlayEntities++;
+                    }
+                    if (AnyPlay)
+                    {
+                        std::array<float, 3> CLo, CHi;
+                        bool Sound = true;
+                        for (size_t A = 0; A < 3; A++)
+                        {
+                            CLo[A] = (std::max)(PLo[A] - 2048.0f, Lo[A]);
+                            CHi[A] = (std::min)(PHi[A] + 2048.0f, Hi[A]);
+                            Sound = Sound && CLo[A] < CHi[A];
+                        }
+                        if (Sound)
+                        {
+                            SunLo = CLo, SunHi = CHi, SunPad = 0.0f;
+                            SunHow = std::format("the bounds of {} spawn, intermission and path node entities plus 2048 (hypothesis), clamped inside the shell's bounds", PlayEntities);
+                        }
+                    }
+                }
+                SunBox(SunLo, SunHi, SunPad, 65536.0f, BoxLo, BoxHi);
+                std::error_code SunEc;
+                fs::create_directories(Root / "source_data", SunEc);
+                const fs::path SsiFile = Root / "source_data" / ("ssi_" + Map + ".gdt");
+                std::ofstream SsiOut(SsiFile, std::ios::binary);
+                SsiOut << Gdt::Document({ Entry }, "\r\n");
+                SsiOut.close();
+                if (SunEc || !SsiOut.good() || !fs::exists(SsiFile, SunEc))
+                {
+                    Error = "the ssi entry could not be written: " + SsiFile.string();
+                    return false;
+                }
+                Stats.DataFiles.push_back(Map + "_radiant/source_data/ssi_" + Map + ".gdt");
+                Blocks.push_back({ Out.size(), PrefabPart::BrushEntities });
+                Blocks.back().Pinned = Scene.SealWithSkyShell;
+                Out += SunVolumeEntities(EntityNumber, BoxLo, BoxHi, "graywolf_sun_target", Ssi.Name);
+                EntityNumber += 2;
+                Stats.Entities += 2;
+                Stats.SunVolumes++;
+                Stats.OwnerCheckLines.push_back(std::format("sun: the volume_sun box ({} {} {} to {} {} {}, {}, plus {}, clamped to +-65536) with its info_null target is in the main map; its four lighting states name ssi entry {} "
+                                                            "(source_data/ssi_{}.gdt, pitch {:.1f}, yaw {:.1f}): check that Radiant lists the entry and that the sun stands where the sky says",
+                                                            SunLo[0], SunLo[1], SunLo[2], SunHi[0], SunHi[1], SunHi[2], SunHow, SunPad, Ssi.Name, Map, Pitch, Yaw));
+                if (HavePlay)
+                {
+                    std::string Extremes;
+                    for (size_t K = 0; K < 6; K++) Extremes += std::format(" {} {}: {};", "xyz"[K / 2], K % 2 == 0 ? "min" : "max", PlayWhy[K]);
+                    Stats.OwnerCheckLines.push_back("sun: what sets the extremes of the shell's bounds (the box is cut to the play area from them):" + Extremes);
+                }
+                if (HaveStock)
+                {
+                    std::string Values;
+                    for (const auto& [K, V] : Stock.Values) Values += (Values.empty() ? "" : ", ") + K + " " + V;
+                    Stats.Unresolved.push_back(std::format("ssi_values_from_stock_median: ssi entry {} takes {} from the median of the {} stock ssi entries ({}), not from the game: the brightness is a starting value to tune in Radiant. The sun's angles "
+                                                           "(pitch {:.2f}, yaw {:.2f}) and colour ratios{} are the game's; the game's own sun intensity unit is not proven to be BO3 stops. No skyboxmodel is written (the sky is not converted)",
+                                                           Ssi.Name, Values, Stock.Entries, Stock.Source, Pitch, Yaw, Ssi.HasColor ? " (sun colour divided by its largest channel; sRGB or linear: unknown)" : " (not read)"));
+                    Stats.OwnerCheckLines.push_back("sun brightness: stops, evmin, evmax, evcmp, bounceCount, dynamicShadow and penumbra_inches of the ssi entry are the median of the stock BO3 ssi entries, a starting value for you to tune, NOT read from the game");
+                    Stats.SsiStockValues++;
+                }
+                else
+                    Stats.Unresolved.push_back("sun: " + StockWhy + ": the ssi entry has no stops or exposure fields, so Radiant uses its own defaults (brighter than any stock sun)");
+            }
+        }
+    }
     for (const EffectPlacement& E : Scene.Effects)
     {
         const std::string Entity = EffectPlacementEntity(EntityNumber, E);
@@ -2440,6 +2599,22 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         Stats.Entities++;
         if (Stats.EffectPlacements++ < 3)
             Stats.OwnerCheckLines.push_back(std::format("script-placed {} '{}': look at ({} {} {}) in the effects prefab (a script_struct, targetname graywolf_createfx)", E.Kind, E.Name, E.Origin[0], E.Origin[1], E.Origin[2]));
+    }
+
+    // The all-sky world brushes: counted as dropped when the shell was written; else written now, at the end of the worldspawn (everything after it moves down by what was inserted)
+    if (!SkyBrushes.empty())
+    {
+        if (Stats.SkyShells > 0)
+            Stats.ToolMat.SkyBrushesDropped += SkyBrushes.size();
+        else
+        {
+            std::string SkyText;
+            for (const Brush& B : Scene.Collision.Brushes)
+                if (SkyBrushes.count(&B) != 0 && WriteBrush(SkyText, B, BrushNumber, nullptr, nullptr, Tools, "", Stats, Tex)) BrushNumber++;
+            Out.insert(Blocks.front().BodyEnd, SkyText);
+            for (size_t K = 1; K < Blocks.size(); K++) Blocks[K].Begin += SkyText.size();
+            Blocks.front().BodyEnd += SkyText.size();
+        }
     }
 
     // the placements, then the world geometry left, as misc_models; the models they name as files
@@ -2613,6 +2788,26 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
     {
         std::ofstream Lines(fs::path(Path).replace_extension(".meshes.txt"), std::ios::binary);
         for (const std::string& Line : Stats.MeshLines) Lines << Line << "\n";
+    }
+    // <map>.tools.txt: every tool name written, as mapped (from -> to), with the fallbacks and the drops; the fallbacks and drops also go to the unresolved list
+    if (Stats.ToolMat.Table != nullptr)
+    {
+        const std::vector<std::string> ToolLines = Stats.ToolMat.Lines();
+        if (!ToolLines.empty())
+        {
+            std::ofstream Tools_(fs::path(Path).replace_extension(".tools.txt"), std::ios::binary);
+            for (const std::string& Line : ToolLines) Tools_ << Line << '\n';
+            for (const auto& [Key, N] : Stats.ToolMat.Fallback)
+                Stats.Unresolved.push_back(std::format("tool_material_fallback: {} x{}: no row in tool-materials.json maps this name and it is no Black Ops III name; the surface was dropped or the nearest base tool by prefix taken", Key, N));
+            for (const auto& [Name, N] : Stats.ToolMat.Dropped)
+                Stats.Unresolved.push_back(std::format("tool_material_dropped: {} x{}: Black Ops III has no such tool (an IW portal); the brush or mesh was not written", Name, N));
+            Stats.OwnerCheckLines.push_back(std::format("tool materials: {} faces, patches and meshes took a different name ({} brushes and {} meshes dropped); the per-name counts are in {}", Stats.ToolMat.Changed(),
+                                                        Stats.ToolMat.BrushesDropped, Stats.ToolMat.MeshesDropped, Path.stem().string() + ".tools.txt"));
+        }
+        for (const auto& [Name, N] : Stats.ToolMat.Unlisted)
+            Stats.Unresolved.push_back(std::format("tool_material_unlisted: {} x{}: not a Black Ops III tool name and the game has no mapping rules; written as the game gives it", Name, N));
+        if (!SkyBrushes.empty() && Stats.SkyShells == 0)
+            Stats.Unresolved.push_back(std::format("sky: no sky shell was written (the bounds reach the limit or are not usable), so the game's own {} all-sky world brushes are kept", SkyBrushes.size()));
     }
     // <map>.ownercheck.txt: the files to open in Radiant, the counts to expect, and six places to look at (collision mesh and render pass meet there)
     if (Stats.CollisionTriangles > 0)
@@ -2906,6 +3101,281 @@ int RadiantWriterSelfTest(std::string& Failures)
         for (size_t At = Text.find(What); At != std::string::npos; At = Text.find(What, At + What.size())) N++;
         return N;
     };
+
+    // Tool materials (docs/hydrax-port/tools-veg.md): an IW game's tool names written as Black Ops III's, through the brush faces and the render pass; and the sky of an ssi skybox game
+    {
+        const auto Named = [&Box](float X0, std::initializer_list<const char*> Materials) {
+            Brush B = Box(X0, 0, 0, X0 + 64, 64, 64);
+            size_t K = 0;
+            for (const char* M : Materials)
+                if (K < B.Sides.size()) B.Sides[K++].Material = M;
+            return B;
+        };
+        MapScene Scene;
+        Scene.Game = "mwr";
+        Scene.Collision.Brushes.push_back(Named(0, { "clip_nosight_brick", "clip_full_metal", "clip_player_metal" }));          // 0: mapped
+        Scene.Collision.Brushes.push_back(Named(100, { "portal", "portal_nodraw", "portal" }));                                   // 1: dropped
+        Scene.Collision.Brushes.push_back(Named(200, { "caulk", "portal_nodraw", "clip" }));                                      // 2: mixed with a drop: dropped
+        Scene.Collision.Brushes.push_back(Named(300, { "clip_nosight_foo", "clip_nosight_foo", "clip_nosight_foo" }));            // 3: unknown: fallback
+        Scene.Collision.Brushes.push_back(Named(400, { "caulk_sun_shadow", "hint", "mantle_on" }));                               // 4: BO3 names: unchanged
+        Scene.Collision.Brushes.push_back(Named(500, { "clip_water_player", "portal_caulk", "clip_nosight_cushion" }));            // 5: mapped
+        // the render pass: a tool-named surface takes the BO3 name, a portal surface is not written, a drawn material is as it was
+        Mesh World;
+        for (const char* Material : { "clip_nosight_metal", "portal_nodraw", "wall_mat", "skyline_brick", "ladder_metal_rust", "portal_frame", "foo_clip", "sun_volume", "shadowcaster", "metal_clip_nosight" })
+        {
+            Surface Sf;
+            Sf.Material = Material;
+            Sf.Vertices.resize(3);
+            const float Shift = World.Surfaces.size() * 1000.0f;
+            Sf.Vertices[0].Pos[0] = Shift, Sf.Vertices[1].Pos[0] = Shift + 100, Sf.Vertices[2].Pos[1] = 200, Sf.Vertices[2].Pos[0] = Shift;
+            Sf.Indices = { 0, 1, 2 };
+            World.Surfaces.push_back(Sf);
+        }
+        Scene.Objects.push_back(World);
+        RadiantStats Stats;
+        std::string Error;
+        const fs::path Map = Dir / "tools" / "tools.map";
+        fs::create_directories(Map.parent_path(), Ec);
+        RadiantGdt ToolGdt;
+        const bool Ok = WriteRadiant(Scene, Map.string(), Stats, Error, &ToolGdt);
+        const std::string Text = Read(Map);
+        Check(Ok && Stats.ToolMat.Table != nullptr && Stats.ToolMat.Lineage == "iw", "the iw lineage is found for mwr", Error);
+        // render surfaces: only an exact tool name is a tool. skyline_brick, ladder_metal_rust, portal_frame and foo_clip stay GDT materials; sun_volume, shadowcaster and metal_clip_nosight are tools and not GDT entries
+        Check(ToolGdt.Materials.count("skyline_brick") && ToolGdt.Materials.count("ladder_metal_rust") && ToolGdt.Materials.count("portal_frame") && ToolGdt.Materials.count("foo_clip") && ToolGdt.Materials.count("wall_mat") &&
+                  !ToolGdt.Materials.count("sun_volume") && !ToolGdt.Materials.count("shadowcaster") && !ToolGdt.Materials.count("metal_clip_nosight") && !ToolGdt.Materials.count("clip_nosight_metal") && !ToolGdt.Materials.count("portal_nodraw"),
+              "a drawn material that starts like a tool stays a GDT material on a render surface; an exact tool name is written as the tool and never registered");
+        Check(Text.find("\n   skyline_brick\n   lightmap_gray") != std::string::npos && Text.find("\n   portal_frame\n   lightmap_gray") != std::string::npos && Text.find("\n   sun_volume\n   lightmap_gray") != std::string::npos &&
+                  Text.find("\n   metal_clip_nosight\n   lightmap_gray") != std::string::npos && Text.find("\n   portal_nodraw\n") == std::string::npos,
+              "the render surfaces are written under those names, the portal surface not at all");
+        Check(Stats.Brushes == 4 && Stats.ToolMat.BrushesDropped == 2, "the portal brush and the mixed brush with a drop face are dropped, the other four are written", std::format("{} {}", Stats.Brushes, Stats.ToolMat.BrushesDropped));
+        Check(Stats.ToolMat.Mapped.count("clip_nosight_brick -> brick_clip_nosight") && Stats.ToolMat.Mapped.count("clip_full_metal -> metal_clip_full") && Stats.ToolMat.Mapped.count("clip_player_metal -> clip_player") &&
+                  Stats.ToolMat.Mapped.count("clip_water_player -> clip_player") && Stats.ToolMat.Mapped.count("portal_caulk -> caulk") && Stats.ToolMat.Mapped.count("clip_nosight_cushion -> cloth_clip_nosight"),
+              "the MWR names are mapped as listed");
+        Check(Stats.ToolMat.Fallback.count("clip_nosight_foo -> clip_nosight") == 1 && Stats.ToolMat.Fallback.at("clip_nosight_foo -> clip_nosight") == 6, "an unknown name takes the fallback and is counted (three sides and the three faces that take the brush's material)");
+        Check(Stats.ToolMat.Unchanged.count("caulk_sun_shadow") && Stats.ToolMat.Unchanged.count("hint") && Stats.ToolMat.Unchanged.count("mantle_on"), "BO3 names are unchanged");
+        bool Reported = false;
+        for (const std::string& Line : Stats.Unresolved) Reported = Reported || Line.rfind("tool_material_fallback: clip_nosight_foo -> clip_nosight x6", 0) == 0;
+        Check(Reported && fs::exists(Map.parent_path() / "tools.tools.txt"), "the fallback is in the unresolved list and the counts in <map>.tools.txt");
+        // every face of the map names a BO3 tool
+        std::string Outside;
+        size_t FaceLines = 0;
+        for (size_t At = 0; At < Text.size();)
+        {
+            const size_t Eol = Text.find('\n', At);
+            const std::string Line = Text.substr(At, (Eol == std::string::npos ? Text.size() : Eol) - At);
+            At = Eol == std::string::npos ? Text.size() : Eol + 1;
+            if (Line.rfind(" ( ", 0) != 0) continue;
+            FaceLines++;
+            const size_t Close = Line.rfind(')');
+            const std::string Name = Line.substr(Close + 2, Line.find(' ', Close + 2) - Close - 2);
+            if (!Stats.ToolMat.Table->IsBo3(Name)) Outside += Name + " ";
+        }
+        Check(FaceLines > 0 && Outside.empty(), "no face names anything outside the BO3 tool list", Outside);
+        Check(Text.find("( portal ") == std::string::npos && Text.find(" portal 64 64") == std::string::npos && Text.find("brick_clip_nosight") != std::string::npos && Text.find("\n   metal_clip_nosight\n   lightmap_gray") != std::string::npos &&
+                  Text.find("\n   wall_mat\n   lightmap_gray") != std::string::npos && Stats.ToolMat.MeshesDropped == 1,
+              "a portal surface is not written, a tool-named surface takes the BO3 name, a drawn material stays");
+        // the same scene as Black Ops 3 keeps its BO3 names and sends the unknown through the fallback
+        MapScene Bo3 = Scene;
+        Bo3.Game = "bo3";
+        RadiantStats Bo3Stats;
+        const bool Bo3Ok = WriteRadiant(Bo3, (Dir / "tools" / "tools_bo3.map").string(), Bo3Stats, Error);
+        Check(Bo3Ok && Bo3Stats.ToolMat.Lineage.empty() && Bo3Stats.ToolMat.Unchanged.count("caulk_sun_shadow") == 1 && Bo3Stats.ToolMat.Mapped.empty(), "a game with no lineage maps nothing by table", Error);
+        // a BO4-style game (no lineage): a tool name the BO3 lists lack is kept as it is, reported, never mapped, dropped or sent to a fallback; the portal brush is written
+        {
+            MapScene Bo4;
+            Bo4.Game = "bo4";
+            Bo4.Collision.Brushes.push_back(Named(0, { "clip_monster", "clip_monster", "clip_monster" }));
+            Bo4.Collision.Brushes.push_back(Named(100, { "portal", "portal", "portal" }));
+            RadiantStats S4;
+            const fs::path Bo4Map = Dir / "tools" / "tools_bo4.map";
+            const bool Ok4 = WriteRadiant(Bo4, Bo4Map.string(), S4, Error);
+            const std::string T4 = Read(Bo4Map);
+            bool Said = false;
+            for (const std::string& Line : S4.Unresolved) Said = Said || Line.rfind("tool_material_unlisted: clip_monster", 0) == 0;
+            Check(Ok4 && S4.Brushes == 2 && S4.ToolMat.BrushesDropped == 0 && S4.ToolMat.Mapped.empty() && S4.ToolMat.Fallback.empty() && S4.ToolMat.Dropped.empty() && S4.ToolMat.Unlisted.count("clip_monster") && S4.ToolMat.Unlisted.count("portal") &&
+                      T4.find(") clip_monster 64 64") != std::string::npos && T4.find(") portal 64 64") != std::string::npos && Said,
+                  "a game with no lineage: clip_monster and portal are unchanged, written and reported as unlisted", Error);
+        }
+
+        // the sky of an ssi skybox game: the all-sky brush far out is dropped, the shell and the volume_sun are in the main map and the sun box is the play area
+        MapScene Sky;
+        Sky.Game = "mwr";
+        Sky.SealWithSkyShell = true;
+        Sky.MapEnts = "{\n\"classname\" \"worldspawn\"\n}\n";
+        Sky.Collision.Brushes.push_back(Named(0, { "clip", "clip", "clip" }));
+        Brush Far = Box(0, -46464, 0, 64, -46400, 64);
+        for (BrushSide& Side : Far.Sides) Side.Material = "sky";
+        Sky.Collision.Brushes.push_back(Far);
+        Sky.Sun.Present = true;
+        Sky.Sun.Toward[0] = -0.3213938f, Sky.Sun.Toward[1] = -0.5566704f, Sky.Sun.Toward[2] = 0.7660444f;
+        Sky.Sun.Color[0] = 34, Sky.Sun.Color[1] = 34, Sky.Sun.Color[2] = 26.8f;
+        RadiantStats SkyStats;
+        const fs::path SkyMap = Dir / "toolsky" / "toolsky.map";
+        fs::create_directories(SkyMap.parent_path(), Ec);
+        const bool SkyOk = WriteRadiant(Sky, SkyMap.string(), SkyStats, Error, nullptr, { PrefabPart::BrushEntities, PrefabPart::Brushes, PrefabPart::Entities });
+        const std::string SkyText = Read(SkyMap);
+        Check(SkyOk && SkyStats.ToolMat.SkyBrushesDropped == 1 && SkyStats.Brushes == 1, "the all-sky world brush is dropped and counted", Error + " " + std::to_string(SkyStats.ToolMat.SkyBrushesDropped));
+        Check(SkyText.find("\"classname\" \"volume_sun\"") != std::string::npos && Count(SkyText, " sky 64 64 0 0 0 0") == 36 && SkyStats.SkyShells == 1 && SkyStats.SunVolumes == 1,
+              "the shell and the volume_sun are in the main map although the brush entities prefab was asked for", std::to_string(Count(SkyText, " sky 64 64 0 0 0 0")));
+        Check(SkyText.find("46464") == std::string::npos && SkyText.find("( -256 -256 -256 )") != std::string::npos && SkyText.find("( -1088 -1088 -1088 )") != std::string::npos,
+              "the sun box is the play area plus 256 and the shell its bounds plus 1024 plus the slab, neither reaching the dropped sky brush");
+        bool Sealed = true;
+        for (const RadiantPrefabFile& F : SkyStats.PrefabFiles) Sealed = Sealed && F.Part != PrefabPart::BrushEntities;
+        Check(Sealed, "no brush entities prefab file holds the shell");
+
+        // the sky brushes as the H1 reader stores them: no side material, the sky contents bit (0x800) on the brush, a bevel side beside the six; a solid brush of a drawn material that starts with `sky`
+        // is not a sky; the sun box is the bounds of the spawns, the intermission and the nodes plus 2048, clamped inside the shell's bounds
+        {
+            MapScene H1;
+            H1.Game = "mwr";
+            H1.SealWithSkyShell = true;
+            H1.MapEnts = "{\n\"classname\" \"worldspawn\"\n}\n{\n\"classname\" \"mp_tdm_spawn\"\n\"origin\" \"0 0 0\"\n}\n{\n\"classname\" \"mp_global_intermission\"\n\"origin\" \"500 500 50\"\n}\n";
+            for (const float At : { -20000.0f, 20000.0f })
+            {
+                Brush Corner = Box(At, At, 0, At + 64, At + 64, 64);
+                for (BrushSide& Side : Corner.Sides) Side.Material = "clip";
+                H1.Collision.Brushes.push_back(Corner);
+            }
+            Brush Slab = Box(0, -46464, 0, 64, -46400, 64);
+            Slab.Contents = 0x800;
+            Slab.Sides.push_back(Slab.Sides.back());   // a fourth side, as a bevel
+            for (BrushSide& Side : Slab.Sides) Side.Material.clear();
+            H1.Collision.Brushes.push_back(Slab);
+            Brush Tower = Box(0, 100, 0, 64, 164, 64);
+            Tower.Contents = 1;
+            for (BrushSide& Side : Tower.Sides) Side.Material = "skyscraper_concrete";
+            H1.Collision.Brushes.push_back(Tower);
+            H1.Sun = Sky.Sun;
+            RadiantStats HS;
+            const fs::path HMap = Dir / "toolsky" / "h1sky.map";
+            const bool HOk = WriteRadiant(H1, HMap.string(), HS, Error, nullptr, { PrefabPart::BrushEntities });
+            const std::string HText = Read(HMap);
+            Check(HOk && HS.ToolMat.SkyBrushesDropped == 1 && HS.Brushes == 3 && HS.SkyShells == 1 && HS.SunVolumes == 1, "a brush with no side material and the sky contents is a sky and is cut out; the other three brushes stay",
+                  Error + " " + std::to_string(HS.ToolMat.SkyBrushesDropped) + "/" + std::to_string(HS.Brushes));
+            Check(HS.ToolMat.Fallback.count("skyscraper_concrete -> sky") == 1, "a solid brush whose material merely starts with sky is not a sky brush: it is kept (its name takes the lineage fallback like any unknown tool name)");
+            Check(HText.find("46464") == std::string::npos && !HS.ToolMat.Unchanged.count("sky"), "the cut sky leaves no trace in the map or the tool counts",
+                  HS.ToolMat.Unchanged.count("sky") ? std::to_string(HS.ToolMat.Unchanged.at("sky")) : std::string("none"));
+            Check(HText.find("( -2048 -2048 0 )") != std::string::npos && HText.find("( 2548 2548 64 )") != std::string::npos, "the volume_sun is the spawns' and intermission's bounds plus 2048, clamped inside the shell's bounds");
+        }
+
+        // the shell is skipped when the bounds reach the limit: the game's own sky brushes are kept
+        {
+            MapScene Far;
+            Far.Game = "mwr";
+            Far.SealWithSkyShell = true;
+            Far.MapEnts = "{\n\"classname\" \"worldspawn\"\n}\n";
+            Far.Collision.Brushes.push_back(Named(0, { "clip", "clip", "clip" }));
+            Far.Collision.Brushes.push_back(Named(70000, { "clip", "clip", "clip" }));
+            Brush Slab = Box(0, -46464, 0, 64, -46400, 64);
+            for (BrushSide& Side : Slab.Sides) Side.Material = "sky";
+            Far.Collision.Brushes.push_back(Slab);
+            RadiantStats FS;
+            const fs::path FMap = Dir / "toolsky" / "farsky.map";
+            const bool FOk = WriteRadiant(Far, FMap.string(), FS, Error);
+            const std::string FText = Read(FMap);
+            Check(FOk && FS.SkyShells == 0 && FS.ToolMat.SkyBrushesDropped == 0 && FS.Brushes == 3 && FText.find("-46464") != std::string::npos, "when no shell is written the game's own sky brushes are kept", Error);
+        }
+
+        // the sky name is taken on evidence, never by prefix: skyscraper_concrete listed before the real sky in the collision materials does not make a solid brush of it a sky
+        {
+            MapScene Prefix;
+            Prefix.Game = "mwr";
+            Prefix.SealWithSkyShell = true;
+            Prefix.MapEnts = "{\n\"classname\" \"worldspawn\"\n}\n";
+            Prefix.Collision.Materials = { { "skyscraper_concrete", 0x1u }, { "sky", 0x800u } };
+            Brush Solid = Box(0, 0, 0, 64, 64, 64);
+            Solid.Contents = 1;
+            for (BrushSide& Side : Solid.Sides) Side.Material = "skyscraper_concrete";
+            Prefix.Collision.Brushes.push_back(Solid);
+            Brush Slab = Box(0, -46464, 0, 64, -46400, 64);
+            Slab.Contents = 0x800;
+            for (BrushSide& Side : Slab.Sides) Side.Material = "sky";
+            Prefix.Collision.Brushes.push_back(Slab);
+            RadiantStats XS;
+            const bool XOk = WriteRadiant(Prefix, (Dir / "toolsky" / "prefixsky.map").string(), XS, Error);
+            Check(XOk && XS.Brushes == 1 && XS.ToolMat.SkyBrushesDropped == 1 && XS.SkyShells == 1, "a solid brush of skyscraper_concrete is not a sky even when it is the first collision material starting with sky; the exact sky slab is cut",
+                  Error + " " + std::to_string(XS.Brushes) + "/" + std::to_string(XS.ToolMat.SkyBrushesDropped));
+        }
+
+        // a brush a tool name drops (a portal) stays out of the bounds: one at x=70000 neither blocks the shell nor stretches it
+        {
+            MapScene Portal;
+            Portal.Game = "mwr";
+            Portal.SealWithSkyShell = true;
+            Portal.MapEnts = "{\n\"classname\" \"worldspawn\"\n}\n";
+            Portal.Collision.Brushes.push_back(Named(0, { "clip", "clip", "clip" }));
+            Portal.Collision.Brushes.push_back(Named(70000, { "portal", "portal", "portal" }));
+            Brush Slab = Box(0, -46464, 0, 64, -46400, 64);
+            Slab.Contents = 0x800;
+            for (BrushSide& Side : Slab.Sides) Side.Material = "sky";
+            Portal.Collision.Brushes.push_back(Slab);
+            RadiantStats QS;
+            const fs::path QMap = Dir / "toolsky" / "portalfar.map";
+            const bool QOk = WriteRadiant(Portal, QMap.string(), QS, Error);
+            const std::string QText = Read(QMap);
+            Check(QOk && QS.SkyShells == 1 && QS.ToolMat.SkyBrushesDropped == 1 && QS.ToolMat.BrushesDropped == 1 && QS.Brushes == 1 && QText.find("70000") == std::string::npos && QText.find("( -1088 -1088 -1088 )") != std::string::npos,
+                  "a portal brush at x=70000 is out of the bounds: the shell is written from the clip brush alone", Error);
+        }
+
+        // the counters of a cut sky brush: nothing of it is counted (compare with the same scene without it), and when the shell is skipped it is counted exactly as written
+        {
+            const auto Scene = [&](bool WithSky, bool Far, const char* SkyMaterial) {
+                MapScene S;
+                S.Game = "mwr";
+                S.SealWithSkyShell = true;
+                S.MapEnts = "{\n\"classname\" \"worldspawn\"\n}\n";
+                S.Collision.Brushes.push_back(Named(0, { "clip", "clip", "clip" }));
+                if (Far) S.Collision.Brushes.push_back(Named(70000, { "clip", "clip", "clip" }));
+                if (WithSky)
+                {
+                    Brush Slab = Box(0, -46464, 0, 64, -46400, 64);
+                    Slab.Contents = 0x800;
+                    for (BrushSide& Side : Slab.Sides) Side.Material = SkyMaterial;
+                    S.Collision.Brushes.push_back(Slab);
+                }
+                return S;
+            };
+            const auto Run = [&](const MapScene& S, const char* Name) {
+                RadiantStats R;
+                std::string E;
+                WriteRadiant(S, (Dir / "toolsky" / Name).string(), R, E);
+                return R;
+            };
+            const RadiantStats With = Run(Scene(true, false, "sky"), "cnt_with.map"), Without = Run(Scene(false, false, "sky"), "cnt_without.map");
+            Check(With.Brushes == Without.Brushes && With.Faces == Without.Faces && With.BrushesHull == Without.BrushesHull && With.BrushPieces == Without.BrushPieces && With.HullFacesMatched == Without.HullFacesMatched &&
+                      With.HullFacesUnmatched == Without.HullFacesUnmatched && With.ToolMat.Unchanged == Without.ToolMat.Unchanged && With.ToolMat.SkyBrushesDropped == 1 && Without.Brushes == 1,
+                  "a cut sky brush leaves every counter as if it were not there", std::format("{} {} {} {} {} {}", With.Brushes, With.Faces, With.BrushesHull, With.BrushPieces, With.HullFacesMatched, With.HullFacesUnmatched));
+            // shell skipped: the sky brush is written and counted like a clip brush of the same shape
+            const RadiantStats Kept = Run(Scene(true, true, "sky"), "cnt_kept.map"), Clip = Run(Scene(true, true, "clip"), "cnt_clip.map");
+            Check(Kept.SkyShells == 0 && Kept.Brushes == 3 && Kept.Brushes == Clip.Brushes && Kept.Faces == Clip.Faces && Kept.BrushesHull == Clip.BrushesHull && Kept.BrushPieces == Clip.BrushPieces &&
+                      Kept.HullFacesMatched == Clip.HullFacesMatched && Kept.HullFacesUnmatched == Clip.HullFacesUnmatched,
+                  "when the shell is skipped the sky brush is written at the end of the worldspawn and counted as written", std::format("{} {} {} {}", Kept.Brushes, Kept.Faces, Kept.BrushesHull, Kept.HullFacesUnmatched));
+        }
+
+        // a game that writes no shell: the volume_sun is where it always was (the brush entities prefab when that is asked for), over the collision bounds plus 256, and in the same order
+        {
+            MapScene Plain;
+            Plain.Game = "bo4";
+            Plain.MapEnts = "{\n\"classname\" \"worldspawn\"\n}\n";
+            Plain.Collision.Brushes.push_back(Named(0, { "clip", "clip", "clip" }));
+            Plain.Sun = Sky.Sun;
+            Probe Pr;
+            Pr.Origin[0] = 5;
+            Plain.Probes.push_back(Pr);
+            RadiantStats PS, PU;
+            const fs::path PMap = Dir / "toolsky" / "plain_split.map", UMap = Dir / "toolsky" / "plain_whole.map";
+            const bool POk = WriteRadiant(Plain, PMap.string(), PS, Error, nullptr, { PrefabPart::BrushEntities });
+            const bool UOk = WriteRadiant(Plain, UMap.string(), PU, Error);
+            const std::string PMain = Read(PMap), Whole = Read(UMap);
+            bool InPrefab = false;
+            for (const RadiantPrefabFile& F : PS.PrefabFiles) InPrefab = InPrefab || (F.Part == PrefabPart::BrushEntities && Read(PMap.parent_path() / F.File).find("\"classname\" \"volume_sun\"") != std::string::npos);
+            const size_t Sun = Whole.find("\"classname\" \"volume_sun\""), Probe = Whole.find("\"classname\" \"reflection_probe\"");
+            Check(POk && UOk && InPrefab && PMain.find("\"classname\" \"volume_sun\"") == std::string::npos && PS.SkyShells == 0 && PU.SkyShells == 0 && PS.SunVolumes == 1,
+                  "a game with no shell keeps its volume_sun in the brush entities prefab", Error);
+            Check(Whole.find("( -256 -256 -256 )") != std::string::npos && Whole.find("( 320 320 320 )") != std::string::npos && Sun != std::string::npos && Probe != std::string::npos && Probe < Sun,
+                  "and over the collision bounds plus 256, after the probes as before");
+        }
+    }
 
     // BO3: a hull of eight corners, three sides; the contents line; unmatched faces take the brush's material
     {

@@ -216,6 +216,14 @@ namespace
 
             // the surface type: the bit of the material (a blend: its first layer's, where the reader could tell)
             SurfaceTypes::Apply("h1", M, D);
+            // An emissive slot bound to a colour image (`_col`, `_c`: foliage in mp_vacant binds the ivy and the dead grass to their own colour map) is not an emission: the file names its role. Left
+            // unbound and said, the material takes the family its other maps say. A real emissive image (`_ems`, `_emi`, `_e`) is untouched.
+            if (!D.Emissive.Empty() && Materials::RoleFromName(std::filesystem::path(D.Emissive.Path).stem().string()) == Role::Albedo)
+            {
+                D.Emissive = Materials::Map();
+                D.TexturesUnbound += (D.TexturesUnbound.empty() ? "" : ",") + std::string("emissive(the image is a colour map)");
+            }
+            D.FoliageVegetation = true;   // a foliage surface takes BO3's vegetation family when its source is alpha tested or blended (MaterialGdt Builder::Add)
 
             // the BO3 material type, by the techset grammar
             const auto Choose = [&]() {

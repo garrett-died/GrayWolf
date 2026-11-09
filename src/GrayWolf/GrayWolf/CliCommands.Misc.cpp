@@ -60,6 +60,7 @@
 #include "MapBlend.h"
 #include "MapSurfaceFromCollision.h"
 #include "MapSunProbes.h"
+#include "MapToolMaterials.h"
 #include "MapCreateFx.h"
 #include "SkyLatLong.h"
 #include "ExrWriter.h"
@@ -1048,6 +1049,7 @@ static int SelfTest(std::string& Failures)
     Failed += H1Blend::SelfTest(Failures);
     Failed += Maps::SurfaceFromCollisionSelfTest(Failures);
     Failed += Maps::SunProbesSelfTest(Failures);
+    Failed += Maps::ToolMaterialsSelfTest(Failures);
     Failed += Maps::CreateFxSelfTest(Failures);
     Failed += SkyConv::SelfTest(Failures);
     Failed += Maps::SkyGdtSelfTest(Failures);

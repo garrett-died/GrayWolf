@@ -265,6 +265,7 @@
     <ClCompile Include="MapBlend.cpp" />
     <ClCompile Include="MapSurfaceFromCollision.cpp" />
     <ClCompile Include="MapSunProbes.cpp" />
+    <ClCompile Include="MapToolMaterials.cpp" />
     <ClCompile Include="MapCreateFx.cpp" />
     <ClCompile Include="MapRenderMeshes.cpp" />
     <ClCompile Include="MapRenderMeshesSelfTest.cpp" />
@@ -459,6 +460,7 @@
     <ClInclude Include="MapBlend.h" />
     <ClInclude Include="MapSurfaceFromCollision.h" />
     <ClInclude Include="MapSunProbes.h" />
+    <ClInclude Include="MapToolMaterials.h" />
     <ClInclude Include="MapCreateFx.h" />
     <ClInclude Include="MapRenderMeshes.h" />
     <ClInclude Include="MapCollisionMeshes.h" />

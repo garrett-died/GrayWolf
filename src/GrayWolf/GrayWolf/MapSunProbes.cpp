@@ -153,16 +153,25 @@ namespace Maps
         return false;
     }
 
-    bool CollisionBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi)
+    bool CollisionBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi, const std::set<const Brush*>* Skip, std::array<std::string, 6>* Why)
     {
         bool Any = false;
+        const char* Source = "collision soup vertex";
         const auto Take = [&](std::span<const float, 3> P) {
             for (size_t A = 0; A < 3; A++)
                 if (!std::isfinite(P[A])) return;
             for (size_t A = 0; A < 3; A++)
             {
-                Lo[A] = Any ? std::min(Lo[A], P[A]) : P[A];
-                Hi[A] = Any ? std::max(Hi[A], P[A]) : P[A];
+                if (!Any || P[A] < Lo[A])
+                {
+                    Lo[A] = P[A];
+                    if (Why != nullptr) (*Why)[A * 2] = std::format("{} at ({:.0f}, {:.0f}, {:.0f})", Source, P[0], P[1], P[2]);
+                }
+                if (!Any || P[A] > Hi[A])
+                {
+                    Hi[A] = P[A];
+                    if (Why != nullptr) (*Why)[A * 2 + 1] = std::format("{} at ({:.0f}, {:.0f}, {:.0f})", Source, P[0], P[1], P[2]);
+                }
             }
             Any = true;
         };
@@ -171,17 +180,18 @@ namespace Maps
         for (size_t K = 0; K + 2 < Soup.size(); K += 3) Take(Soup.subspan(K, 3).first<3>());
         for (const Brush& B : C.Brushes)
         {
+            if (Skip != nullptr && Skip->count(&B) != 0) continue;
+            Source = "world brush corner";
             const std::span<const float> Corners(B.Vertices);
             for (size_t K = 0; K + 2 < Corners.size(); K += 3) Take(Corners.subspan(K, 3).first<3>());
         }
         return Any;
     }
 
-    bool WrittenBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi, std::array<std::string, 6>* Why, const char* SkipModelContaining, float SkipOriginBeyond)
+    bool WrittenBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi, std::array<std::string, 6>* Why, const char* SkipModelContaining, float SkipOriginBeyond,
+                       const std::set<const Brush*>* SkipBrushes)
     {
-        bool Any = CollisionBounds(Scene, Lo, Hi);
-        if (Why != nullptr)
-            for (std::string& W : *Why) W = "collision";
+        bool Any = CollisionBounds(Scene, Lo, Hi, SkipBrushes, Why);
         const auto Take = [&](const float (&P)[3], const auto& Label) {
             for (size_t A = 0; A < 3; A++)
                 if (!std::isfinite(P[A])) return;

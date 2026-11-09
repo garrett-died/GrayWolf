@@ -195,6 +195,9 @@
     <ClCompile Include="MapSunProbes.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MapToolMaterials.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="MapCreateFx.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -438,6 +441,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="MapSkyGdt.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="MapToolMaterials.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="ExrReader.h">
