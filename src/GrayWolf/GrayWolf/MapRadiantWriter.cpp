@@ -941,6 +941,12 @@ namespace
                 ToolMeshes[Material + (Tool.Known ? std::format(" (contents {:#x})", Tool.Contents) : std::string(" (label not a clip material)"))]++;
                 if (Tool.FromRow && Col.ClipToolApproximation.count(Tool.RowKey) != 0) ToolApproximated[Tool.RowKey]++;
             }
+            // a caulk-family name is invalid on a mesh (cod2map: Caulk applied to terrain patch); the collision is kept as clip_full
+            if (ToolUse::PatchInvalid(Material))
+            {
+                Stats.ToolMat.PatchToolReplaced[Material]++;
+                Material = "clip_full";
+            }
             Out += MeshText(R.Mesh, Material, R.ReplaceUv, Text, &Stats.MeshTextMaxAbsT) + " }\n";
         }
         {
@@ -1101,12 +1107,15 @@ namespace
             bool Drop = false;
             Written[L] = SurfaceMaterialName(Names[L], Gdt, Stats, Drop);
             Dropped[L] = Drop;
+            // after the rename: a render surface whose written name is a caulk-family tool is not valid on a patch (cod2map rejects it); decided on the name actually written
+            if (!Drop && ToolUse::PatchInvalid(Written[L])) Dropped[L] = 2;
         }
         for (const RenderMesh& R : Meshes.Meshes)
         {
             if (Dropped[static_cast<size_t>(R.Label)])
             {
                 Stats.ToolMat.MeshesDropped++;
+                if (Dropped[static_cast<size_t>(R.Label)] == 2) Stats.ToolMat.PatchToolDropped[Written[static_cast<size_t>(R.Label)]]++;
                 continue;
             }
             MeshTextOptions Text;
@@ -2205,6 +2214,12 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
         for (const Brush& B : Scene.Collision.Brushes)
             if (IsAllSkyBrush(B, Tools)) SkyBrushes.insert(&B);
     BoundsSkip = SkyBrushes;
+    // render surfaces whose written tool name is invalid on a patch are not written (WritePatchPass); they do not size the shell or the sun box either
+    std::set<std::string> BoundsMaterials;
+    for (const Mesh& M : Scene.Objects)
+        for (const Surface& S : M.Surfaces)
+            if (!S.Material.empty() && (ToolUse::PatchInvalid(S.Material) || (Stats.ToolMat.Table != nullptr && Stats.ToolMat.Table->Exact(Stats.ToolMat.Lineage, S.Material) && ToolUse::PatchInvalid(Stats.ToolMat.Peek(S.Material).Name))))
+                BoundsMaterials.insert(S.Material);
     if (Stats.ToolMat.Table != nullptr)
         for (const Brush& B : Scene.Collision.Brushes)
             for (const BrushSide& Side : B.Sides)
@@ -2225,13 +2240,13 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
     if (Scene.SealWithSkyShell)
     {
         std::array<float, 3> PLo{}, PHi{};
-        if (WrittenBounds(Scene, PLo, PHi, nullptr, nullptr, 0.0f, &BoundsSkip))
+        if (WrittenBounds(Scene, PLo, PHi, nullptr, nullptr, 0.0f, &BoundsSkip, &BoundsMaterials))
         {
             Stats.SkyShellPlanned = !Reaches(PLo, PHi);
             if (!Stats.SkyShellPlanned)
             {
                 std::array<float, 3> NearLo{}, NearHi{};
-                if (WrittenBounds(Scene, NearLo, NearHi, nullptr, nullptr, 62976.0f, &BoundsSkip) && !Reaches(NearLo, NearHi))
+                if (WrittenBounds(Scene, NearLo, NearHi, nullptr, nullptr, 62976.0f, &BoundsSkip, &BoundsMaterials) && !Reaches(NearLo, NearHi))
                     for (const Instance& I : Scene.StaticInstances)
                         if (!I.Model.empty() && (std::fabs(I.Origin[0]) >= 62976.0f || std::fabs(I.Origin[1]) >= 62976.0f || std::fabs(I.Origin[2]) >= 62976.0f)) Stats.SkyShellPlanned = true;
             }
@@ -2389,7 +2404,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
     {
         std::array<float, 3> Lo{}, Hi{};
         std::array<std::string, 6> BoundsWhy;
-        if (WrittenBounds(Scene, Lo, Hi, &BoundsWhy, nullptr, 0.0f, &BoundsSkip))
+        if (WrittenBounds(Scene, Lo, Hi, &BoundsWhy, nullptr, 0.0f, &BoundsSkip, &BoundsMaterials))
         {
             std::array<double, 3> A{}, B{};
             SunBox(Lo, Hi, 1024.0f, 64000.0f, A, B);
@@ -2400,7 +2415,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
             if (Clamped)
             {
                 std::array<float, 3> NearLo{}, NearHi{};
-                if (WrittenBounds(Scene, NearLo, NearHi, nullptr, nullptr, 62976.0f, &BoundsSkip) && !Reaches(NearLo, NearHi))
+                if (WrittenBounds(Scene, NearLo, NearHi, nullptr, nullptr, 62976.0f, &BoundsSkip, &BoundsMaterials) && !Reaches(NearLo, NearHi))
                 {
                     // only an instance with a model is written anywhere; one without a model still took part in the bounds decision above and is reported (EmptyFar)
                     for (const Instance& I : Scene.StaticInstances)
@@ -2438,7 +2453,7 @@ bool WriteRadiant(const MapScene& Scene, const std::string& MapPath, RadiantStat
                 std::array<float, 3> VLo{}, VHi{};
                 std::string Without = "no bounds without them";
                 size_t EntitiesOutside = 0;
-                if (WrittenBounds(Scene, VLo, VHi, nullptr, "vista", 0.0f, &BoundsSkip))
+                if (WrittenBounds(Scene, VLo, VHi, nullptr, "vista", 0.0f, &BoundsSkip, &BoundsMaterials))
                 {
                     Without = std::format("({:.0f} {:.0f} {:.0f}) to ({:.0f} {:.0f} {:.0f})", VLo[0], VLo[1], VLo[2], VHi[0], VHi[1], VHi[2]);
                     for (const Entity& E : Ents)
@@ -3174,7 +3189,7 @@ int RadiantWriterSelfTest(std::string& Failures)
         Scene.Collision.Brushes.push_back(Named(500, { "clip_water_player", "portal_caulk", "clip_nosight_cushion" }));            // 5: mapped
         // the render pass: a tool-named surface takes the BO3 name, a portal surface is not written, a drawn material is as it was
         Mesh World;
-        for (const char* Material : { "clip_nosight_metal", "portal_nodraw", "wall_mat", "skyline_brick", "ladder_metal_rust", "portal_frame", "foo_clip", "sun_volume", "shadowcaster", "metal_clip_nosight" })
+        for (const char* Material : { "clip_nosight_metal", "portal_nodraw", "wall_mat", "skyline_brick", "ladder_metal_rust", "portal_frame", "foo_clip", "sun_volume", "shadowcaster", "metal_clip_nosight", "caulk_shadow" })
         {
             Surface Sf;
             Sf.Material = Material;
@@ -3225,8 +3240,17 @@ int RadiantWriterSelfTest(std::string& Failures)
         }
         Check(FaceLines > 0 && Outside.empty(), "no face names anything outside the BO3 tool list", Outside);
         Check(Text.find("( portal ") == std::string::npos && Text.find(" portal 64 64") == std::string::npos && Text.find("brick_clip_nosight") != std::string::npos && Text.find("\n   metal_clip_nosight\n   lightmap_gray") != std::string::npos &&
-                  Text.find("\n   wall_mat\n   lightmap_gray") != std::string::npos && Stats.ToolMat.MeshesDropped == 1,
+                  Text.find("\n   wall_mat\n   lightmap_gray") != std::string::npos && Stats.ToolMat.MeshesDropped == 2,
               "a portal surface is not written, a tool-named surface takes the BO3 name, a drawn material stays");
+        // a caulk-family render surface is not valid on a patch: not written, counted by name; a normal mesh is kept; a caulk brush face is kept
+        Check(Text.find("caulk_shadow\n") == std::string::npos && Text.find("\n   wall_mat\n   lightmap_gray") != std::string::npos && Stats.ToolMat.PatchToolDropped.size() == 1 &&
+                  Stats.ToolMat.PatchToolDropped.count("caulk_shadow") && Stats.ToolMat.PatchToolDropped.at("caulk_shadow") == 1 && Text.find(") caulk_sun_shadow 64 64") != std::string::npos,
+              "a caulk_shadow render mesh is dropped and counted by name, a normal mesh is kept, a caulk brush is kept");
+        {
+            std::ifstream ToolsTxt(Map.parent_path() / "tools.tools.txt", std::ios::binary);
+            const std::string ToolsText((std::istreambuf_iterator<char>(ToolsTxt)), std::istreambuf_iterator<char>());
+            Check(ToolsText.find("caulk-family tool name is invalid on a patch") != std::string::npos && ToolsText.find("caulk_shadow x1") != std::string::npos, "the per-name drop is in <map>.tools.txt");
+        }
         // the same scene as Black Ops 3 keeps its BO3 names and sends the unknown through the fallback
         MapScene Bo3 = Scene;
         Bo3.Game = "bo3";

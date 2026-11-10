@@ -192,6 +192,13 @@ namespace Maps
         return N;
     }
 
+    bool ToolUse::PatchInvalid(const std::string& Name)
+    {
+        std::string L = Name;
+        for (char& C : L) C = static_cast<char>(std::tolower(static_cast<unsigned char>(C)));
+        return L == "caulk" || L == "caulk_shadow" || L == "caulk_sun_shadow" || L == "caulk_transparent";
+    }
+
     std::vector<std::string> ToolUse::Lines() const
     {
         std::vector<std::string> Out;
@@ -207,6 +214,8 @@ namespace Maps
         Put("mapped by the clip_<kind>_<surface> rule", Rule);
         Put("FALLBACK (no table row, no BO3 name: surface dropped or nearest base tool)", Fallback);
         Put("dropped (the face's brush or mesh is not written)", Dropped);
+        Put("render surface meshes dropped: a caulk-family tool name is invalid on a patch (cod2map: Caulk applied to terrain patch)", PatchToolDropped);
+        Put("collision meshes written as clip_full: a caulk-family tool name is invalid on a patch", PatchToolReplaced);
         Put("NOT a BO3 name and the game has no rules for it: kept as it is", Unlisted);
         Put("already a BO3 name, unchanged", Unchanged);
         if (BrushesDropped + MeshesDropped + SkyBrushesDropped > 0)

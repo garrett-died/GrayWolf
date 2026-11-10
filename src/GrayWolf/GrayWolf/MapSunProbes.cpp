@@ -189,7 +189,7 @@ namespace Maps
     }
 
     bool WrittenBounds(const MapScene& Scene, std::array<float, 3>& Lo, std::array<float, 3>& Hi, std::array<std::string, 6>* Why, const char* SkipModelContaining, float SkipOriginBeyond,
-                       const std::set<const Brush*>* SkipBrushes)
+                       const std::set<const Brush*>* SkipBrushes, const std::set<std::string>* SkipMaterials)
     {
         bool Any = CollisionBounds(Scene, Lo, Hi, SkipBrushes, Why);
         const auto Take = [&](const float (&P)[3], const auto& Label) {
@@ -224,6 +224,7 @@ namespace Maps
             for (const Surface& S : M.Surfaces)
             {
                 if (IsSky(S.Material)) continue;
+                if (SkipMaterials != nullptr && SkipMaterials->count(S.Material) != 0) continue;   // render surfaces the writer does not write (a caulk-family tool on a patch)
                 for (const Vertex& V : S.Vertices)
                     Take(V.Pos, [&](const float (&P)[3]) { return std::format("render vertex of {} ({}) at ({:.0f}, {:.0f}, {:.0f})", M.Name, S.Material, P[0], P[1], P[2]); });
             }

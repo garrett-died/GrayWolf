@@ -69,7 +69,13 @@ namespace Maps
         // by "from -> to" (Mapped, Rule, Fallback), and "from" (Unchanged, Dropped)
         std::map<std::string, size_t> Mapped, Rule, Fallback, Unchanged, Unlisted, Dropped;
         size_t BrushesDropped = 0, MeshesDropped = 0, SkyBrushesDropped = 0;
+        // render-surface meshes not written because their written tool name is invalid on a patch (PatchInvalid), by that name; they are also in MeshesDropped
+        std::map<std::string, size_t> PatchToolDropped;
+        // collision meshes whose name was a PatchInvalid tool, written as clip_full instead (the collision is kept), by the name they would have had
+        std::map<std::string, size_t> PatchToolReplaced;
 
+        // Whether a BO3 tool name must not be written on a patch or mesh: the caulk family (cod2map: "Caulk applied to terrain patch"). Brushes may use them.
+        static bool PatchInvalid(const std::string& Name);
         // The BO3 name of a tool name, not counted
         ToolResult Peek(const std::string& Name) const;
         // Peek, counted
