@@ -65,6 +65,10 @@ namespace Maps
         // A fan: lone triangles around one pivot written as the 2 x (n + 1) grid [R0 .. Rn], [P .. P]. Triangles then lists
         // them in cell order (cell i is R(i), R(i+1), P); the pivot copies are separate points.
         bool IsFan = false;
+        // A strip: 2 groups of N + 1 points, cell i between points i and i + 1 of both groups. A cell is a quad (two triangles) or one triangle written as a degenerate cell, so the
+        // number of triangles a cell has varies: CellStart[i] is where cell i's triangles begin in Triangles (CellStart.size() = cells + 1). Empty for every other grid.
+        bool IsStrip = false;
+        std::vector<int32_t> CellStart;
 
         int At(int Group, int Point) const { return Points[static_cast<size_t>(Group) * GroupSize + Point]; }
         std::span<const int32_t> Group(int G) const { return std::span<const int32_t>(Points).subspan(static_cast<size_t>(G) * GroupSize, GroupSize); }
@@ -118,6 +122,15 @@ namespace Maps
             // The most pairs of triangles sharing an edge Build will rank (memory is about 100 bytes a pair). A soup above it (tens of thousands of triangles on one
             // edge) gets no pairing: every triangle stays lone, BuildResult says so, and coverage still passes. Clamped to 2^30.
             int64_t MaxCandidates = 16000000;
+            // Chain the cells that are left in small grids (a rectangle one cell wide or high, a fan, a lone triangle) into strips (docs/hydrax-port/strips.md): 2 x N grids
+            // that walk from cell to cell across a shared edge. Rectangles at least two cells wide and high stay as they are. Off by default: the mesher's grids are then
+            // exactly HydraX's.
+            bool Strips = false;
+            // The most points in a row of a strip (a strip of N cells has N + 1); the compiler's ParsePatch refuses a dimension over 128.
+            int MaxStripPoints = 128;
+            // Like IsBorder, but called on edges the strip step only wants to judge (it may ask about one edge several times), so a caller that counts the borders it finds
+            // must not count these. Empty: IsBorder is used.
+            std::function<bool(int, int, int, int)> IsBorderQuiet;
         };
 
         struct BuildResult
@@ -127,6 +140,9 @@ namespace Maps
             int64_t CandidatePotential = 0;          // pairs of triangles sharing an edge (what MaxCandidates is compared with)
             bool CandidatesCapped = false;           // MaxCandidates was exceeded: no pairing was tried
             int64_t TrianglesLeftLone = 0;           // the triangles that stayed lone because of it (all of them when capped)
+            // the strip step (BuildOptions.Strips): grids the small pieces would have made without it, strips of two or more cells, the cells in them, lone triangles and fan
+            // triangles that ended in one, and the zero-area cells that joined two strips at a point
+            int64_t GridsBeforeStrips = 0, StripsMade = 0, StripCells = 0, StripLoneAbsorbed = 0, StripFanTrianglesAbsorbed = 0, StripStitches = 0;
         };
 
         // The facing of a grid: the sum over its cells of (next group direction) x (next point direction)

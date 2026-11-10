@@ -51,6 +51,7 @@ namespace Maps
         // x about 100 bytes (1.6 GB at the default) whatever the thread count, and which material is capped does not depend on it (the output equals for 1 and 4 threads).
         int64_t MaxCandidates = 2000000;
         int FailLabel = -1;                  // tests only: the material whose worker throws, to prove the exception reaches the caller
+        bool Strips = true;                  // chain the cells that are left in small grids into 2 x N strips (QuadMesher BuildOptions.Strips, docs/hydrax-port/strips.md)
         bool Collision = false;              // collision triangles: colliding meshes, contained triangles of the same label and facing removed with a proof, points without data allowed
     };
 
@@ -66,6 +67,9 @@ namespace Maps
         size_t BordersCutTexture = 0, BordersCutColour = 0, BordersCutFacing = 0;
         size_t Flipped = 0, FacingKept = 0, FacingUnknown = 0, FacingNormal = 0, FacingAgainst = 0, FacingUndecided = 0;
         size_t GridsSplit = 0, Meshes = 0, MeshesColoured = 0;
+        // the strip step: grids the small pieces would have made without it (the grids are then Grids), strips of two or more cells, the cells in them, lone triangles and fan triangles
+        // that ended in one
+        size_t GridsBeforeStrips = 0, Strips = 0, StripCells = 0, StripLoneAbsorbed = 0, StripFanTrianglesAbsorbed = 0;
         size_t DegenerateUv = 0;
         size_t CoverageMissing = 0, CoverageLeftover = 0, LabelsFailed = 0, Labels = 0;
         size_t AccountingFailed = 0;         // owners and kinds whose triangles in are not covered + copies removed + collapsed (set by the writer)

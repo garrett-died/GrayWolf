@@ -794,6 +794,13 @@ namespace
     // brush side draws already, leave the render pass (Stats.CollisionTaken), so collision + render pass + brush side + misc_model partition the world's triangles.
     // A mesh with no twin material is written with the tool material clip_full, which is what the prisms were written with; the clip map's real contents of such a mesh are
     // not read (the label is the game's flag group where it gives one). Returns after writing; coverage and accounting failures go to Stats like the render pass's.
+    // The strip step's part of a mesh line: how many grids the small pieces made before it and what became of them
+    std::string StripText(const RenderMeshCounters& M)
+    {
+        return std::format("strips: {} made of {} cells ({} lone triangles and {} fan triangles absorbed), grids {} without the step, {} with it", M.Strips, M.StripCells, M.StripLoneAbsorbed, M.StripFanTrianglesAbsorbed,
+                           M.GridsBeforeStrips == 0 ? M.Grids : M.GridsBeforeStrips, M.Grids);
+    }
+
     void WriteCollisionMeshes(std::string& Out, const MapScene& Scene, const DrawnWorld& Drawn, RadiantGdt* Gdt, RadiantStats& Stats, size_t& Number, const ToolNames& Tools)
     {
         const Collision& Col = Scene.Collision;
@@ -979,10 +986,10 @@ namespace
         Stats.MeshLines.push_back(std::format("collision: {} triangles, {} with a render twin ({} ambiguous: the largest surface taken; {} twins drawn by a brush side; {} only under a decal, a tool mesh; {} with a decal beside their surface twin), "
                                               "{} render triangles leave the render pass; {} meshes ({} grids: {} fans, {} lone triangles, {} cells), covered {}, removed with proof {} copies + {} contained + {} collapsed by the weld, coverage MISSING {} LEFTOVER {}; "
                                               "{} meshes without a material (clip_full), {} without attributes (running coordinate); facing turned {}, kept {}, unknown {}, against the vertex normals {}; borders cut {} by texture, {} by colour and {} by facing; "
-                                              "weld tolerance {} ({}); labels: {}",
+                                              "weld tolerance {} ({}); labels: {}; {}",
                                               Ct, Twins.Twinned, Twins.Ambiguous, Twins.DrawnByBrushOnly, Twins.DecalOnly, Twins.DecalBeside, Taken.Count, C.Meshes, C.Grids, C.Fans, C.LoneTriangles, C.Cells, C.Covered, C.CopiesRemoved,
                                               C.ContainedRemoved, C.CollapsedByWeld, C.CoverageMissing, C.CoverageLeftover, C.MeshesNoMaterial, C.MeshesNoAttributes, C.Flipped, C.FacingKept, C.FacingUnknown, C.FacingAgainst, C.BordersCutTexture,
-                                              C.BordersCutColour, C.BordersCutFacing, C.WeldTolerance, C.WeldReason, Col.TriangleLabel.empty() ? "none read (the twin's material)" : "the game's partitions"));
+                                              C.BordersCutColour, C.BordersCutFacing, C.WeldTolerance, C.WeldReason, Col.TriangleLabel.empty() ? "none read (the twin's material)" : "the game's partitions", StripText(C)));
         for (std::string& Lines : Meshes.CoverageLines) Stats.CoverageLines.push_back(std::move(Lines));
     }
 
@@ -1147,10 +1154,10 @@ namespace
             const RenderMeshCounters& M = Meshes.Count;
             Stats.MeshLines.push_back(std::format("owner {} {}: {} triangles in, {} meshes ({} grids: {} fans, {} lone triangles, {} cells), covered {}, removed with proof {} copies + {} collapsed by the weld (kept as other data: {} by front, {} by texture coordinate, {} by colour), coverage MISSING {} LEFTOVER {}; "
                                                   "borders cut {} by texture, {} by colour and {} by facing; facing turned {}, kept {}, unknown {}, against the vertex normals {}, undecided {}; split {}; degenerate texture {}; triangles shifted by whole repeats {}, texture conflicts {}; "
-                                                  "cells with both diagonals as input {} (not planar {}); most pairs sharing an edge in a material {}; weld tolerance {} ({}); weld {} vertices in {} clusters, largest span {}; {}; decal overlap {} partial, {} contained, {} pairs tested",
+                                                  "cells with both diagonals as input {} (not planar {}); most pairs sharing an edge in a material {}; weld tolerance {} ({}); weld {} vertices in {} clusters, largest span {}; {}; decal overlap {} partial, {} contained, {} pairs tested; {}",
                                                   Owner, Decal ? "decals" : "surfaces", M.TrianglesIn, M.Meshes, M.Grids, M.Fans, M.LoneTriangles, M.Cells, M.Covered, M.CopiesRemoved, M.CollapsedByWeld, M.CopiesKeptFront, M.CopiesKeptUv, M.CopiesKeptColour, M.CoverageMissing,
                                                   M.CoverageLeftover, M.BordersCutTexture, M.BordersCutColour, M.BordersCutFacing, M.Flipped, M.FacingKept, M.FacingUnknown, M.FacingAgainst, M.FacingUndecided, M.GridsSplit, M.DegenerateUv,
-                                                  M.UvTrianglesShifted, M.UvConflictCorners, M.CellsBothDiagonals, M.CellsBothDiagonalsNonPlanar, M.MaxCandidatePotential, M.WeldTolerance, M.WeldReason, M.WeldedVertices, M.WeldClusters, M.WeldSpan, M.NearestText, M.OverlapPartial, M.OverlapContained, M.OverlapTested));
+                                                  M.UvTrianglesShifted, M.UvConflictCorners, M.CellsBothDiagonals, M.CellsBothDiagonalsNonPlanar, M.MaxCandidatePotential, M.WeldTolerance, M.WeldReason, M.WeldedVertices, M.WeldClusters, M.WeldSpan, M.NearestText, M.OverlapPartial, M.OverlapContained, M.OverlapTested, StripText(M)));
         }
         for (const std::string& Block : Meshes.BothDiagonalLines)
             Stats.MeshLines.push_back(std::format("owner {} {} cells with both diagonals as input and not planar (Radiant's choice of diagonal for them is unknown):\n{}", Owner, Decal ? "decals" : "surfaces", Block));
@@ -1348,9 +1355,9 @@ namespace
         Stats.LayerBytes += Out.size() - Before;
         Stats.Patches += Meshes.Count.Meshes;
         Stats.PatchesColoured += Meshes.Count.MeshesColoured;
-        Stats.MeshLines.push_back(std::format("owner {} blend layers: {} triangles in, {} meshes ({} grids: {} fans, {} lone triangles, {} cells), covered {}, coverage MISSING {} LEFTOVER {}; decal overlap {} partial, {} contained",
+        Stats.MeshLines.push_back(std::format("owner {} blend layers: {} triangles in, {} meshes ({} grids: {} fans, {} lone triangles, {} cells), covered {}, coverage MISSING {} LEFTOVER {}; decal overlap {} partial, {} contained; {}",
                                               Owner, Meshes.Count.TrianglesIn, Meshes.Count.Meshes, Meshes.Count.Grids, Meshes.Count.Fans, Meshes.Count.LoneTriangles, Meshes.Count.Cells, Meshes.Count.Covered,
-                                              Meshes.Count.CoverageMissing, Meshes.Count.CoverageLeftover, Meshes.Count.OverlapPartial, Meshes.Count.OverlapContained));
+                                              Meshes.Count.CoverageMissing, Meshes.Count.CoverageLeftover, Meshes.Count.OverlapPartial, Meshes.Count.OverlapContained, StripText(Meshes.Count)));
         Stats.Mesh.Add(Meshes.Count);
         for (std::string& Lines : Meshes.CoverageLines) Stats.CoverageLines.push_back(std::move(Lines));
     }
@@ -1531,6 +1538,11 @@ namespace
                                                                 { "map_radiant_mesh_fans", M.Fans },
                                                                 { "map_radiant_mesh_lone_triangles", M.LoneTriangles },
                                                                 { "map_radiant_mesh_cells", M.Cells },
+                                                                { "map_radiant_mesh_grids_before_strips", M.GridsBeforeStrips == 0 ? M.Grids : M.GridsBeforeStrips },
+                                                                { "map_radiant_mesh_strips", M.Strips },
+                                                                { "map_radiant_mesh_strip_cells", M.StripCells },
+                                                                { "map_radiant_mesh_strip_lone_triangles_absorbed", M.StripLoneAbsorbed },
+                                                                { "map_radiant_mesh_strip_fan_triangles_absorbed", M.StripFanTrianglesAbsorbed },
                                                                 { "map_radiant_mesh_borders_cut_texture", M.BordersCutTexture },
                                                                 { "map_radiant_mesh_borders_cut_colour", M.BordersCutColour },
                                                                 { "map_radiant_mesh_borders_cut_facing", M.BordersCutFacing },

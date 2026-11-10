@@ -279,7 +279,7 @@ namespace
         if (A.size() != B.size()) return false;
         for (size_t I = 0; I < A.size(); I++)
             if (A[I].Group != B[I].Group || A[I].Grid.GroupCount != B[I].Grid.GroupCount || A[I].Grid.GroupSize != B[I].Grid.GroupSize || A[I].Grid.Points != B[I].Grid.Points || A[I].Grid.Triangles != B[I].Grid.Triangles
-                || A[I].Grid.IsFan != B[I].Grid.IsFan || A[I].Grid.IsTriangle != B[I].Grid.IsTriangle)
+                || A[I].Grid.IsFan != B[I].Grid.IsFan || A[I].Grid.IsTriangle != B[I].Grid.IsTriangle || A[I].Grid.IsStrip != B[I].Grid.IsStrip || A[I].Grid.CellStart != B[I].Grid.CellStart)
                 return false;
         return true;
     }
@@ -1075,6 +1075,208 @@ int MeshSelfTest(std::string& Failures)
         Check(Same, "QuadMesher: the output is the same for every table seed (independent of hash order)", Why);
         Check(Once, "QuadMesher: every input triangle is in exactly one grid on a mixed soup");
         Check(Complete, "PatchCoverage: a mixed soup (holes, noise, copies, fans, two labels) is complete after Build", Why);
+    }
+
+    // ======== strips (BuildOptions.Strips, docs/hydrax-port/strips.md) ========
+    {
+        // helpers: a strip is valid when its cells are 1 or 2 triangles, every cell's corners are the vertices of its triangles, and consecutive cells share their column of two points
+        const auto StripProblem = [](const Soup& S, const QuadGrid& G) -> std::string {
+            if (G.GroupCount != 2) return "not 2 groups";
+            const int Cells = G.GroupSize - 1;
+            if (G.CellStart.size() != static_cast<size_t>(Cells) + 1 || G.CellStart.front() != 0 || G.CellStart.back() != static_cast<int32_t>(G.Triangles.size())) return "cell starts";
+            for (int C = 0; C < Cells; C++)
+            {
+                const int N = G.CellStart[static_cast<size_t>(C) + 1] - G.CellStart[static_cast<size_t>(C)];
+                if (N < 1 || N > 2) return "triangles in a cell";
+                std::set<int32_t> Own;
+                for (int32_t K = G.CellStart[static_cast<size_t>(C)]; K < G.CellStart[static_cast<size_t>(C) + 1]; K++)
+                    for (int V = 0; V < 3; V++) Own.insert(S.I[static_cast<size_t>(G.Triangles[static_cast<size_t>(K)]) * 3 + static_cast<size_t>(V)]);
+                const std::set<int32_t> Corners = { G.At(0, C), G.At(1, C), G.At(0, C + 1), G.At(1, C + 1) };
+                if (Corners != Own) return "corners of cell " + std::to_string(C);
+            }
+            return "";
+        };
+
+        // a row of cells: one strip, every cell counted
+        {
+            const Soup S = GridSoup(3, 1);
+            BuildOptions O;
+            O.Strips = true;
+            const QuadMesher::BuildResult R = QuadMesher::Build(S.P, S.I, Zeros(S.I.size() / 3), O);
+            // a 1 x 3 rectangle is already one mesh: a chain of its cells is no gain, so the rectangle stays
+            const bool Ok = R.Grids.size() == 1 && !R.Grids[0].Grid.IsStrip && R.Grids[0].Grid.GroupCount * R.Grids[0].Grid.GroupSize == 8 && R.StripsMade == 0 && R.GridsBeforeStrips == 1;
+            Check(Ok, "Strips: a row of three cells is one mesh, the rectangle is kept when a chain would not make fewer", std::to_string(R.Grids.size()));
+        }
+        // a border between two cells cuts the strip there (the same IsBorder the grid walk uses)
+        {
+            const Soup S = GridSoup(4, 1);
+            BuildOptions O;
+            O.Strips = true;
+            O.IsBorder = [](int A, int B, int, int) { return (A / 2 == 1 && B / 2 == 2) || (A / 2 == 2 && B / 2 == 1); };
+            const QuadMesher::BuildResult R = QuadMesher::Build(S.P, S.I, Zeros(S.I.size() / 3), O);
+            std::vector<int> Sizes;
+            for (const BuiltGrid& G : R.Grids) Sizes.push_back(G.Grid.GroupSize);
+            std::sort(Sizes.begin(), Sizes.end());
+            const CoverageResult C = PatchCoverage::Check(S.P, S.I, Plain(R.Grids));
+            Check(Sizes == std::vector<int>({ 3, 3 }) && C.IsComplete(), "Strips: a border between two cells ends the strip there", std::to_string(R.Grids.size()));
+            // and the quiet test, when given, is the one asked
+            int Loud = 0, Quiet = 0;
+            O.IsBorder = [&](int A, int B, int, int) { Loud++; return (A / 2 == 1 && B / 2 == 2) || (A / 2 == 2 && B / 2 == 1); };
+            O.IsBorderQuiet = [&](int A, int B, int, int) { Quiet++; return (A / 2 == 1 && B / 2 == 2) || (A / 2 == 2 && B / 2 == 1); };
+            Loud = 0;
+            const QuadMesher::BuildResult Q = QuadMesher::Build(S.P, S.I, Zeros(S.I.size() / 3), O);
+            const int LoudSeen = Loud;
+            Loud = 0;
+            O.Strips = false;
+            QuadMesher::Build(S.P, S.I, Zeros(S.I.size() / 3), O);
+            Check(Q.Grids.size() == 2 && Quiet > 0 && LoudSeen == Loud, "Strips: the strip step asks the quiet border test and never the counting one", std::to_string(Quiet) + " " + std::to_string(Q.Grids.size()) + " " + std::to_string(LoudSeen) + "/" + std::to_string(Loud));
+        }
+        // cells wound the other way end the strip: a mesh shows on one side only
+        {
+            // four cells in a row, the last two wound clockwise, and a folded lone triangle at each end (wound like its cell): the row is one rectangle and the triangles two pieces,
+            // three pieces that two strips replace, each strip stopping where the winding turns
+            Soup S = GridSoup(4, 1);   // ids 0..4 below, 5..9 above
+            for (size_t T = 4; T < 8; T++) std::swap(S.I[T * 3 + 1], S.I[T * 3 + 2]);
+            for (const float V : { 2.0f, 4.0f, 40.0f }) S.P.push_back(V);    // 10: left, folded back over cell 0
+            for (const float V : { 30.0f, 4.0f, 40.0f }) S.P.push_back(V);   // 11: right, folded back over cell 3
+            for (const int V : { 0, 5, 10 }) S.I.push_back(V);
+            for (const int V : { 4, 9, 11 }) S.I.push_back(V);
+            BuildOptions O;
+            O.Strips = true;
+            const QuadMesher::BuildResult R = QuadMesher::Build(S.P, S.I, Zeros(S.I.size() / 3), O);
+            std::vector<int> Sizes;
+            bool Crossed = false;
+            for (const BuiltGrid& G : R.Grids)
+            {
+                Sizes.push_back(G.Grid.GroupSize);
+                bool Low = false, High = false;
+                for (const int32_t T : G.Grid.Triangles)
+                {
+                    Low = Low || (T < 4);
+                    High = High || (T >= 4 && T < 8);
+                }
+                Crossed = Crossed || (Low && High);
+            }
+            std::sort(Sizes.begin(), Sizes.end());
+            const CoverageResult C = PatchCoverage::Check(S.P, S.I, Plain(R.Grids));
+            Check(Sizes == std::vector<int>({ 4, 4 }) && !Crossed && R.StripsMade == 2 && C.IsComplete(), "Strips: a cell wound against the strip ends it", std::to_string(R.Grids.size()) + " " + C.Summary("wound"));
+        }
+        // a lone triangle on the end column joins as a degenerate cell, two in a row turn the strip round their pivot
+        {
+            Soup S = GridSoup(2, 1);   // ids 0..5; the right edge is 2 (16,0) - 5 (16,8)
+            for (const float V : { 14.0f, 4.0f, 40.0f }) S.P.push_back(V);   // 6: folded back over the cell, so no quad with its neighbour is convex-and-flat
+            for (const int V : { 5, 2, 6 }) S.I.push_back(V);
+            BuildOptions O;
+            O.Strips = true;
+            const QuadMesher::BuildResult R = QuadMesher::Build(S.P, S.I, Zeros(S.I.size() / 3), O);
+            const CoverageResult C = PatchCoverage::Check(S.P, S.I, Plain(R.Grids));
+            const bool Ok = R.Grids.size() == 1 && R.Grids[0].Grid.IsStrip && R.Grids[0].Grid.GroupSize == 4 && R.StripLoneAbsorbed == 1 && (R.Grids[0].Grid.CellStart == std::vector<int32_t>({ 0, 2, 4, 5 }) || R.Grids[0].Grid.CellStart == std::vector<int32_t>({ 0, 1, 3, 5 }))
+                            && StripProblem(S, R.Grids[0].Grid).empty() && C.IsComplete();
+            Check(Ok, "Strips: a lone triangle on the end column is absorbed as a degenerate cell", std::to_string(R.Grids.size()) + " absorbed " + std::to_string(R.StripLoneAbsorbed) + " " + C.Summary("lone"));
+            // a second folded triangle on the edge 2-6 of the first
+            for (const float V : { 30.0f, -8.0f, -30.0f }) S.P.push_back(V);   // 7
+            for (const int V : { 6, 2, 7 }) S.I.push_back(V);
+            const QuadMesher::BuildResult R2 = QuadMesher::Build(S.P, S.I, Zeros(S.I.size() / 3), O);
+            const CoverageResult C2 = PatchCoverage::Check(S.P, S.I, Plain(R2.Grids));
+            Check(R2.Grids.size() == 1 && R2.StripCells == 4 && C2.IsComplete(), "Strips: two lone triangles in a row follow the strip", std::to_string(R2.Grids.size()) + " cells " + std::to_string(R2.StripCells) + " " + C2.Summary("lone2"));
+        }
+        // a quad never turns: three cells in an L are a strip of two and a cell, not one strip
+        {
+            Soup S;
+            for (const int J : { 0, 1, 2 })
+                for (const int I : { 0, 1, 2 })
+                {
+                    S.P.push_back(I * 8.0f);
+                    S.P.push_back(J * 8.0f);
+                    S.P.push_back(0.0f);
+                }
+            const auto At = [](int I, int J) { return (J * 3) + I; };
+            for (const auto& [I, J] : std::vector<std::pair<int, int>>{ { 0, 0 }, { 1, 0 }, { 0, 1 } })
+                for (const int V : { At(I, J), At(I + 1, J), At(I + 1, J + 1), At(I, J), At(I + 1, J + 1), At(I, J + 1) }) S.I.push_back(V);
+            BuildOptions O;
+            O.Strips = true;
+            const QuadMesher::BuildResult R = QuadMesher::Build(S.P, S.I, Zeros(S.I.size() / 3), O);
+            std::vector<int> Sizes;
+            for (const BuiltGrid& G : R.Grids) Sizes.push_back(G.Grid.GroupSize);
+            std::sort(Sizes.begin(), Sizes.end());
+            const CoverageResult C = PatchCoverage::Check(S.P, S.I, Plain(R.Grids));
+            Check(Sizes == std::vector<int>({ 2, 3 }) && C.IsComplete(), "Strips: a quad cell is left straight through, so an L of three cells is two meshes", std::to_string(R.Grids.size()));
+        }
+        // the point limit: a row of 200 cells is strips of at most 128 points
+        {
+            Soup S = GridSoup(200, 1);   // the row is one piece that is written as two meshes; a folded triangle on its end is a second piece
+            S.P.insert(S.P.end(), { 1580.0f, 4.0f, 40.0f });   // 402 (the cell grid's ids end at 401)
+            for (const int V : { 401, 200, 402 }) S.I.push_back(V);   // the top right corner and the bottom right one: 200 is (200 * 8, 0)
+            BuildOptions O;
+            O.Strips = true;
+            const QuadMesher::BuildResult R = QuadMesher::Build(S.P, S.I, Zeros(S.I.size() / 3), O);
+            bool Within = true;
+            int64_t Cells = 0;
+            for (const BuiltGrid& G : R.Grids)
+            {
+                Within = Within && G.Grid.GroupSize <= 128;
+                Cells += G.Grid.GroupSize - 1;
+            }
+            const CoverageResult C = PatchCoverage::Check(S.P, S.I, Plain(R.Grids));
+            Check(R.Grids.size() == 2 && Within && Cells == 201 && R.StripsMade == 2 && C.IsComplete(), "Strips: a strip has at most MaxStripPoints points", std::to_string(R.Grids.size()) + " " + std::to_string(Cells) + " " + C.Summary("limit"));
+        }
+        // the mixed soup: every kind of input, with a border rule; the strip step loses no triangle, builds valid strips, never makes more grids and does not depend on the table seed
+        {
+            bool Same = true, Once = true, Complete = true, Valid = true, Fewer = true, Accounted = true;
+            int64_t Made = 0;
+            std::string Why;
+            for (const uint64_t SoupSeed : { 1ull, 2ull, 3ull, 4ull })
+            {
+                const Soup S = MixedSoup(SoupSeed, 24);
+                const std::vector<int32_t> Labels = QuadrantLabels(S);
+                for (const bool Vob : { false, true })
+                {
+                    BuildOptions O;
+                    O.VertexOrderBorders = Vob;
+                    O.IsBorder = [](int A, int B, int, int) { return (A + B) % 37 == 0; };
+                    const QuadMesher::BuildResult Plain0 = QuadMesher::Build(S.P, S.I, Labels, O);
+                    O.Strips = true;
+                    const QuadMesher::BuildResult Reference = QuadMesher::Build(S.P, S.I, Labels, O);
+                    Fewer = Fewer && Reference.Grids.size() <= Plain0.Grids.size() && Reference.GridsBeforeStrips == static_cast<int64_t>(Plain0.Grids.size());
+                    if (!Fewer && Why.empty()) Why = std::format("soup {} vob {}: {} grids, plain {}, before {}", SoupSeed, Vob, Reference.Grids.size(), Plain0.Grids.size(), Reference.GridsBeforeStrips);
+                    Made += Reference.StripsMade;
+                    for (const uint64_t Seed : { 1ull, 0xDEADBEEFull, 987654321ull })
+                    {
+                        O.HashSeed = Seed;
+                        if (!SameGrids(Reference.Grids, QuadMesher::Build(S.P, S.I, Labels, O).Grids))
+                        {
+                            Same = false;
+                            Why = std::format("soup {} vob {} seed {}", SoupSeed, Vob, Seed);
+                        }
+                    }
+                    std::vector<int> Use(S.I.size() / 3, 0);
+                    int64_t InStrips = 0;
+                    for (const BuiltGrid& G : Reference.Grids)
+                    {
+                        for (const int32_t T : G.Grid.Triangles) Use[static_cast<size_t>(T)]++;
+                        if (G.Grid.IsStrip)
+                        {
+                            if (const std::string P = StripProblem(S, G.Grid); !P.empty())
+                            {
+                                Valid = false;
+                                Why = P;
+                            }
+                            InStrips += G.Grid.GroupSize - 1;
+                        }
+                    }
+                    Once = Once && std::all_of(Use.begin(), Use.end(), [](int U) { return U == 1; });
+                    const CoverageResult C = PatchCoverage::Check(S.P, S.I, Plain(Reference.Grids));
+                    Complete = Complete && C.IsComplete();
+                    if (!C.IsComplete()) Why = C.Summary("mixed soup strips");
+                    Accounted = Accounted && InStrips <= Reference.StripCells;
+                }
+            }
+            Check(Same, "Strips: the output is the same for every table seed", Why);
+            Check(Once, "Strips: every input triangle is in exactly one grid on a mixed soup");
+            Check(Complete, "Strips: coverage of a mixed soup is exact (nothing missing, nothing left over)", Why);
+            Check(Valid, "Strips: every strip of a mixed soup is valid (cells, corners, shared columns)", Why);
+            Check(Fewer && Made > 0 && Accounted, "Strips: never more grids than without the step, the before count is what the plain run makes, and strips were made", std::to_string(Made) + " " + Why);
+        }
     }
     {
         // A removed copy is not missing: build on the kept triangles only, check against all of them with the proofs

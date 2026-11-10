@@ -1065,6 +1065,380 @@ namespace QuadMesher
             }
             return false;
         }
+
+        // ---- strips
+
+        // One cell of the strip step: a quad cell (two triangles) or one triangle. L holds its corners in the direction its triangles wind (a triangle: L[0..2]).
+        struct StripCell
+        {
+            int Ring = 0;
+            int Origin = 0;        // 0: a cell of a small rectangle, 1: a lone triangle, 2: a triangle of a fan
+            bool IsTri = false;
+            bool Chain = false;    // false: the two triangles of a quad wind against each other, the cell cannot be chained
+            std::array<int32_t, 4> L{};
+            int Corners() const { return IsTri ? 3 : 4; }
+        };
+
+        using StripColumn = std::array<int32_t, 2>;
+
+        // A cell of the pool: its ring, where it came from (0 a cell of a small rectangle, 1 a lone triangle, 2 a triangle of a fan) and the piece (a held grid) it belongs to
+        struct PoolCell
+        {
+            int Ring, Origin, Piece;
+        };
+
+        // A chain the strip step made, before it is decided whether to keep it
+        struct StripChain
+        {
+            BuiltGrid Built;
+            int FirstCell = 0;
+            int64_t Cells = 0, Lone = 0, FanTriangles = 0;
+            bool Strip = false;   // two cells or more
+        };
+
+        int UnionRoot(std::vector<int>& Parent, int X)
+        {
+            while (Parent[static_cast<size_t>(X)] != X)
+            {
+                Parent[static_cast<size_t>(X)] = Parent[static_cast<size_t>(Parent[static_cast<size_t>(X)])];
+                X = Parent[static_cast<size_t>(X)];
+            }
+            return X;
+        }
+
+        // The strip step. A strip is a list of columns (u, v); the cell between column i and i + 1 is the loop u(i) -> u(i+1) -> v(i+1) -> v(i), which runs the way the
+        // triangles wind. The next cell therefore has the directed edge v -> u of the last column among its own (every cell is wound the same way as the one before: the
+        // shared edge is run in opposite directions), and its new column is the rest of its loop. A triangle keeps one of the column's points, (u, r) or (r, v), which is a
+        // degenerate cell (the same point twice in a row of the mesh, as a fan has), or ends the strip with (r, r). Nothing is bridged: every cell shares an edge with the one before.
+        // Cells are walked from the cells with the fewest neighbours (a seed), always into the neighbour that has the fewest neighbours left, first on, then, turned round, on the other end.
+        void BuildStrips(std::span<const float> Positions, std::span<const int32_t> Indices, const std::vector<RingCell>& Rings, const std::vector<PoolCell>& Pool, std::vector<BuiltGrid>& Held, const BuildOptions& Options,
+                         uint64_t Seed, BuildResult& Result)
+        {
+            const size_t Count = Pool.size();
+            if (Count == 0) return;
+            const auto IdAt = [&](int T, int K) { return Indices[static_cast<size_t>(T) * 3 + static_cast<size_t>(K)]; };
+            // 1 when the triangle runs a -> b, -1 when it runs b -> a, 0 when it has no such edge
+            const auto Directed = [&](int T, int A, int B) {
+                for (int K = 0; K < 3; K++)
+                {
+                    const int X = IdAt(T, K), Y = IdAt(T, (K + 1) % 3);
+                    if (X == A && Y == B) return 1;
+                    if (X == B && Y == A) return -1;
+                }
+                return 0;
+            };
+
+            std::vector<StripCell> Cells(Count);
+            for (size_t I = 0; I < Count; I++)
+            {
+                const RingCell& Ring = Rings[static_cast<size_t>(Pool[I].Ring)];
+                StripCell& C = Cells[I];
+                C.Ring = Pool[I].Ring;
+                C.Origin = Pool[I].Origin;
+                C.IsTri = Ring.IsTriangle;
+                if (C.IsTri)
+                {
+                    C.L = { IdAt(Ring.First, 0), IdAt(Ring.First, 1), IdAt(Ring.First, 2), IdAt(Ring.First, 2) };
+                    C.Chain = true;
+                    continue;
+                }
+                int Way = 0;
+                bool Ok = true;
+                for (const int T : { Ring.First, Ring.Second })
+                {
+                    int Mine = 0;
+                    for (int K = 0; K < 4; K++)
+                    {
+                        const int H = Directed(T, Ring.V[static_cast<size_t>(K)], Ring.V[static_cast<size_t>((K + 1) % 4)]);
+                        if (H == 0) continue;
+                        if (Mine == 0)
+                            Mine = H;
+                        else if (Mine != H)
+                            Ok = false;
+                    }
+                    if (Mine == 0)
+                        Ok = false;
+                    else if (Way == 0)
+                        Way = Mine;
+                    else if (Way != Mine)
+                        Ok = false;
+                }
+                C.L = Ring.V;
+                if (Way < 0) C.L = { Ring.V[3], Ring.V[2], Ring.V[1], Ring.V[0] };
+                C.Chain = Ok;
+            }
+
+            // the cells by the directed edges of their loops
+            GroupIndex<2> ByEdge;
+            {
+                std::vector<GroupIndex<2>::Item> Items;
+                Items.reserve(Count * 4);
+                for (size_t I = 0; I < Count; I++)
+                {
+                    if (!Cells[I].Chain) continue;
+                    const int N = Cells[I].Corners();
+                    for (int K = 0; K < N; K++) Items.push_back({ { Cells[I].L[static_cast<size_t>(K)], Cells[I].L[static_cast<size_t>((K + 1) % N)] }, static_cast<int>(I) });
+                }
+                ByEdge.Build(std::move(Items), Seed);
+            }
+            std::vector<char> Used(Count, 0);
+
+            const auto SameCorners = [&](const StripCell& A, const StripCell& B) {
+                if (A.Corners() != B.Corners()) return false;
+                for (int I = 0; I < A.Corners(); I++)
+                {
+                    bool Found = false;
+                    for (int J = 0; J < B.Corners(); J++) Found = Found || A.L[static_cast<size_t>(I)] == B.L[static_cast<size_t>(J)];
+                    if (!Found) return false;
+                }
+                return true;
+            };
+            const std::function<bool(int, int, int, int)>& Border = Options.IsBorderQuiet ? Options.IsBorderQuiet : Options.IsBorder;
+            // May cell Next follow cell Last across the edge a-b? Next must be free and pass every rule the grid walk applies across an edge.
+            const auto Join = [&](int Last, int Next, int A, int B, bool IgnoreUsed = false) {
+                if ((!IgnoreUsed && Used[static_cast<size_t>(Next)]) || Last == Next) return false;
+                const StripCell &Cl = Cells[static_cast<size_t>(Last)], &Cn = Cells[static_cast<size_t>(Next)];
+                if (!Cn.Chain || Rings[static_cast<size_t>(Cl.Ring)].Group != Rings[static_cast<size_t>(Cn.Ring)].Group) return false;
+                // the other side of a two-sided surface has the same corners; it is never the next cell
+                if (SameCorners(Cl, Cn)) return false;
+                if (Border && Border(TriangleOnEdge(Rings[static_cast<size_t>(Cl.Ring)], Indices, A, B), TriangleOnEdge(Rings[static_cast<size_t>(Cn.Ring)], Indices, A, B), A, B)) return false;
+                if (Options.VertexOrderBorders && !Cl.IsTri && !Cn.IsTri)
+                    if (const std::optional<double> Logit = PatchBorderModel::Logit(Positions, Cl.L, Cn.L, A, B))
+                        if (*Logit > PatchBorderModel::CutLogit) return false;
+                return true;
+            };
+            // the cells that could follow the column (u, v) of cell From
+            const auto ExitCount = [&](int From, const StripColumn& Col) {
+                int N = 0;
+                for (const auto& E : ByEdge.Find({ Col[1], Col[0] }))
+                    if (Join(From, E.Id, Col[0], Col[1])) N++;
+                return N;
+            };
+
+            struct Pick
+            {
+                int Cell = -1;
+                StripColumn Col{};
+                std::array<int, 3> Rank{};   // lower is better: no exit at all, the exit's cell count, the option
+                int Tie = 0;
+                bool Better(const Pick& O) const { return Cell < 0 || (O.Cell >= 0 && (O.Rank < Rank || (O.Rank == Rank && O.Tie < Tie))); }
+            };
+            // The best way to take cell Nc once its edge V -> U is the last column (U, V). Prev: the column before, to keep a fan's pivot when nothing follows.
+            const auto Consider = [&](int Nc, int32_t V, int32_t U, const StripColumn* Prev, int Tie, Pick& Best) {
+                const StripCell& C = Cells[static_cast<size_t>(Nc)];
+                const int N = C.Corners();
+                int K = 0;
+                while (K < N && !(C.L[static_cast<size_t>(K)] == V && C.L[static_cast<size_t>((K + 1) % N)] == U)) K++;
+                if (K == N) return;
+                std::array<StripColumn, 3> Choices{};
+                std::array<int, 3> Preference{};
+                int ChoiceCount = 0;
+                if (!C.IsTri)
+                {
+                    Choices[0] = { C.L[static_cast<size_t>((K + 2) % 4)], C.L[static_cast<size_t>((K + 3) % 4)] };
+                    ChoiceCount = 1;
+                }
+                else
+                {
+                    const int32_t R = C.L[static_cast<size_t>((K + 2) % 3)];
+                    Choices = { StripColumn{ U, R }, StripColumn{ R, V }, StripColumn{ R, R } };
+                    // keeps u, keeps v, ends; with no exit the one that keeps the pivot of the strip so far is better
+                    Preference = { Prev && (*Prev)[0] == U ? 0 : 3, Prev && (*Prev)[1] == V ? 0 : 3, 2 };
+                    ChoiceCount = 3;
+                }
+                for (int O = 0; O < ChoiceCount; O++)
+                {
+                    const int Exits = ExitCount(Nc, Choices[static_cast<size_t>(O)]);
+                    Pick P;
+                    P.Cell = Nc;
+                    P.Col = Choices[static_cast<size_t>(O)];
+                    P.Rank = { Exits > 0 ? 0 : 1, Exits, Preference[static_cast<size_t>(O)] };
+                    P.Tie = Tie;
+                    if (Best.Better(P)) Best = P;
+                }
+            };
+
+            // the cells with the fewest neighbours first
+            std::vector<int> Order(Count);
+            std::iota(Order.begin(), Order.end(), 0);
+            std::vector<int> Degree(Count, 0);
+            for (size_t I = 0; I < Count; I++)
+            {
+                if (!Cells[I].Chain) continue;
+                const int N = Cells[I].Corners();
+                for (int K = 0; K < N; K++)
+                    Degree[I] += static_cast<int>(ByEdge.Find({ Cells[I].L[static_cast<size_t>((K + 1) % N)], Cells[I].L[static_cast<size_t>(K)] }).size());
+            }
+            std::stable_sort(Order.begin(), Order.end(), [&](int A, int B) { return Degree[static_cast<size_t>(A)] < Degree[static_cast<size_t>(B)]; });
+
+            const size_t MaxColumns = static_cast<size_t>((std::max)(Options.MaxStripPoints, 3));
+            std::vector<StripColumn> Col;
+            std::vector<int> CellOf;
+            const auto Extend = [&]() {
+                while (Col.size() < MaxColumns)
+                {
+                    const int Last = CellOf.back();
+                    const StripColumn End = Col.back();
+                    Pick Best;
+                    int Tie = 0;
+                    const StripColumn* Prev = Col.size() >= 2 ? &Col[Col.size() - 2] : nullptr;
+                    for (const auto& E : ByEdge.Find({ End[1], End[0] }))
+                    {
+                        if (!Join(Last, E.Id, End[0], End[1])) continue;
+                        Consider(E.Id, End[1], End[0], Prev, Tie++, Best);
+                    }
+                    if (Best.Cell < 0) break;
+                    Used[static_cast<size_t>(Best.Cell)] = 1;
+                    CellOf.push_back(Best.Cell);
+                    Col.push_back(Best.Col);
+                }
+            };
+            // the same strip walked from its other end
+            const auto Flip = [&]() {
+                std::reverse(Col.begin(), Col.end());
+                for (StripColumn& C : Col) std::swap(C[0], C[1]);
+                std::reverse(CellOf.begin(), CellOf.end());
+            };
+
+            std::vector<StripChain> Chains;
+            for (const int Start : Order)
+            {
+                if (Used[static_cast<size_t>(Start)]) continue;
+                const StripCell& S = Cells[static_cast<size_t>(Start)];
+                Used[static_cast<size_t>(Start)] = 1;
+                const RingCell& StartRing = Rings[static_cast<size_t>(S.Ring)];
+                QuadGrid Grid;
+                StripChain Chain;
+                Chain.FirstCell = Start;
+                Chain.Cells = 1;
+                if (!S.Chain)
+                {
+                    // the two triangles wind against each other: one cell by itself
+                    Grid = QuadGrid::FromGroups({ { StartRing.V[0], StartRing.V[1] }, { StartRing.V[3], StartRing.V[2] } });
+                    Grid.Triangles = { StartRing.First, StartRing.Second };
+                    Chain.Built = { std::move(Grid), StartRing.Group };
+                    Chains.push_back(std::move(Chain));
+                    continue;
+                }
+                // the entry edge: the side whose best way out leads on to the fewest cells
+                Pick Best;
+                for (int K = 0; K < S.Corners(); K++) Consider(Start, S.L[static_cast<size_t>(K)], S.L[static_cast<size_t>((K + 1) % S.Corners())], nullptr, K, Best);
+                if (Best.Cell < 0) throw std::logic_error("QuadMesher.Build: a strip cell has no entry");
+                {
+                    const int K = Best.Tie;
+                    Col.assign({ StripColumn{ S.L[static_cast<size_t>((K + 1) % S.Corners())], S.L[static_cast<size_t>(K)] }, Best.Col });
+                    CellOf.assign(1, Start);
+                }
+                Extend();
+                Flip();
+                Extend();
+
+                if (CellOf.size() == 1)
+                {
+                    // the layouts the rectangle and lone triangle paths wrote
+                    if (S.IsTri)
+                    {
+                        const size_t B = static_cast<size_t>(StartRing.First) * 3;
+                        Grid = QuadGrid::FromGroups({ { Indices[B], Indices[B + 1] }, { Indices[B + 2], Indices[B + 2] } }, true);
+                        Grid.Triangles = { StartRing.First };
+                    }
+                    else
+                    {
+                        Grid = QuadGrid::FromGroups({ { Col[0][0], Col[1][0] }, { Col[0][1], Col[1][1] } });
+                        Grid.Triangles = { StartRing.First, StartRing.Second };
+                    }
+                    Chain.Built = { std::move(Grid), StartRing.Group };
+                    Chains.push_back(std::move(Chain));
+                    continue;
+                }
+
+                Grid.GroupCount = 2;
+                Grid.GroupSize = static_cast<int>(Col.size());
+                Grid.Points.reserve(Col.size() * 2);
+                for (const StripColumn& C : Col) Grid.Points.push_back(C[0]);
+                for (const StripColumn& C : Col) Grid.Points.push_back(C[1]);
+                bool AllTriangles = true, ConstantU = true, ConstantV = true;
+                Grid.CellStart.push_back(0);
+                for (size_t I = 0; I < CellOf.size(); I++)
+                {
+                    const StripCell& C = Cells[static_cast<size_t>(CellOf[I])];
+                    const RingCell& Ring = Rings[static_cast<size_t>(C.Ring)];
+                    Grid.Triangles.push_back(Ring.First);
+                    if (!C.IsTri) Grid.Triangles.push_back(Ring.Second);
+                    Grid.CellStart.push_back(static_cast<int32_t>(Grid.Triangles.size()));
+                    AllTriangles = AllTriangles && C.IsTri;
+                    ConstantU = ConstantU && Col[I + 1][0] == Col[0][0];
+                    ConstantV = ConstantV && Col[I + 1][1] == Col[0][1];
+                    if (C.IsTri && C.Origin == 1) Chain.Lone++;
+                    if (C.IsTri && C.Origin == 2) Chain.FanTriangles++;
+                }
+                if (AllTriangles && (ConstantU || ConstantV))
+                {
+                    Grid.IsFan = true;   // triangles around one pivot: the layout the fan path wrote
+                    Grid.CellStart.clear();
+                }
+                else
+                {
+                    Grid.IsStrip = true;
+                }
+                Chain.Strip = true;
+                Chain.Cells = static_cast<int64_t>(CellOf.size());
+                Chain.Built = { std::move(Grid), StartRing.Group };
+                Chains.push_back(std::move(Chain));
+            }
+
+            // Keep the chains only where they make fewer grids than the pieces they replace: the cells that can follow each other (the rules of Join, used or not) and the cells of
+            // one piece are one component, and a component with as many chains as pieces keeps its pieces.
+            std::vector<int> Parent(Count);
+            std::iota(Parent.begin(), Parent.end(), 0);
+            const auto Unite = [&](int A, int B) {
+                const int Ra = UnionRoot(Parent, A), Rb = UnionRoot(Parent, B);
+                if (Ra != Rb) Parent[static_cast<size_t>((std::max)(Ra, Rb))] = (std::min)(Ra, Rb);
+            };
+            std::vector<int> PieceCell(Held.size(), -1);
+            for (size_t I = 0; I < Count; I++)
+            {
+                int& First = PieceCell[static_cast<size_t>(Pool[I].Piece)];
+                if (First < 0)
+                    First = static_cast<int>(I);
+                else
+                    Unite(First, static_cast<int>(I));
+                if (!Cells[I].Chain) continue;
+                const int N = Cells[I].Corners();
+                for (int K = 0; K < N; K++)
+                {
+                    const int32_t A = Cells[I].L[static_cast<size_t>(K)], B = Cells[I].L[static_cast<size_t>((K + 1) % N)];
+                    for (const auto& E : ByEdge.Find({ B, A }))
+                        if (E.Id > static_cast<int>(I) && Join(static_cast<int>(I), E.Id, A, B, true)) Unite(static_cast<int>(I), E.Id);
+                }
+            }
+            std::vector<int64_t> PiecesIn(Count, 0), ChainsIn(Count, 0);
+            // a piece over the point limit becomes several meshes when it is written (SplitToLimit); a chain never does
+            const auto MeshesOf = [&](const QuadGrid& G) {
+                const int64_t Step = (std::max)(Options.MaxStripPoints, 3) - 1;
+                return (std::max<int64_t>(1, (G.GroupCount - 1 + Step - 1) / Step)) * (std::max<int64_t>(1, (G.GroupSize - 1 + Step - 1) / Step));
+            };
+            for (size_t P = 0; P < Held.size(); P++) PiecesIn[static_cast<size_t>(UnionRoot(Parent, PieceCell[P]))] += MeshesOf(Held[P].Grid);
+            for (const StripChain& C : Chains) ChainsIn[static_cast<size_t>(UnionRoot(Parent, C.FirstCell))]++;
+            const auto Keep = [&](int Cell) {
+                const size_t R = static_cast<size_t>(UnionRoot(Parent, Cell));
+                return ChainsIn[R] < PiecesIn[R];
+            };
+            for (size_t P = 0; P < Held.size(); P++)
+                if (!Keep(PieceCell[P])) Result.Grids.push_back(std::move(Held[P]));
+            for (StripChain& C : Chains)
+            {
+                if (!Keep(C.FirstCell)) continue;
+                if (C.Strip)
+                {
+                    Result.StripsMade++;
+                    Result.StripCells += C.Cells;
+                    Result.StripLoneAbsorbed += C.Lone;
+                    Result.StripFanTrianglesAbsorbed += C.FanTriangles;
+                }
+                Result.Grids.push_back(std::move(C.Built));
+            }
+        }
     }
 
     V3 GridFacing(const QuadGrid& Grid, const std::function<V3(int)>& Position)
@@ -1311,6 +1685,16 @@ namespace QuadMesher
         }
         std::sort(FanAt.begin(), FanAt.end(), [](const auto& A, const auto& B) { return A.first < B.first; });
 
+        // The strip step (BuildOptions.Strips): the cells of rectangles one cell wide or high, of fans and of lone triangles go to a pool (ring index, where it came from, which piece)
+        // as well as being kept as the grid they would have been (Held, by piece); BuildStrips chains the pool afterwards and keeps the chains only where they make fewer grids than the
+        // pieces did. Rectangles at least two cells wide and high stay as they are.
+        const bool Strips = Options.Strips && Options.MaxStripPoints >= 3;
+        std::vector<PoolCell> Pool;
+        std::vector<BuiltGrid> Held;
+        std::vector<int> FanOfRing(Rings.size(), -1), FanPiece(FanAt.size(), -1);
+        for (size_t K = 0; K < FanAt.size(); K++)
+            for (const int T : FanAt[K].second.Triangles) FanOfRing[static_cast<size_t>(RingOfTriangle[static_cast<size_t>(T)])] = static_cast<int>(K);
+
         // The region walk: lay cells out on integer coordinates from a seed cell, then cut the laid-out cells into rectangles.
         std::vector<char> Used(Rings.size(), 0);
         std::vector<int> CoordX(VertexCount, 0), CoordY(VertexCount, 0);
@@ -1397,6 +1781,7 @@ namespace QuadMesher
             // Cut the laid-out cells into rectangles: fewer, larger pieces are closer to a patch the mapper drew than the row-by-row cut was.
             for (const MeshInternal::CellRect& R : MeshInternal::CutRectangles(Cells))
             {
+                const bool Small = Strips && (R.W < 2 || R.H < 2);
                 QuadGrid Grid;
                 Grid.GroupCount = R.W + 1;
                 Grid.GroupSize = R.H + 1;
@@ -1417,8 +1802,12 @@ namespace QuadMesher
                         const RingCell& Ring = Rings[static_cast<size_t>(Which)];
                         Grid.Triangles.push_back(Ring.First);
                         if (Ring.Second != Ring.First) Grid.Triangles.push_back(Ring.Second);
+                        if (Small) Pool.push_back({ Which, 0, static_cast<int>(Held.size()) });
                     }
-                Out.push_back({ std::move(Grid), SeedGroup });
+                if (Small)
+                    Held.push_back({ std::move(Grid), SeedGroup });
+                else
+                    Out.push_back({ std::move(Grid), SeedGroup });
             }
         };
 
@@ -1429,6 +1818,34 @@ namespace QuadMesher
             if (Rings[SeedCell].IsTriangle)
             {
                 Used[SeedCell] = 1;
+                if (Strips)
+                {
+                    const int First = Rings[SeedCell].First;
+                    const int A = IdAt(First, 0), B = IdAt(First, 1), C = IdAt(First, 2);
+                    if (A != B && B != C && A != C)
+                    {
+                        if (Fanned[SeedCell])
+                        {
+                            // the fan's first member (lowest ring index) keeps the fan grid; the others point at it
+                            const size_t Fan = static_cast<size_t>(FanOfRing[SeedCell]);
+                            if (FanPiece[Fan] < 0)
+                            {
+                                FanPiece[Fan] = static_cast<int>(Held.size());
+                                Held.push_back({ std::move(FanAt[Fan].second), Rings[SeedCell].Group });
+                            }
+                            Pool.push_back({ static_cast<int>(SeedCell), 2, FanPiece[Fan] });
+                        }
+                        else
+                        {
+                            const std::array<int32_t, 4>& V = Rings[SeedCell].V;
+                            QuadGrid Lone = QuadGrid::FromGroups({ { V[0], V[1] }, { V[2], V[2] } }, true);
+                            Lone.Triangles = { Rings[SeedCell].First };
+                            Pool.push_back({ static_cast<int>(SeedCell), 1, static_cast<int>(Held.size()) });
+                            Held.push_back({ std::move(Lone), Rings[SeedCell].Group });
+                        }
+                        continue;
+                    }
+                }
                 if (Fanned[SeedCell])
                 {
                     if (NextFan < FanAt.size() && FanAt[NextFan].first == static_cast<int>(SeedCell)) Result.Grids.push_back({ std::move(FanAt[NextFan++].second), Rings[SeedCell].Group });
@@ -1441,6 +1858,11 @@ namespace QuadMesher
                 continue;
             }
             Region(static_cast<int>(SeedCell), Result.Grids);
+        }
+        if (Strips)
+        {
+            Result.GridsBeforeStrips = static_cast<int64_t>(Result.Grids.size() + Held.size());
+            BuildStrips(Positions, Indices, Rings, Pool, Held, Options, Seed, Result);
         }
         return Result;
     }

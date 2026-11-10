@@ -50,6 +50,11 @@ void RenderMeshCounters::Add(const RenderMeshCounters& O)
     FacingAgainst += O.FacingAgainst;
     FacingUndecided += O.FacingUndecided;
     GridsSplit += O.GridsSplit;
+    GridsBeforeStrips += O.GridsBeforeStrips;
+    Strips += O.Strips;
+    StripCells += O.StripCells;
+    StripLoneAbsorbed += O.StripLoneAbsorbed;
+    StripFanTrianglesAbsorbed += O.StripFanTrianglesAbsorbed;
     Meshes += O.Meshes;
     MeshesColoured += O.MeshesColoured;
     DegenerateUv += O.DegenerateUv;
@@ -86,12 +91,21 @@ namespace
     {
         double Score = 0;
         const size_t Count = Grid.Triangles.size();
-        const bool Pairs = !Grid.IsFan && !Grid.IsTriangle;
+        const bool Pairs = !Grid.IsFan && !Grid.IsTriangle && !Grid.IsStrip;
         const int Rows = Grid.GroupSize - 1;
         for (int G = 0; G + 1 < Grid.GroupCount; G++)
             for (int I = 0; I + 1 < Grid.GroupSize; I++)
             {
                 const V3 Cell = CellVector(Position(Grid.At(G, I)), Position(Grid.At(G + 1, I)), Position(Grid.At(G + 1, I + 1)), Position(Grid.At(G, I + 1)));
+                if (Grid.IsStrip)
+                {
+                    // a strip's cells have one or two triangles each: CellStart says which
+                    V3 Own = { 0, 0, 0 };
+                    for (size_t K = static_cast<size_t>(Grid.CellStart[static_cast<size_t>(I)]); K < static_cast<size_t>(Grid.CellStart[static_cast<size_t>(I) + 1]) && K < Count; K++) Own = Add(Own, Vector(Grid.Triangles[K]));
+                    const double Vote = Dot(Cell, Own);
+                    Score += Vote > 0 ? 1.0 : Vote < 0 ? -1.0 : 0.0;
+                    continue;
+                }
                 const size_t Index = Pairs ? static_cast<size_t>(2) * (static_cast<size_t>(G) * static_cast<size_t>(Rows) + static_cast<size_t>(I)) : static_cast<size_t>(Grid.IsTriangle ? 0 : I);
                 if (Index >= Count) continue;
                 V3 Sum = Vector(Grid.Triangles[Index]);
@@ -207,6 +221,8 @@ namespace
         BO.VertexOrderBorders = O.VertexOrderBorders;
         BO.HashSeed = O.HashSeed;
         BO.MaxCandidates = O.MaxCandidates;
+        BO.Strips = O.Strips;
+        BO.MaxStripPoints = O.MaxPoints;
         // Two triangles are the halves of one cell only when nothing shows a border between them: the same test on the vertices they share (a pair is a cell, and the
         // mesh gives each point the data of one triangle, so the colours and coordinates must agree).
         BO.CanPair = [&](int First, int Second) {
@@ -235,7 +251,18 @@ namespace
                 }
             return false;
         };
+        // the same test without the counting: the strip step asks about an edge more than once
+        BO.IsBorderQuiet = [&](int First, int Second, int A, int B) {
+            if (Dot(FrontOf(First), FrontOf(Second)) < 0 || Wound[static_cast<size_t>(First)] * Wound[static_cast<size_t>(Second)] < 0) return true;
+            if (O.Decal) return false;
+            return AtVertex(First, Second, A) != Differs::No || AtVertex(First, Second, B) != Differs::No;
+        };
         QuadMesher::BuildResult Built = QuadMesher::Build(LP, Welded, std::vector<int32_t>(Keep.size(), 0), BO);
+        Out.Count.GridsBeforeStrips += static_cast<size_t>(Built.GridsBeforeStrips);
+        Out.Count.Strips += static_cast<size_t>(Built.StripsMade);
+        Out.Count.StripCells += static_cast<size_t>(Built.StripCells);
+        Out.Count.StripLoneAbsorbed += static_cast<size_t>(Built.StripLoneAbsorbed);
+        Out.Count.StripFanTrianglesAbsorbed += static_cast<size_t>(Built.StripFanTrianglesAbsorbed);
         if (Built.CandidatesCapped) Out.Count.CandidatesCapped++;
         Out.Count.MaxCandidatePotential = (std::max)(Out.Count.MaxCandidatePotential, Built.CandidatePotential);
 
@@ -439,6 +466,18 @@ namespace
                     {
                         const size_t Column = static_cast<size_t>((std::min)(Pi, static_cast<int>(NT) - 1));
                         if (const int32_t Own = OwnVertex(Grid.Triangles[Column], LRep[static_cast<size_t>(V)]); Own >= 0) Source = Own, Tri = Column;
+                    }
+                    else if (Grid.IsStrip)
+                    {
+                        // a point repeated in the strip (the pivot of a degenerate cell) takes the data of the triangle of the cell it starts, the last point of the cell before it
+                        const size_t Cell = static_cast<size_t>((std::min)(Pi, Grid.GroupSize - 2));
+                        for (size_t K = static_cast<size_t>(Grid.CellStart[Cell]); K < static_cast<size_t>(Grid.CellStart[Cell + 1]); K++)
+                            if (const int32_t Own = OwnVertex(Grid.Triangles[K], LRep[static_cast<size_t>(V)]); Own >= 0)
+                            {
+                                Source = Own;
+                                Tri = K;
+                                break;
+                            }
                     }
                     if (!Eligible(Tri, Source))
                     {

@@ -212,6 +212,7 @@ int RenderMeshesSelfTest(std::string& Failures)
     {
         const RenderSoup Long = CellSoup(200, 1, Plain);
         RenderMeshOptions O = Serial;
+        O.Strips = false;   // a strip is made no longer than the limit; the split is for the grids the rectangle cut makes
         const RenderMeshResult R = BuildRenderMeshes(Long, One, O);
         size_t Cells = 0;
         bool Within = true;
@@ -380,6 +381,99 @@ int RenderMeshesSelfTest(std::string& Failures)
         for (const RenderMesh& M : One_.Meshes) Pure = Pure && M.Label >= 0 && M.Label < 3;
         Check(Pure && One_.Count.Labels == 3 && One_.Count.CoverageMissing == 0 && One_.Count.CoverageLeftover == 0, "materials are meshed apart and each is covered", std::to_string(One_.Count.Labels));
         Check(AllText(One_) == AllText(Four) && One_.Meshes.size() == Four.Meshes.size() && One_.Count.Grids == Four.Count.Grids, "one thread and four give the same meshes in the same order");
+    }
+
+    // ---- strips (docs/hydrax-port/strips.md): cells left in small grids are chained into 2 x N meshes; the render data follows the positions, borders still cut, nothing depends on threads or seed
+    {
+        // UV follows the position (x / 32, y / 32), so every point of every mesh can be checked against its own position
+        const auto UvOf = [](double X, double Y) { return RenderCorner{ static_cast<float>(X / 32), static_cast<float>(Y / 32), { 255, 255, 255, 255 }, true }; };
+        // a row of six cells, and a lone triangle on the right edge (its apex is out beyond the row, so it makes no convex quad with the cell's triangle), wound and fronted like the cells
+        const auto RowWithTriangle = [&](double ShiftAfterCell3) {
+            RenderSoup S = CellSoup(6, 1, [&](int Cell, int Corner) {
+                const double Cx[4] = { 0, 1, 1, 0 }, Cy[4] = { 0, 0, 1, 1 };
+                RenderCorner C = UvOf((Cell + Cx[Corner]) * 8, Cy[Corner] * 8);
+                if (Cell >= 3) C.U += static_cast<float>(ShiftAfterCell3);
+                return C;
+            });
+            const double Px[3] = { 48, 48, 50 }, Py[3] = { 8, 0, 16 };
+            for (int K = 0; K < 3; K++)
+            {
+                S.Positions.insert(S.Positions.end(), { static_cast<float>(Px[K]), static_cast<float>(Py[K]), 0.0f });
+                RenderCorner C = UvOf(Px[K], Py[K]);
+                C.U += static_cast<float>(ShiftAfterCell3);
+                S.Corners.push_back(C);
+                S.Indices.push_back(static_cast<int32_t>(S.Corners.size()) - 1);
+            }
+            S.Label.push_back(0);
+            S.Front.push_back({ 0, 0, 1 });
+            S.Normal.push_back({ 0, 0, 1 });
+            return S;
+        };
+        // every point of every mesh has the UV of its position (plus the shift of the cells it belongs to)
+        const auto DataFollows = [](const RenderMeshResult& R, double Shift) {
+            for (const RenderMesh& M : R.Meshes)
+                for (int G = 0; G < M.Mesh.GroupCount; G++)
+                    for (int P = 0; P < M.Mesh.GroupSize; P++)
+                    {
+                        const V3 A = M.Mesh.At(G, P);
+                        const MeshPointData& D = M.Mesh.DataAt(G, P);
+                        const double WantU = A[0] / 32, WantV = A[1] / 32;
+                        const double Du = D.U - WantU, Dv = D.V - WantV;
+                        if (std::fabs(Dv) > 1e-6 || (std::fabs(Du) > 1e-6 && std::fabs(Du - Shift) > 1e-6)) return false;
+                    }
+            return true;
+        };
+        {
+            const RenderSoup S = RowWithTriangle(0);
+            const RenderMeshResult R = BuildRenderMeshes(S, One, Serial);
+            const bool Shape = R.Meshes.size() == 1 && R.Meshes[0].Mesh.GroupCount == 2 && R.Meshes[0].Mesh.GroupSize == 8;
+            Check(Shape && R.Count.Strips == 1 && R.Count.StripCells == 7 && R.Count.StripLoneAbsorbed == 1 && R.Count.GridsBeforeStrips == 2 && R.Count.CoverageMissing == 0 && R.Count.CoverageLeftover == 0 && DataFollows(R, 0),
+                  "strips: a row of cells and a lone triangle on its end is one mesh of two groups, the render data on every point (the pivot too)",
+                  std::to_string(R.Meshes.size()) + " strips " + std::to_string(R.Count.Strips) + " cells " + std::to_string(R.Count.StripCells) + " lone " + std::to_string(R.Count.StripLoneAbsorbed));
+            // strips off: the row is a rectangle and the triangle a mesh of its own
+            RenderMeshOptions Off = Serial;
+            Off.Strips = false;
+            const RenderMeshResult Plain0 = BuildRenderMeshes(S, One, Off);
+            Check(Plain0.Meshes.size() == 2 && Plain0.Count.Strips == 0 && Plain0.Count.CoverageMissing == 0, "strips: off, the cells and the triangle are two meshes as before", std::to_string(Plain0.Meshes.size()));
+        }
+        {
+            // a texture coordinate that jumps by half a repeat between cell 2 and cell 3 is a border: the strip stops there
+            const RenderSoup S = RowWithTriangle(0.5);
+            const RenderMeshResult R = BuildRenderMeshes(S, One, Serial);
+            std::vector<int> Sizes;
+            for (const RenderMesh& M : R.Meshes) Sizes.push_back(M.Mesh.GroupSize);
+            std::sort(Sizes.begin(), Sizes.end());
+            Check(Sizes == std::vector<int>({ 4, 5 }) && R.Count.BordersCutTexture > 0 && R.Count.CoverageMissing == 0 && R.Count.CoverageLeftover == 0 && DataFollows(R, 0.5),
+                  "strips: a texture border still cuts the strip, and the data on both sides is right", std::to_string(R.Meshes.size()) + " " + std::to_string(R.Count.BordersCutTexture));
+        }
+        {
+            // the thread count and the table seed change nothing, on a soup with holes, three materials and lone triangles
+            RenderSoup S = CellSoup(10, 6, [&](int Cell, int Corner) {
+                const double Cx[4] = { 0, 1, 1, 0 }, Cy[4] = { 0, 0, 1, 1 };
+                return UvOf(((Cell % 10) + Cx[Corner]) * 8, ((Cell / 10) + Cy[Corner]) * 8);
+            });
+            RenderSoup Holes;
+            Holes.Positions = S.Positions;
+            Holes.Corners = S.Corners;
+            for (size_t T = 0; T < S.Label.size(); T++)
+            {
+                const size_t Cell = T / 2;
+                if ((Cell * 7 + Cell / 10) % 9 == 0) continue;   // a hole
+                Holes.Indices.insert(Holes.Indices.end(), S.Indices.begin() + static_cast<std::ptrdiff_t>(T * 3), S.Indices.begin() + static_cast<std::ptrdiff_t>(T * 3 + 3));
+                Holes.Label.push_back(static_cast<int32_t>(Cell % 10 < 4 ? 0 : Cell % 10 < 7 ? 1 : 2));
+                Holes.Front.push_back(S.Front[T]);
+                Holes.Normal.push_back(S.Normal[T]);
+            }
+            const std::vector<std::string> Three = { "a", "b", "c" };
+            RenderMeshOptions One1 = Serial, Four4 = Serial, Seeded = Serial;
+            Four4.Threads = 4;
+            Seeded.HashSeed = 0xDEADBEEFull;
+            Seeded.Threads = 4;
+            const RenderMeshResult A = BuildRenderMeshes(Holes, Three, One1), B = BuildRenderMeshes(Holes, Three, Four4), C = BuildRenderMeshes(Holes, Three, Seeded);
+            Check(AllText(A) == AllText(B) && AllText(A) == AllText(C) && A.Meshes.size() == C.Meshes.size() && A.Count.Strips == B.Count.Strips && A.Count.Strips == C.Count.Strips && A.Count.CoverageMissing == 0 && A.Count.CoverageLeftover == 0
+                      && A.Count.Covered + A.Count.CopiesRemoved + A.Count.CollapsedByWeld == A.Count.TrianglesIn && DataFollows(A, 0),
+                  "strips: the meshes are equal for one thread, four threads and another table seed, coverage exact, the accounting holds", std::to_string(A.Meshes.size()) + " " + std::to_string(A.Count.Strips));
+        }
     }
 
     // ---- a copy that differs in front, texture coordinate or colour is other data: it is kept and counted, not removed
